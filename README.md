@@ -60,8 +60,9 @@ Don't want to self-host? The [AI Clipping API](https://muapi.ai/playground/ai-cl
 ### Prerequisites
 
 - Python 3.10+
+- `ffmpeg` on your PATH — required in **both** modes for caption burn-in (captions are on by default; pass `--no-captions` to skip and, in API mode only, avoid needing ffmpeg at all)
 - For **API mode (default)**: a MuAPI key — powers download, transcription, highlight ranking, and clipping in a single dependency
-- For **Local mode** (`--mode local`): `ffmpeg` on your PATH and an LLM API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`; only the LLM step is remote)
+- For **Local mode** (`--mode local`): an LLM API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`; only the LLM step is remote)
 
 ### Steps
 
@@ -178,6 +179,8 @@ xargs -a urls.txt -I{} python main.py "{}"
 | `--format` | `720` | Source download resolution: `360` / `480` / `720` / `1080` |
 | `--language` | auto | Force Whisper language code (e.g. `en`) |
 | `--output-json` | — | Dump the full result (transcript + all candidates) to a file |
+| `--no-captions` | captions on | Disable fade-in caption burn-in (on by default in both modes) |
+| `--caption-fade-duration` | `0.3` | Caption fade-in duration in seconds |
 
 ### API mode vs Local mode
 
@@ -187,8 +190,8 @@ xargs -a urls.txt -I{} python main.py "{}"
 | Transcription | MuAPI `/openai-whisper` | `faster-whisper` (CPU or CUDA) |
 | Highlight LLM | MuAPI `gpt-5-mini` | `LLM_PROVIDER=openai` uses OpenAI (`gpt-4o-mini` by default), `LLM_PROVIDER=gemini` uses Gemini (`gemini-2.5-flash` by default) |
 | Vertical crop | MuAPI `/autocrop` | `ffmpeg` + OpenCV face tracking |
-| Output | hosted URLs | local mp4 paths |
-| Required keys | `MUAPI_API_KEY` | `OPENAI_API_KEY` or `GEMINI_API_KEY` (+ `ffmpeg` on PATH) |
+| Output | local mp4 path with captions burned in (default); hosted MuAPI URL if `--no-captions` | local mp4 paths |
+| Required keys | `MUAPI_API_KEY` (+ `ffmpeg` on PATH for caption burn-in) | `OPENAI_API_KEY` or `GEMINI_API_KEY` (+ `ffmpeg` on PATH) |
 
 ## How It Works
 
@@ -201,7 +204,7 @@ xargs -a urls.txt -I{} python main.py "{}"
 7. **Top-N selection**: The top `--num-clips` candidates are selected
 8. **Auto-crop**: Each highlight is rendered as a vertical short at the requested aspect ratio
 
-**Output**: a list of mp4 URLs plus, for each clip, its title, viral score, hook sentence, and a one-line reason explaining why it should perform.
+**Output**: a list of mp4s (with fade-in captions burned in by default), plus, for each clip, its title, viral score, hook sentence, and a one-line reason explaining why it should perform.
 
 ## Output
 
@@ -215,10 +218,13 @@ Highlights:    7 candidates → kept top 3
 #1  score=92  124.3s → 187.6s
      title:  The one mistake that cost me $50K
      hook:   "Nobody talks about this, but it killed my first startup..."
-     clip:   https://.../short_1.mp4
+     clip:   output/short_01.mp4
 
 #2  score=88  ...
 ```
+
+(In API mode, `clip:` is a local path like the above whenever captions are burned in; pass
+`--no-captions` to get the raw MuAPI hosted URL back instead.)
 
 `--output-json result.json` produces:
 
@@ -235,11 +241,18 @@ Highlights:    7 candidates → kept top 3
       "score": 92,
       "hook_sentence": "...",
       "virality_reason": "...",
-      "clip_url": "https://.../short_1.mp4"
+      "clip_url": "output/short_01.mp4",
+      "hosted_clip_url": "https://.../short_1.mp4"
     }
   ]
 }
 ```
+
+`hosted_clip_url` only appears in API mode when captions were burned in — it's the original
+MuAPI-hosted clip before download + caption burn-in. If caption burn-in fails for a clip
+(missing `ffmpeg`, a download error, etc.), that clip falls back to its uncaptioned
+form (the hosted URL in API mode, the plain crop in local mode) and gets a
+`captions_error` key instead, rather than failing the whole clip.
 
 ## Configuration
 
@@ -273,7 +286,8 @@ AI-Youtube-Shorts-Generator/
     ├── downloader.py             API mode: YouTube download via MuAPI
     ├── transcriber.py            API mode: MuAPI /openai-whisper client
     ├── highlights.py             shared LLM virality ranking (pluggable backend)
-    ├── clipper.py                API mode: MuAPI /autocrop
+    ├── clipper.py                API mode: MuAPI /autocrop (+ local caption burn-in)
+    ├── captions.py                shared: phrase-chunked fade-in caption burn-in (ffmpeg/libass)
     ├── pipeline.py               mode dispatcher (api ↔ local)
     └── local/                    --mode local backends (offline)
         ├── downloader.py         yt-dlp download
@@ -297,6 +311,15 @@ Contributions are welcome! Please fork the repository and submit a pull request.
 ## License
 
 This project is licensed under the MIT License.
+
+## Development
+
+Install dev dependencies and run the test suite:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
 
 ## Related Projects
 

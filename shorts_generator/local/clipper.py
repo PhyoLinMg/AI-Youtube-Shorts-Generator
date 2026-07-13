@@ -10,6 +10,7 @@ import os
 import subprocess
 from typing import Dict, List, Optional, Tuple
 
+from ..captions import CaptionError, burn_captions
 from ..config import LOCAL_OUTPUT_DIR
 
 
@@ -145,6 +146,9 @@ def crop_highlights_local(
     highlights: List[Dict],
     aspect_ratio: str = "9:16",
     out_dir: Optional[str] = None,
+    transcript_segments: Optional[List[Dict]] = None,
+    captions: bool = True,
+    caption_fade_duration: float = 0.3,
 ) -> List[Dict]:
     out_dir = out_dir or LOCAL_OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
@@ -160,7 +164,27 @@ def crop_highlights_local(
                 aspect_ratio,
                 out_path,
             )
-            results.append({**h, "clip_url": out_path})
+            entry = {**h, "clip_url": out_path}
+
+            if captions and transcript_segments:
+                captioned_path = out_path + ".captioned.mp4"
+                try:
+                    burn_captions(
+                        out_path,
+                        transcript_segments,
+                        float(h["start_time"]),
+                        float(h["end_time"]),
+                        captioned_path,
+                        fade_seconds=caption_fade_duration,
+                    )
+                    os.replace(captioned_path, out_path)
+                except CaptionError as e:
+                    print(f"[clip/local] {i} captions skipped: {e}", flush=True)
+                    entry["captions_error"] = str(e)
+                    if os.path.exists(captioned_path):
+                        os.remove(captioned_path)
+
+            results.append(entry)
         except Exception as e:
             print(f"[clip/local] {i} failed: {e}", flush=True)
             results.append({**h, "clip_url": None, "error": str(e)})
