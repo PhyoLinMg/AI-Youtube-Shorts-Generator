@@ -137,7 +137,13 @@ def generate_shorts(
           "source_video_url": str,   # hosted URL (api) or local path (local)
           "transcript": {...},
           "highlights": [...],       # all candidates ranked
-          "shorts": [...],           # top `num_clips` with clip_url / local path
+          "shorts": [...],           # top `num_clips`, each with:
+                                      #   clip_url: local path (captions burned in) or
+                                      #     hosted URL (api mode with --no-captions)
+                                      #   hosted_clip_url: original MuAPI URL (api mode,
+                                      #     only present when captions were burned in)
+                                      #   captions_error: present if caption burn-in failed
+                                      #     for that clip (falls back to the uncaptioned clip)
         }
     """
     mode = (mode or "api").lower()
