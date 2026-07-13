@@ -1,4 +1,9 @@
-from shorts_generator.captions import _chunk_segments, _write_ass
+import os
+import subprocess
+
+import pytest
+
+from shorts_generator.captions import CaptionError, _chunk_segments, _probe_resolution, _write_ass, burn_captions
 
 
 def test_chunk_segments_splits_by_word_count_and_time_share():
@@ -60,3 +65,47 @@ def test_write_ass_strips_braces_from_text(tmp_path):
 
     content = open(ass_path, encoding="utf-8").read()
     assert "watch this glitch moment" in content
+
+
+@pytest.fixture(scope="module")
+def synthetic_clip(tmp_path_factory):
+    """A tiny 3s 9:16-ish clip generated once for this test module."""
+    tmp_dir = tmp_path_factory.mktemp("captions_src")
+    path = str(tmp_dir / "clip.mp4")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "lavfi", "-i", "testsrc=size=320x568:rate=24:duration=3",
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264",
+            path,
+        ],
+        check=True,
+    )
+    return path
+
+
+def test_probe_resolution_reads_dimensions(synthetic_clip):
+    assert _probe_resolution(synthetic_clip) == (320, 568)
+
+
+def test_burn_captions_produces_output_file(tmp_path, synthetic_clip):
+    out_path = str(tmp_path / "burned.mp4")
+    segments = [{"start": 0.0, "end": 3.0, "text": "hello there this is a caption test"}]
+
+    result = burn_captions(
+        synthetic_clip, segments, clip_start=0.0, clip_end=3.0, out_path=out_path, fade_seconds=0.3
+    )
+
+    assert result == out_path
+    assert os.path.exists(out_path)
+    assert _probe_resolution(out_path) == (320, 568)
+    assert not os.path.exists(out_path + ".ass")
+
+
+def test_burn_captions_raises_when_no_transcript_overlaps(tmp_path, synthetic_clip):
+    out_path = str(tmp_path / "burned.mp4")
+    segments = [{"start": 100.0, "end": 103.0, "text": "way outside the clip"}]
+
+    with pytest.raises(CaptionError):
+        burn_captions(synthetic_clip, segments, clip_start=0.0, clip_end=3.0, out_path=out_path)

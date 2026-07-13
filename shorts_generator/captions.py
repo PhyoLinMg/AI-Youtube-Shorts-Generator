@@ -6,7 +6,13 @@ into short phrase chunks, writes an ASS subtitle file with a fade-in
 override tag per line, and burns it onto a local video file via ffmpeg's
 `subtitles` (libass) filter.
 """
-from typing import Dict, List
+import os
+import subprocess
+from typing import Dict, List, Tuple
+
+
+class CaptionError(RuntimeError):
+    """Raised when caption burn-in fails; callers should fall back to the plain clip."""
 
 
 def _chunk_segments(
@@ -106,3 +112,64 @@ def _write_ass(chunks: List[Dict], ass_path: str, width: int, height: int, fade_
 
     with open(ass_path, "w", encoding="utf-8") as f:
         f.writelines(lines)
+
+
+def _probe_resolution(video_path: str) -> Tuple[int, int]:
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0",
+        video_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        raise CaptionError(f"ffprobe failed on {video_path}: {e}") from e
+
+    try:
+        width_str, height_str = result.stdout.strip().split("x")
+        return int(width_str), int(height_str)
+    except ValueError as e:
+        raise CaptionError(f"could not parse ffprobe output for {video_path}: {result.stdout!r}") from e
+
+
+def burn_captions(
+    video_path: str,
+    segments: List[Dict],
+    clip_start: float,
+    clip_end: float,
+    out_path: str,
+    fade_seconds: float = 0.3,
+) -> str:
+    """Burn phrase-chunked, fade-in captions onto a local clip.
+
+    Raises CaptionError on any failure; the caller decides whether to fall
+    back to the uncaptioned clip.
+    """
+    chunks = _chunk_segments(segments, clip_start, clip_end, max_words=7)
+    if not chunks:
+        raise CaptionError(f"no transcript overlaps clip window [{clip_start}, {clip_end}]")
+
+    width, height = _probe_resolution(video_path)
+
+    ass_path = out_path + ".ass"
+    _write_ass(chunks, ass_path, width, height, fade_seconds)
+
+    try:
+        escaped_ass_path = ass_path.replace("\\", "/").replace(":", "\\:")
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", video_path,
+            "-vf", f"subtitles={escaped_ass_path}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "copy",
+            out_path,
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        raise CaptionError(f"ffmpeg subtitles burn-in failed: {e.stderr}") from e
+    finally:
+        os.remove(ass_path)
+
+    return out_path
