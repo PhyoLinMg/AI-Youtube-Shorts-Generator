@@ -56,3 +56,53 @@ def _chunk_segments(
             })
 
     return chunks
+
+
+def _format_ass_timestamp(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    total_cs = int(round(seconds * 100))
+    cs = total_cs % 100
+    total_s = total_cs // 100
+    s = total_s % 60
+    total_m = total_s // 60
+    m = total_m % 60
+    h = total_m // 60
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def _write_ass(chunks: List[Dict], ass_path: str, width: int, height: int, fade_seconds: float) -> None:
+    """Write an ASS subtitle file: one bottom-center style, one Dialogue line
+    per chunk, each carrying a fade-in-only \\fad override tag."""
+    fontsize = max(12, round(height * 0.045))
+    margin_v = max(10, round(height * 0.06))
+    fade_ms = max(0, round(fade_seconds * 1000))
+
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {width}\n"
+        f"PlayResY: {height}\n"
+        "ScaledBorderAndShadow: yes\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Caption,Arial,{fontsize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
+        f"0,0,0,0,100,100,0,0,1,2,1,2,20,20,{margin_v},1\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+
+    lines = [header]
+    for chunk in chunks:
+        text = chunk["text"].replace("{", "").replace("}", "").replace("\n", " ")
+        start_ts = _format_ass_timestamp(chunk["start"])
+        end_ts = _format_ass_timestamp(chunk["end"])
+        lines.append(
+            f"Dialogue: 0,{start_ts},{end_ts},Caption,,0,0,0,,{{\\fad({fade_ms},0)}}{text}\n"
+        )
+
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
