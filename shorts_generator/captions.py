@@ -169,6 +169,8 @@ def burn_captions(
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
         raise CaptionError(f"ffmpeg subtitles burn-in failed: {e.stderr}") from e
+    except OSError as e:
+        raise CaptionError(f"ffmpeg subtitles burn-in failed: {e}") from e
     finally:
         os.remove(ass_path)
 

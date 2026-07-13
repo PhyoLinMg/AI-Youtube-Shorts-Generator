@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -109,3 +110,21 @@ def test_burn_captions_raises_when_no_transcript_overlaps(tmp_path, synthetic_cl
 
     with pytest.raises(CaptionError):
         burn_captions(synthetic_clip, segments, clip_start=0.0, clip_end=3.0, out_path=out_path)
+
+
+def test_burn_captions_raises_caption_error_when_ffmpeg_missing(tmp_path, synthetic_clip, monkeypatch):
+    """ffprobe succeeds (so _probe_resolution passes) but ffmpeg itself can't be
+    found on PATH — burn_captions must still raise CaptionError, not let the
+    raw FileNotFoundError escape past its documented contract."""
+    fake_bin = tmp_path / "fakebin"
+    fake_bin.mkdir()
+    real_ffprobe = shutil.which("ffprobe")
+    (fake_bin / "ffprobe").symlink_to(real_ffprobe)
+
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    out_path = str(tmp_path / "burned.mp4")
+    segments = [{"start": 0.0, "end": 3.0, "text": "hello there this is a caption test"}]
+
+    with pytest.raises(CaptionError):
+        burn_captions(synthetic_clip, segments, clip_start=0.0, clip_end=3.0, out_path=out_path, fade_seconds=0.3)
