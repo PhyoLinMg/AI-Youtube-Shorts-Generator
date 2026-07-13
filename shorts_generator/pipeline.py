@@ -5,6 +5,9 @@ Two modes:
                               Fast, no local deps, pay-per-call.
   * mode="local"            — yt-dlp + faster-whisper + OpenAI or Gemini + ffmpeg/opencv.
                               Self-hosted, LLM_PROVIDER selects OpenAI or Gemini.
+
+Both modes burn fade-in captions onto the final clips by default (see
+shorts_generator.captions); pass captions=False to disable.
 """
 from typing import Dict, List, Optional
 
@@ -20,6 +23,8 @@ def _run_local(
     aspect_ratio: str,
     download_format: str,
     language: Optional[str],
+    captions: bool,
+    caption_fade_duration: float,
 ) -> Dict:
     from .local.clipper import crop_highlights_local
     from .local.downloader import download_youtube_local
@@ -42,7 +47,14 @@ def _run_local(
     top = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)[:num_clips]
     print(f"[pipeline/local] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
 
-    shorts = crop_highlights_local(source_path, top, aspect_ratio=aspect_ratio)
+    shorts = crop_highlights_local(
+        source_path,
+        top,
+        aspect_ratio=aspect_ratio,
+        transcript_segments=transcript["segments"],
+        captions=captions,
+        caption_fade_duration=caption_fade_duration,
+    )
 
     return {
         "mode": "local",
@@ -59,6 +71,8 @@ def _run_api(
     aspect_ratio: str,
     download_format: str,
     language: Optional[str],
+    captions: bool,
+    caption_fade_duration: float,
 ) -> Dict:
     source_url = download_youtube(youtube_url, fmt=download_format)
 
@@ -76,7 +90,14 @@ def _run_api(
     top = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)[:num_clips]
     print(f"[pipeline] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
 
-    shorts = crop_highlights(source_url, top, aspect_ratio=aspect_ratio)
+    shorts = crop_highlights(
+        source_url,
+        top,
+        aspect_ratio=aspect_ratio,
+        transcript_segments=transcript["segments"],
+        captions=captions,
+        caption_fade_duration=caption_fade_duration,
+    )
 
     return {
         "mode": "api",
@@ -94,6 +115,8 @@ def generate_shorts(
     download_format: str = "720",
     language: Optional[str] = None,
     mode: str = "api",
+    captions: bool = True,
+    caption_fade_duration: float = 0.3,
 ) -> Dict:
     """Run the full pipeline and return a structured result.
 
@@ -105,6 +128,8 @@ def generate_shorts(
         language: ISO-639-1 to force Whisper language detection.
         mode: "api" (default, MuAPI) or "local" (yt-dlp + faster-whisper +
             OpenAI or Gemini + ffmpeg).
+        captions: burn fade-in captions onto each clip (default True).
+        caption_fade_duration: caption fade-in duration in seconds (default 0.3).
 
     Returns:
         {
@@ -117,7 +142,11 @@ def generate_shorts(
     """
     mode = (mode or "api").lower()
     if mode == "local":
-        return _run_local(youtube_url, num_clips, aspect_ratio, download_format, language)
+        return _run_local(
+            youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration
+        )
     if mode == "api":
-        return _run_api(youtube_url, num_clips, aspect_ratio, download_format, language)
+        return _run_api(
+            youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration
+        )
     raise ValueError(f"Unknown mode: {mode!r}. Use 'api' or 'local'.")
