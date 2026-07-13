@@ -18,7 +18,7 @@ if hasattr(sys.stderr, "reconfigure"):
 from shorts_generator import generate_shorts
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AI YouTube Shorts Generator")
     parser.add_argument("url", help="YouTube URL, file:// URL, or local file path")
     parser.add_argument(
@@ -32,7 +32,24 @@ def main() -> int:
     parser.add_argument("--format", default="720", help="Source download resolution: 360 / 480 / 720 / 1080 (default: 720)")
     parser.add_argument("--language", default=None, help="Force Whisper language code, e.g. 'en' (default: auto-detect)")
     parser.add_argument("--output-json", default=None, help="Write the full result JSON to this path")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--no-captions",
+        dest="captions",
+        action="store_false",
+        default=True,
+        help="Disable fade-in caption burn-in (captions are on by default in both modes).",
+    )
+    parser.add_argument(
+        "--caption-fade-duration",
+        type=float,
+        default=0.3,
+        help="Caption fade-in duration in seconds (default: 0.3)",
+    )
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     try:
         result = generate_shorts(
@@ -42,6 +59,8 @@ def main() -> int:
             download_format=args.format,
             language=args.language,
             mode=args.mode,
+            captions=args.captions,
+            caption_fade_duration=args.caption_fade_duration,
         )
     except Exception as e:
         print(f"\nFAILED: {e}", file=sys.stderr)
