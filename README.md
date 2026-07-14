@@ -100,7 +100,7 @@ Don't want to self-host? The [AI Clipping API](https://muapi.ai/playground/ai-cl
    GEMINI_MODEL=gemini-2.5-flash      # optional, default gemini-2.5-flash
    LOCAL_WHISPER_MODEL=base          # tiny / base / small / medium / large-v3
    LOCAL_WHISPER_DEVICE=auto         # auto / cpu / cuda
-   LOCAL_OUTPUT_DIR=output           # where local mp4s land
+   LOCAL_OUTPUT_DIR=output           # base folder; each run gets output/<Title>/
    ```
 
 ## Usage
@@ -117,7 +117,20 @@ python main.py "https://www.youtube.com/watch?v=VIDEO_ID"
 python main.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode local
 ```
 
-Local mode writes the rendered shorts to `./output/short_01.mp4`, `short_02.mp4`, … (override with `LOCAL_OUTPUT_DIR`).
+Every run (both modes) writes into its own folder named after the video, under `LOCAL_OUTPUT_DIR` (default `output/`):
+
+```
+output/<Video Title>/
+  Shorts/
+    Short-01.mp4
+    Short-02.mp4
+  full_source.mp4      # the downloaded/copied source video
+  full_source.json     # the transcript (cached — see below)
+  result.json           # full pipeline result (same shape as --output-json)
+  progress.log          # everything printed to the console during the run
+```
+
+The title comes from YouTube's oEmbed metadata (falls back to the input filename for local files or non-YouTube URLs), sanitized for the filesystem. Running the same URL again reuses the same folder.
 
 ### With options
 
@@ -153,13 +166,17 @@ for short in result["shorts"]:
     print(short["score"], short["title"], short["clip_url"])
 ```
 
-Local transcription is cached as an `.srt` file in `LOCAL_OUTPUT_DIR` using the
-video's base name. If the cache already exists and is newer than the source
-file, the app reuses it instead of running Whisper again.
+Rerunning the same URL reuses its `output/<Title>/` folder and skips the
+expensive parts that are already done:
 
-Local downloads are also cached in `LOCAL_OUTPUT_DIR` as
-`source_<youtube_id>.mp4` when the input is a YouTube URL. If that file already
-exists, the app skips `yt-dlp` and reuses the cached video.
+- **local mode**: skips the download if `full_source.mp4` already exists, and
+  skips transcription if `full_source.json` already exists (cached as JSON
+  next to the source video). Highlight ranking, cropping, and `result.json`
+  are always redone.
+- **api mode**: MuAPI's `/autocrop` needs a fresh hosted URL from
+  `/youtube-download` for every crop, so that call always re-runs — but the
+  local `full_source.mp4` copy and the transcription call are skipped if
+  they're already cached.
 
 ### Batch processing
 
@@ -219,7 +236,7 @@ Highlights:    7 candidates → kept top 3
 #1  score=92  124.3s → 187.6s
      title:  The one mistake that cost me $50K
      hook:   "Nobody talks about this, but it killed my first startup..."
-     clip:   output/short_01.mp4
+     clip:   output/My_Video_Title/Shorts/Short-01.mp4
 
 #2  score=88  ...
 ```
@@ -227,10 +244,14 @@ Highlights:    7 candidates → kept top 3
 (In API mode, `clip:` is a local path like the above whenever captions are burned in; pass
 `--no-captions` to get the raw MuAPI hosted URL back instead.)
 
-`--output-json result.json` produces:
+`result.json` (containing this same shape) is now always written inside
+`output_dir` automatically; `--output-json result.json` additionally writes
+a copy to whatever path you give it.
 
 ```json
 {
+  "mode": "api",
+  "output_dir": "output/My_Video_Title",
   "source_video_url": "...",
   "transcript": { "duration": 1873.4, "segments": [...] },
   "highlights": [ {...}, {...}, ... ],
@@ -242,7 +263,7 @@ Highlights:    7 candidates → kept top 3
       "score": 92,
       "hook_sentence": "...",
       "virality_reason": "...",
-      "clip_url": "output/short_01.mp4",
+      "clip_url": "output/My_Video_Title/Shorts/Short-01.mp4",
       "hosted_clip_url": "https://.../short_1.mp4"
     }
   ]
