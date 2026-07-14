@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
@@ -62,7 +62,37 @@ def _title_via_oembed(url: str) -> Optional[str]:
     return None
 
 
+def _extract_youtube_video_id(url: str) -> Optional[str]:
+    """Best-effort extraction of a YouTube video id from a URL."""
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+
+    if host == "youtu.be":
+        video_id = parsed.path.lstrip("/").split("/", 1)[0]
+        return video_id or None
+
+    if "youtube.com" in host:
+        if parsed.path.startswith("/watch"):
+            qs = parse_qs(parsed.query)
+            video_id = qs.get("v", [""])[0]
+            return video_id or None
+        match = re.search(r"/(?:shorts|embed|live)/([^/?#&]+)", parsed.path)
+        if match:
+            return match.group(1)
+
+    return None
+
+
 def _fallback_title_from_url(url: str) -> str:
+    # Prefer the YouTube video id over the URL path: for a /watch URL the
+    # path is just "/watch" (the id lives in the query string), so falling
+    # back to a plain path-stem would collapse every watch-URL video onto
+    # the same folder name whenever oEmbed fails.
+    video_id = _extract_youtube_video_id(url)
+    if video_id:
+        return video_id
     parsed = urlparse(url)
     stem = Path(unquote(parsed.path)).stem
     return stem or "video"

@@ -45,14 +45,28 @@ def test_resolve_title_falls_back_on_oembed_network_error(monkeypatch):
         raise run_output.requests.RequestException("network down")
 
     monkeypatch.setattr(run_output.requests, "get", fake_get)
+    # Must fall back to the video id, not a constant like "watch" shared by
+    # every watch-URL video — otherwise unrelated videos collide on rerun.
     title = run_output.resolve_title("https://www.youtube.com/watch?v=abc123")
-    assert title  # falls back to a non-empty name derived from the URL
+    assert title == "abc123"
 
 
 def test_resolve_title_falls_back_on_non_200(monkeypatch):
     monkeypatch.setattr(run_output.requests, "get", lambda *a, **k: _FakeResponse(404, {}))
     title = run_output.resolve_title("https://www.youtube.com/watch?v=abc123")
-    assert title
+    assert title == "abc123"
+
+
+def test_resolve_title_falls_back_to_video_id_for_youtu_be_link(monkeypatch):
+    monkeypatch.setattr(run_output.requests, "get", lambda *a, **k: _FakeResponse(404, {}))
+    title = run_output.resolve_title("https://youtu.be/xyz789")
+    assert title == "xyz789"
+
+
+def test_resolve_title_falls_back_to_path_stem_for_non_youtube_url(monkeypatch):
+    monkeypatch.setattr(run_output.requests, "get", lambda *a, **k: _FakeResponse(404, {}))
+    title = run_output.resolve_title("https://example.com/videos/my-clip.mp4")
+    assert title == "my-clip"
 
 
 def test_resolve_title_for_local_path_uses_filename_stem(tmp_path):

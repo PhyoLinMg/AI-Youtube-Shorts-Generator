@@ -2,6 +2,8 @@ import json
 import os
 from unittest.mock import Mock
 
+import pytest
+
 import shorts_generator.local.clipper as local_clipper_module
 import shorts_generator.local.downloader as local_downloader_module
 import shorts_generator.local.transcriber as local_transcriber_module
@@ -92,9 +94,15 @@ def test_run_local_skips_download_when_source_already_exists(tmp_path, monkeypat
     assert result["source_video_url"] == paths.source_video
 
 
+def _fake_download_to(url, dest):
+    with open(dest, "wb") as f:
+        f.write(b"fake downloaded mp4")
+    return dest
+
+
 def test_run_api_threads_captions_params(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
-    monkeypatch.setattr(pipeline_module, "_download_to", lambda url, dest: dest)
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
     monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
     monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
 
@@ -138,6 +146,63 @@ def test_run_api_skips_local_copy_and_transcribe_when_cached(tmp_path, monkeypat
         raise AssertionError("transcribe should not be called when full_source.json is cached")
     monkeypatch.setattr(pipeline_module, "transcribe", _fail_transcribe)
 
+    monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(pipeline_module, "crop_highlights", Mock(return_value=[]))
+
+    result = pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=1,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=paths,
+        word_highlight=True,
+    )
+
+    assert result["transcript"] == _fake_transcript()
+
+
+def test_run_api_interrupted_download_does_not_leave_partial_source_video(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+
+    def _write_partial_then_raise(url, dest_path):
+        with open(dest_path, "wb") as f:
+            f.write(b"only half a file")
+        raise ConnectionError("connection dropped")
+
+    monkeypatch.setattr(pipeline_module, "_download_to", _write_partial_then_raise)
+
+    with pytest.raises(ConnectionError):
+        pipeline_module._run_api(
+            "https://youtube.example/x",
+            num_clips=1,
+            aspect_ratio="9:16",
+            download_format="720",
+            language=None,
+            captions=True,
+            caption_fade_duration=0.3,
+            paths=paths,
+            word_highlight=True,
+        )
+
+    # The interrupted write must not land at the final path, or a rerun
+    # would treat the truncated file as a valid cached source.
+    assert not os.path.exists(paths.source_video)
+
+
+def test_run_api_recovers_from_corrupted_transcript_cache(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    with open(paths.source_video, "wb") as f:
+        f.write(b"cached mp4")
+    with open(paths.source_json, "w") as f:
+        f.write("{not valid json")  # simulates a truncated/corrupted cache
+
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
     monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
     monkeypatch.setattr(pipeline_module, "crop_highlights", Mock(return_value=[]))
 

@@ -101,17 +101,29 @@ def _run_api(
     if os.path.exists(paths.source_video):
         print(f"[pipeline] reusing cached local copy: {paths.source_video}", flush=True)
     else:
-        _download_to(source_url, paths.source_video)
+        # Download to a temp path and rename into place so a crash/interrupt
+        # mid-download can never leave a truncated file at the cache path
+        # (which a rerun would otherwise treat as a valid cached source).
+        tmp_video_path = paths.source_video + ".part"
+        _download_to(source_url, tmp_video_path)
+        os.replace(tmp_video_path, paths.source_video)
         print(f"[pipeline] saved local copy: {paths.source_video}", flush=True)
 
+    transcript = None
     if os.path.exists(paths.source_json):
-        print(f"[pipeline] reusing cached transcript: {paths.source_json}", flush=True)
-        with open(paths.source_json, "r", encoding="utf-8") as f:
-            transcript = json.load(f)
-    else:
+        try:
+            with open(paths.source_json, "r", encoding="utf-8") as f:
+                transcript = json.load(f)
+            print(f"[pipeline] reusing cached transcript: {paths.source_json}", flush=True)
+        except json.JSONDecodeError:
+            print(f"[pipeline] cached transcript is corrupted, re-transcribing: {paths.source_json}", flush=True)
+
+    if transcript is None:
         transcript = transcribe(source_url, language=language)
-        with open(paths.source_json, "w", encoding="utf-8") as f:
+        tmp_json_path = paths.source_json + ".part"
+        with open(tmp_json_path, "w", encoding="utf-8") as f:
             json.dump(transcript, f, ensure_ascii=False)
+        os.replace(tmp_json_path, paths.source_json)
 
     if not transcript["segments"]:
         raise RuntimeError(
