@@ -200,8 +200,13 @@ def _write_ass(
         if word_highlight and words:
             word_texts = [_clean_caption_text(w["text"]) for w in words]
             for i, word in enumerate(words):
+                # Extend each word's line to the next word's start (chunk's own
+                # end for the last word) rather than the word's own end — real
+                # whisper timestamps can have small gaps between words, which
+                # would otherwise blink the whole phrase off between them.
+                line_end = words[i + 1]["start"] if i + 1 < len(words) else chunk["end"]
                 start_ts = _format_ass_timestamp(word["start"])
-                end_ts = _format_ass_timestamp(word["end"])
+                end_ts = _format_ass_timestamp(line_end)
                 line_text = _render_word_line(word_texts, i)
                 fad_prefix = f"{{\\fad({fade_ms},0)}}" if i == 0 else ""
                 lines.append(

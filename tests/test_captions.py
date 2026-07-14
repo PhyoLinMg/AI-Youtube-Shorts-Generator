@@ -4,7 +4,14 @@ import subprocess
 
 import pytest
 
-from shorts_generator.captions import CaptionError, _chunk_segments, _probe_resolution, _write_ass, burn_captions
+from shorts_generator.captions import (
+    CaptionError,
+    _chunk_segments,
+    _format_ass_timestamp,
+    _probe_resolution,
+    _write_ass,
+    burn_captions,
+)
 
 
 def test_chunk_segments_splits_by_word_count_and_time_share():
@@ -104,6 +111,35 @@ def test_write_ass_emits_one_dialogue_per_word_with_highlight(tmp_path):
     assert "\\c&H00FFFF&" in content                # yellow highlight
     assert "\\t(0,80,\\fscx125\\fscy125)" in content  # bounce
     assert content.count("\\fad(300,0)") == 1       # fade on first word only
+
+
+def test_write_ass_word_lines_fill_gaps_between_words(tmp_path):
+    """Real whisper word timestamps can have small gaps between consecutive
+    words (silences, plosives). Each word's Dialogue line should extend to
+    the next word's start (chunk's own end for the last word), not stop at
+    its own end — otherwise the whole caption blinks off during the gap."""
+    chunks = [{
+        "start": 0.0, "end": 2.0, "text": "alpha beta gamma",
+        "words": [
+            {"start": 0.0, "end": 0.4, "text": "alpha"},   # gap: 0.4 -> 0.6
+            {"start": 0.6, "end": 1.3, "text": "beta"},    # gap: 1.3 -> 1.5
+            {"start": 1.5, "end": 1.8, "text": "gamma"},   # trailing gap to chunk end 2.0
+        ],
+    }]
+    ass_path = str(tmp_path / "c.ass")
+    _write_ass(chunks, ass_path, width=608, height=1080, fade_seconds=0.3)
+    dialogue_lines = [
+        l for l in open(ass_path, encoding="utf-8").read().splitlines()
+        if l.startswith("Dialogue:")
+    ]
+    assert len(dialogue_lines) == 3
+
+    def _end_ts(line: str) -> str:
+        return line.split(",")[2]
+
+    assert _end_ts(dialogue_lines[0]) == _format_ass_timestamp(0.6)   # -> next word's start
+    assert _end_ts(dialogue_lines[1]) == _format_ass_timestamp(1.5)   # -> next word's start
+    assert _end_ts(dialogue_lines[2]) == _format_ass_timestamp(2.0)   # -> chunk's own end
 
 
 def test_write_ass_word_highlight_false_is_one_line_per_chunk(tmp_path):
