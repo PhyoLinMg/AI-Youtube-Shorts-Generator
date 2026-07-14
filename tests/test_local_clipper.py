@@ -110,3 +110,15 @@ def test_word_highlight_flag_forwarded_to_burn(tmp_path, synthetic_source, monke
         word_highlight=False,
     )
     assert captured["word_highlight"] is False
+
+
+def test_output_filename_uses_short_dash_prefix(tmp_path, synthetic_source):
+    out_dir = str(tmp_path / "out")
+    results = crop_highlights_local(
+        synthetic_source,
+        [_highlight()],
+        aspect_ratio="9:16",
+        out_dir=out_dir,
+        transcript_segments=_segments(),
+    )
+    assert os.path.basename(results[0]["clip_url"]) == "Short-01.mp4"

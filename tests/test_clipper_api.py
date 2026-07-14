@@ -123,3 +123,22 @@ def test_word_highlight_flag_forwarded_to_burn(tmp_path, synthetic_clip, monkeyp
     )
 
     assert captured["word_highlight"] is False
+
+
+def test_output_filename_uses_short_dash_prefix(tmp_path, synthetic_clip, monkeypatch):
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper,
+        "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [_highlight()],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        out_dir=str(tmp_path / "out"),
+    )
+
+    assert os.path.basename(results[0]["clip_url"]) == "Short-01.mp4"

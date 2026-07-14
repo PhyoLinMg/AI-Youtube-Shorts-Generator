@@ -67,7 +67,7 @@ def crop_highlights(
 
             if captions and transcript_segments:
                 os.makedirs(out_dir, exist_ok=True)
-                final_path = os.path.join(out_dir, f"short_{i:02d}.mp4")
+                final_path = os.path.join(out_dir, f"Short-{i:02d}.mp4")
                 downloaded_path = final_path + ".download.mp4"
                 try:
                     _download_to(url, downloaded_path)
