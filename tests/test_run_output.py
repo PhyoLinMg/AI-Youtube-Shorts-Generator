@@ -1,3 +1,5 @@
+import os
+
 from shorts_generator import run_output
 
 
@@ -17,3 +19,62 @@ def test_sanitize_title_empty_input_falls_back_to_untitled():
 def test_sanitize_title_truncates_long_titles():
     result = run_output.sanitize_title("x" * 150)
     assert len(result) == 100
+
+
+class _FakeResponse:
+    def __init__(self, status_code=200, json_data=None):
+        self.status_code = status_code
+        self._json_data = json_data or {}
+
+    def json(self):
+        return self._json_data
+
+
+def test_resolve_title_uses_oembed_title(monkeypatch):
+    def fake_get(url, params=None, timeout=None):
+        assert "oembed" in url
+        assert params["url"] == "https://www.youtube.com/watch?v=abc123"
+        return _FakeResponse(200, {"title": "My Cool Video!"})
+
+    monkeypatch.setattr(run_output.requests, "get", fake_get)
+    assert run_output.resolve_title("https://www.youtube.com/watch?v=abc123") == "My Cool Video!"
+
+
+def test_resolve_title_falls_back_on_oembed_network_error(monkeypatch):
+    def fake_get(*args, **kwargs):
+        raise run_output.requests.RequestException("network down")
+
+    monkeypatch.setattr(run_output.requests, "get", fake_get)
+    title = run_output.resolve_title("https://www.youtube.com/watch?v=abc123")
+    assert title  # falls back to a non-empty name derived from the URL
+
+
+def test_resolve_title_falls_back_on_non_200(monkeypatch):
+    monkeypatch.setattr(run_output.requests, "get", lambda *a, **k: _FakeResponse(404, {}))
+    title = run_output.resolve_title("https://www.youtube.com/watch?v=abc123")
+    assert title
+
+
+def test_resolve_title_for_local_path_uses_filename_stem(tmp_path):
+    media = tmp_path / "my_video_file.mp4"
+    media.write_bytes(b"x")
+    assert run_output.resolve_title(str(media)) == "my_video_file"
+
+
+def test_resolve_output_dir_builds_expected_tree(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        run_output.requests, "get",
+        lambda *a, **k: _FakeResponse(200, {"title": "How To Build A Startup"}),
+    )
+
+    paths = run_output.resolve_output_dir(
+        "https://www.youtube.com/watch?v=abc123", base_dir=str(tmp_path)
+    )
+
+    assert paths.root == str(tmp_path / "How_To_Build_A_Startup")
+    assert paths.shorts_dir == os.path.join(paths.root, "Shorts")
+    assert paths.source_video == os.path.join(paths.root, "full_source.mp4")
+    assert paths.source_json == os.path.join(paths.root, "full_source.json")
+    assert paths.result_json == os.path.join(paths.root, "result.json")
+    assert paths.progress_log == os.path.join(paths.root, "progress.log")
+    assert os.path.isdir(paths.shorts_dir)
