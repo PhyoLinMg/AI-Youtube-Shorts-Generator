@@ -181,6 +181,7 @@ xargs -a urls.txt -I{} python main.py "{}"
 | `--output-json` | — | Dump the full result (transcript + all candidates) to a file |
 | `--no-captions` | captions on | Disable fade-in caption burn-in (on by default in both modes) |
 | `--caption-fade-duration` | `0.3` | Caption fade-in duration in seconds |
+| `--no-word-highlight` | highlight on | Disable per-word highlight/bounce animation; captions show a plain fading phrase instead (on by default in both modes) |
 
 ### API mode vs Local mode
 
@@ -204,7 +205,7 @@ xargs -a urls.txt -I{} python main.py "{}"
 7. **Top-N selection**: The top `--num-clips` candidates are selected
 8. **Auto-crop**: Each highlight is rendered as a vertical short at the requested aspect ratio
 
-**Output**: a list of mp4s (with fade-in captions burned in by default), plus, for each clip, its title, viral score, hook sentence, and a one-line reason explaining why it should perform.
+**Output**: a list of mp4s (with fade-in captions burned in by default, each spoken word highlighted with a color-pop bounce as it's said — pass `--no-word-highlight` for plain fading phrases instead), plus, for each clip, its title, viral score, hook sentence, and a one-line reason explaining why it should perform.
 
 ## Output
 
@@ -287,7 +288,7 @@ AI-Youtube-Shorts-Generator/
     ├── transcriber.py            API mode: MuAPI /openai-whisper client
     ├── highlights.py             shared LLM virality ranking (pluggable backend)
     ├── clipper.py                API mode: MuAPI /autocrop (+ local caption burn-in)
-    ├── captions.py                shared: phrase-chunked fade-in caption burn-in (ffmpeg/libass)
+    ├── captions.py                shared: phrase-chunked fade-in + per-word highlight caption burn-in (ffmpeg/libass)
     ├── pipeline.py               mode dispatcher (api ↔ local)
     └── local/                    --mode local backends (offline)
         ├── downloader.py         yt-dlp download

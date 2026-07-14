@@ -1,7 +1,7 @@
 # Word-highlight caption animation — design spec
 
 Date: 2026-07-14
-Status: Approved, pending implementation plan
+Status: Implemented
 
 ## Goal
 
