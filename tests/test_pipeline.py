@@ -30,6 +30,7 @@ def test_run_local_threads_captions_params(monkeypatch):
         language=None,
         captions=False,
         caption_fade_duration=0.7,
+        word_highlight=False,
     )
 
     assert result["mode"] == "local"
@@ -38,6 +39,7 @@ def test_run_local_threads_captions_params(monkeypatch):
     _, kwargs = crop_mock.call_args
     assert kwargs["captions"] is False
     assert kwargs["caption_fade_duration"] == 0.7
+    assert kwargs["word_highlight"] is False
     assert kwargs["transcript_segments"] == _fake_transcript()["segments"]
 
 
@@ -57,10 +59,12 @@ def test_run_api_threads_captions_params(monkeypatch):
         language=None,
         captions=True,
         caption_fade_duration=0.3,
+        word_highlight=False,
     )
 
     assert result["mode"] == "api"
     _, kwargs = crop_mock.call_args
     assert kwargs["captions"] is True
     assert kwargs["caption_fade_duration"] == 0.3
+    assert kwargs["word_highlight"] is False
     assert kwargs["transcript_segments"] == _fake_transcript()["segments"]

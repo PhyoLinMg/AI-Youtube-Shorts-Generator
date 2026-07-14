@@ -25,6 +25,7 @@ def _run_local(
     language: Optional[str],
     captions: bool,
     caption_fade_duration: float,
+    word_highlight: bool = True,
 ) -> Dict:
     from .local.clipper import crop_highlights_local
     from .local.downloader import download_youtube_local
@@ -54,6 +55,7 @@ def _run_local(
         transcript_segments=transcript["segments"],
         captions=captions,
         caption_fade_duration=caption_fade_duration,
+        word_highlight=word_highlight,
     )
 
     return {
@@ -73,6 +75,7 @@ def _run_api(
     language: Optional[str],
     captions: bool,
     caption_fade_duration: float,
+    word_highlight: bool = True,
 ) -> Dict:
     source_url = download_youtube(youtube_url, fmt=download_format)
 
@@ -97,6 +100,7 @@ def _run_api(
         transcript_segments=transcript["segments"],
         captions=captions,
         caption_fade_duration=caption_fade_duration,
+        word_highlight=word_highlight,
     )
 
     return {
@@ -117,6 +121,7 @@ def generate_shorts(
     mode: str = "api",
     captions: bool = True,
     caption_fade_duration: float = 0.3,
+    word_highlight: bool = True,
 ) -> Dict:
     """Run the full pipeline and return a structured result.
 
@@ -130,6 +135,7 @@ def generate_shorts(
             OpenAI or Gemini + ffmpeg).
         captions: burn fade-in captions onto each clip (default True).
         caption_fade_duration: caption fade-in duration in seconds (default 0.3).
+        word_highlight: highlight the currently-spoken word in each caption (default True).
 
     Returns:
         {
@@ -149,10 +155,12 @@ def generate_shorts(
     mode = (mode or "api").lower()
     if mode == "local":
         return _run_local(
-            youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration
+            youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
+            word_highlight=word_highlight,
         )
     if mode == "api":
         return _run_api(
-            youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration
+            youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
+            word_highlight=word_highlight,
         )
     raise ValueError(f"Unknown mode: {mode!r}. Use 'api' or 'local'.")

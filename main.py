@@ -45,6 +45,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.3,
         help="Caption fade-in duration in seconds (default: 0.3)",
     )
+    parser.add_argument(
+        "--no-word-highlight",
+        dest="word_highlight",
+        action="store_false",
+        default=True,
+        help="Disable per-word highlight animation; caption shows a plain fading phrase instead.",
+    )
     return parser
 
 
@@ -61,6 +68,7 @@ def main() -> int:
             mode=args.mode,
             captions=args.captions,
             caption_fade_duration=args.caption_fade_duration,
+            word_highlight=args.word_highlight,
         )
     except Exception as e:
         print(f"\nFAILED: {e}", file=sys.stderr)
