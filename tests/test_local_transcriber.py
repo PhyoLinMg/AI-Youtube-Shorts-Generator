@@ -43,8 +43,7 @@ class _FakeWhisperModel:
         return iter(segments), info
 
 
-def test_json_cache_roundtrip_preserves_words(tmp_path, monkeypatch):
-    monkeypatch.setattr(tr, "LOCAL_OUTPUT_DIR", str(tmp_path))
+def test_json_cache_roundtrip_preserves_words(tmp_path):
     transcript = {
         "duration": 4.0,
         "segments": [
@@ -66,14 +65,12 @@ def test_json_cache_roundtrip_preserves_words(tmp_path, monkeypatch):
     assert loaded["duration"] == 4.0
 
 
-def test_cache_path_is_json(tmp_path, monkeypatch):
-    monkeypatch.setattr(tr, "LOCAL_OUTPUT_DIR", str(tmp_path))
-    p = tr._transcript_cache_path("/some/video.mp4")
+def test_cache_path_is_json(tmp_path):
+    p = tr._transcript_cache_path(str(tmp_path / "video.mp4"))
     assert p.name == "video.json"
 
 
 def test_transcribe_local_requests_word_timestamps_and_collects_words(tmp_path, monkeypatch):
-    monkeypatch.setattr(tr, "LOCAL_OUTPUT_DIR", str(tmp_path))
     media = tmp_path / "clip.mp4"
     media.write_bytes(b"fake")
 
@@ -93,3 +90,15 @@ def test_transcribe_local_requests_word_timestamps_and_collects_words(tmp_path, 
     cache_path = tr._transcript_cache_path(str(media))
     cached = json.loads(cache_path.read_text())
     assert cached["segments"][0]["words"][2]["word"] == "fox"
+
+
+def test_cache_path_follows_media_directory_not_global_default(tmp_path):
+    nested = tmp_path / "run_folder"
+    nested.mkdir()
+    media = nested / "full_source.mp4"
+    media.write_bytes(b"x")
+
+    cache_path = tr._transcript_cache_path(str(media))
+
+    assert cache_path.parent == nested.resolve()
+    assert cache_path.name == "full_source.json"

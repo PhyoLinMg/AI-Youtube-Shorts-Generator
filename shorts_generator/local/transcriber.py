@@ -8,12 +8,12 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
-from ..config import LOCAL_OUTPUT_DIR, LOCAL_WHISPER_DEVICE, LOCAL_WHISPER_MODEL
+from ..config import LOCAL_WHISPER_DEVICE, LOCAL_WHISPER_MODEL
 
 
 def _transcript_cache_path(media_path: str) -> Path:
-    """Return the .json cache path for a media file."""
-    cache_dir = Path(LOCAL_OUTPUT_DIR)
+    """Return the .json cache path for a media file, alongside the media itself."""
+    cache_dir = Path(media_path).resolve().parent
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / (Path(media_path).stem + ".json")
 
