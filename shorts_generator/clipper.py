@@ -48,6 +48,7 @@ def crop_highlights(
     transcript_segments: Optional[List[Dict]] = None,
     captions: bool = True,
     caption_fade_duration: float = 0.3,
+    word_highlight: bool = True,
     out_dir: Optional[str] = None,
 ) -> list:
     """Crop every highlight, attaching the resulting URL back onto the dict."""
@@ -77,6 +78,7 @@ def crop_highlights(
                         float(h["end_time"]),
                         final_path,
                         fade_seconds=caption_fade_duration,
+                        word_highlight=word_highlight,
                     )
                     entry["clip_url"] = final_path
                     entry["hosted_clip_url"] = url

@@ -2,9 +2,10 @@
 
 Two stages per highlight:
   1. Cut the source video to [start, end] with ffmpeg (re-encoded, audio kept).
-  2. Reframe the cut to the target aspect ratio. For 9:16 we slide a vertical
-     window horizontally across the frame to keep faces centred (Haar
-     cascade — same approach as the original repo, no external models).
+  2. Reframe the cut to the target aspect ratio. For 9:16 we find the
+     speaker's median position (Haar cascade, no external models) and crop
+     a locked vertical window there — static for the whole clip, since any
+     per-frame tracking reads as camera shake.
 """
 import os
 import subprocess
@@ -39,7 +40,13 @@ def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> s
 
 
 def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
-    """Crop the cut clip to the target aspect ratio, tracking faces if possible."""
+    """Crop the cut clip to the target aspect ratio, centered on the speaker.
+
+    Uses a single locked crop position for the whole clip instead of
+    per-frame tracking — any tracker (even heavily smoothed) still reads as
+    camera shake on a talking head, since the subject is always drifting a
+    little (nodding, gesturing). A static, well-centered shot doesn't.
+    """
     try:
         import cv2  # type: ignore
     except ImportError as e:
@@ -69,38 +76,42 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
 
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-    silent_path = out_path + ".silent.mp4"
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(silent_path, fourcc, fps, (crop_w, crop_h))
-
-    last_center: Optional[Tuple[int, int]] = None
-    smoothing = 0.15  # how aggressively to chase a new face position
+    # Pass 1 — sample the clip (~5 frames/sec is plenty) and take the median
+    # face position as a single, stable anchor for the whole clip.
+    sample_stride = max(1, int(fps // 5))
+    sample_centers: List[Tuple[int, int]] = []
+    frame_idx = 0
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+        if frame_idx % sample_stride == 0:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
+            if len(faces) > 0:
+                x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+                sample_centers.append((x + w // 2, y + h // 2))
+        frame_idx += 1
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
-        if len(faces) > 0:
-            # Pick the largest face — usually the speaker.
-            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-            cx = x + w // 2
-            cy = y + h // 2
-            if last_center is None:
-                last_center = (cx, cy)
-            else:
-                lx, ly = last_center
-                last_center = (
-                    int(lx + (cx - lx) * smoothing),
-                    int(ly + (cy - ly) * smoothing),
-                )
-        if last_center is None:
-            last_center = (src_w // 2, src_h // 2)
+    if sample_centers:
+        xs = sorted(c[0] for c in sample_centers)
+        ys = sorted(c[1] for c in sample_centers)
+        cx, cy = xs[len(xs) // 2], ys[len(ys) // 2]
+    else:
+        cx, cy = src_w // 2, src_h // 2
 
-        cx, cy = last_center
-        x0 = max(0, min(src_w - crop_w, cx - crop_w // 2))
-        y0 = max(0, min(src_h - crop_h, cy - crop_h // 2))
+    x0 = max(0, min(src_w - crop_w, cx - crop_w // 2))
+    y0 = max(0, min(src_h - crop_h, cy - crop_h // 2))
+
+    # Pass 2 — write the locked crop; x0/y0 never change within the clip.
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    silent_path = out_path + ".silent.mp4"
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(silent_path, fourcc, fps, (crop_w, crop_h))
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
         cropped = frame[y0:y0 + crop_h, x0:x0 + crop_w]
         writer.write(cropped)
 
@@ -149,6 +160,7 @@ def crop_highlights_local(
     transcript_segments: Optional[List[Dict]] = None,
     captions: bool = True,
     caption_fade_duration: float = 0.3,
+    word_highlight: bool = True,
 ) -> List[Dict]:
     out_dir = out_dir or LOCAL_OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
@@ -176,6 +188,7 @@ def crop_highlights_local(
                         float(h["end_time"]),
                         captioned_path,
                         fade_seconds=caption_fade_duration,
+                        word_highlight=word_highlight,
                     )
                     os.replace(captioned_path, out_path)
                 except CaptionError as e:

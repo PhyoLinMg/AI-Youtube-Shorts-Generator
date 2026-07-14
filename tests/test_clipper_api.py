@@ -95,3 +95,31 @@ def test_download_failure_falls_back_to_hosted_url(tmp_path, monkeypatch):
 
     assert results[0]["clip_url"] == "https://hosted.example/short_1.mp4"
     assert results[0]["captions_error"] == "network down"
+
+
+def test_word_highlight_flag_forwarded_to_burn(tmp_path, synthetic_clip, monkeypatch):
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper,
+        "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+    captured = {}
+
+    def _spy(*args, **kwargs):
+        captured.update(kwargs)
+        shutil.copyfile(args[0], args[4])
+        return args[4]
+
+    monkeypatch.setattr(clipper, "burn_captions", _spy)
+
+    clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [_highlight()],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        out_dir=str(tmp_path / "out"),
+        word_highlight=False,
+    )
+
+    assert captured["word_highlight"] is False

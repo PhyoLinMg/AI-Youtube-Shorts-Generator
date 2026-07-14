@@ -246,6 +246,7 @@ def burn_captions(
     clip_end: float,
     out_path: str,
     fade_seconds: float = 0.3,
+    word_highlight: bool = True,
 ) -> str:
     """Burn phrase-chunked, fade-in captions onto a local clip.
 
@@ -259,7 +260,7 @@ def burn_captions(
     width, height = _probe_resolution(video_path)
 
     ass_path = out_path + ".ass"
-    _write_ass(chunks, ass_path, width, height, fade_seconds)
+    _write_ass(chunks, ass_path, width, height, fade_seconds, word_highlight=word_highlight)
 
     try:
         escaped_ass_path = ass_path.replace("\\", "/").replace(":", "\\:")

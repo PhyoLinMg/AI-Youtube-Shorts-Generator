@@ -92,3 +92,21 @@ def test_caption_failure_falls_back_to_plain_clip(tmp_path, synthetic_source, mo
     assert results[0]["clip_url"] is not None
     assert os.path.exists(results[0]["clip_url"])
     assert results[0]["captions_error"] == "boom"
+
+
+def test_word_highlight_flag_forwarded_to_burn(tmp_path, synthetic_source, monkeypatch):
+    captured = {}
+
+    def _spy(*args, **kwargs):
+        captured.update(kwargs)
+        import shutil
+        shutil.copyfile(args[0], args[4])
+        return args[4]
+
+    monkeypatch.setattr("shorts_generator.local.clipper.burn_captions", _spy)
+    crop_highlights_local(
+        synthetic_source, [_highlight()], aspect_ratio="9:16",
+        out_dir=str(tmp_path / "out"), transcript_segments=_segments(),
+        word_highlight=False,
+    )
+    assert captured["word_highlight"] is False
