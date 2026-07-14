@@ -18,10 +18,24 @@ def test_chunk_segments_splits_by_word_count_and_time_share():
 
     chunks = _chunk_segments(segments, clip_start=0.0, clip_end=100.0, max_words=7)
 
-    assert chunks == [
-        {"start": 10.0, "end": 11.0, "text": "one two three four five six seven"},
-        {"start": 11.0, "end": 12.0, "text": "eight nine ten eleven twelve thirteen fourteen"},
-    ]
+    assert len(chunks) == 2
+    # First chunk
+    assert chunks[0]["start"] == 10.0
+    assert chunks[0]["end"] == 11.0
+    assert chunks[0]["text"] == "one two three four five six seven"
+    assert "words" in chunks[0]
+    assert [w["text"] for w in chunks[0]["words"]] == ["one", "two", "three", "four", "five", "six", "seven"]
+    assert chunks[0]["words"][0]["start"] == 10.0
+    assert chunks[0]["words"][-1]["end"] == 11.0
+
+    # Second chunk
+    assert chunks[1]["start"] == 11.0
+    assert chunks[1]["end"] == 12.0
+    assert chunks[1]["text"] == "eight nine ten eleven twelve thirteen fourteen"
+    assert "words" in chunks[1]
+    assert [w["text"] for w in chunks[1]["words"]] == ["eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen"]
+    assert chunks[1]["words"][0]["start"] == 11.0
+    assert chunks[1]["words"][-1]["end"] == 12.0
 
 
 def test_chunk_segments_drops_segments_outside_window():
@@ -37,7 +51,14 @@ def test_chunk_segments_clips_and_shifts_straddling_segment():
 
     chunks = _chunk_segments(segments, clip_start=10.0, clip_end=20.0, max_words=7)
 
-    assert chunks == [{"start": 0.0, "end": 2.0, "text": "alpha beta gamma delta"}]
+    assert len(chunks) == 1
+    assert chunks[0]["start"] == 0.0
+    assert chunks[0]["end"] == 2.0
+    assert chunks[0]["text"] == "alpha beta gamma delta"
+    assert "words" in chunks[0]
+    assert [w["text"] for w in chunks[0]["words"]] == ["alpha", "beta", "gamma", "delta"]
+    assert chunks[0]["words"][0]["start"] == 0.0
+    assert chunks[0]["words"][-1]["end"] == 2.0
 
 
 def test_write_ass_contains_resolution_and_fade_tag(tmp_path):
@@ -128,3 +149,33 @@ def test_burn_captions_raises_caption_error_when_ffmpeg_missing(tmp_path, synthe
 
     with pytest.raises(CaptionError):
         burn_captions(synthetic_clip, segments, clip_start=0.0, clip_end=3.0, out_path=out_path, fade_seconds=0.3)
+
+
+def test_chunk_segments_uses_real_word_timestamps():
+    segments = [{
+        "start": 10.0, "end": 12.0, "text": "alpha beta gamma",
+        "words": [
+            {"start": 10.0, "end": 10.5, "word": "alpha"},
+            {"start": 10.5, "end": 11.2, "word": "beta"},
+            {"start": 11.2, "end": 12.0, "word": "gamma"},
+        ],
+    }]
+    chunks = _chunk_segments(segments, clip_start=10.0, clip_end=20.0, max_words=7)
+    assert len(chunks) == 1
+    c = chunks[0]
+    assert c["text"] == "alpha beta gamma"
+    assert [w["text"] for w in c["words"]] == ["alpha", "beta", "gamma"]
+    assert c["words"][0]["start"] == 0.0          # 10.0 - clip_start
+    assert c["words"][2]["end"] == 2.0            # 12.0 - clip_start
+    assert c["start"] == 0.0 and c["end"] == 2.0
+
+
+def test_chunk_segments_estimates_words_when_absent():
+    segments = [{"start": 0.0, "end": 4.0, "text": "hi supercalifragilistic"}]
+    chunks = _chunk_segments(segments, clip_start=0.0, clip_end=100.0, max_words=7)
+    words = chunks[0]["words"]
+    assert [w["text"] for w in words] == ["hi", "supercalifragilistic"]
+    # char-length weighted: 2 vs 20 chars over 4.0s -> shorter word gets less time
+    assert words[1]["end"] - words[1]["start"] > words[0]["end"] - words[0]["start"]
+    assert words[0]["start"] == 0.0
+    assert words[-1]["end"] == pytest.approx(4.0)

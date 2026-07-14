@@ -15,6 +15,50 @@ class CaptionError(RuntimeError):
     """Raised when caption burn-in fails; callers should fall back to the plain clip."""
 
 
+def _estimate_word_windows(words: List[str], start: float, end: float) -> List[Dict]:
+    """Apportion [start, end] across words by character length."""
+    total_chars = sum(len(w) for w in words) or 1
+    span = end - start
+    out = []
+    cursor = start
+    for w in words:
+        share = len(w) / total_chars
+        w_end = cursor + span * share
+        out.append({"start": cursor, "end": w_end, "text": w})
+        cursor = w_end
+    if out:
+        out[-1]["end"] = end  # absorb float drift
+    return out
+
+
+def _chunk_from_real_words(
+    seg_words: List[Dict], clip_start: float, clip_end: float, max_words: int
+) -> List[Dict]:
+    chunks = []
+    for i in range(0, len(seg_words), max_words):
+        group = seg_words[i:i + max_words]
+        kept = []
+        for w in group:
+            ws = max(float(w["start"]), clip_start)
+            we = min(float(w["end"]), clip_end)
+            if we <= ws:
+                continue
+            kept.append({
+                "start": ws - clip_start,
+                "end": we - clip_start,
+                "text": str(w.get("word", "")).strip(),
+            })
+        if not kept:
+            continue
+        chunks.append({
+            "start": kept[0]["start"],
+            "end": kept[-1]["end"],
+            "text": " ".join(w["text"] for w in kept),
+            "words": kept,
+        })
+    return chunks
+
+
 def _chunk_segments(
     segments: List[Dict],
     clip_start: float,
@@ -25,7 +69,8 @@ def _chunk_segments(
     into ~max_words-word chunks, timed proportionally to word count within
     the segment's own duration, then clipped to the clip window.
 
-    Returns clip-relative chunks: [{"start": float, "end": float, "text": str}, ...]
+    Returns clip-relative chunks with per-word timings:
+    [{"start": float, "end": float, "text": str, "words": [...]}, ...]
     """
     chunks: List[Dict] = []
     for seg in segments:
@@ -34,6 +79,13 @@ def _chunk_segments(
         if seg_end <= clip_start or seg_start >= clip_end:
             continue
 
+        # Real-timestamp path: use actual per-word timestamps
+        seg_words = seg.get("words")
+        if seg_words and isinstance(seg_words, list) and len(seg_words) > 0:
+            chunks.extend(_chunk_from_real_words(seg_words, clip_start, clip_end, max_words))
+            continue
+
+        # Estimate path: proportional split with character-weighted word timing
         words = str(seg.get("text", "")).split()
         if not words:
             continue
@@ -55,10 +107,14 @@ def _chunk_segments(
             if clipped_end <= clipped_start:
                 continue
 
+            chunk_start_rel = clipped_start - clip_start
+            chunk_end_rel = clipped_end - clip_start
+
             chunks.append({
-                "start": clipped_start - clip_start,
-                "end": clipped_end - clip_start,
+                "start": chunk_start_rel,
+                "end": chunk_end_rel,
                 "text": " ".join(group),
+                "words": _estimate_word_windows(group, chunk_start_rel, chunk_end_rel),
             })
 
     return chunks
