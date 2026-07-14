@@ -26,6 +26,7 @@ def _run_local(
     captions: bool,
     caption_fade_duration: float,
     word_highlight: bool = True,
+    framing: str = "locked",
 ) -> Dict:
     from .local.clipper import crop_highlights_local
     from .local.downloader import download_youtube_local
@@ -56,6 +57,7 @@ def _run_local(
         captions=captions,
         caption_fade_duration=caption_fade_duration,
         word_highlight=word_highlight,
+        framing=framing,
     )
 
     return {
@@ -122,6 +124,7 @@ def generate_shorts(
     captions: bool = True,
     caption_fade_duration: float = 0.3,
     word_highlight: bool = True,
+    framing: str = "locked",
 ) -> Dict:
     """Run the full pipeline and return a structured result.
 
@@ -136,6 +139,10 @@ def generate_shorts(
         captions: burn fade-in captions onto each clip (default True).
         caption_fade_duration: caption fade-in duration in seconds (default 0.3).
         word_highlight: highlight the currently-spoken word in each caption (default True).
+        framing: "locked" (default, static speaker-centered crop) or
+            "adaptive" (cursor/person-aware crop for screen-recording content
+            that alternates between facecam and screen activity). Only
+            applies to mode="local" — mode="api" always uses MuAPI's autocrop.
 
     Returns:
         {
@@ -156,7 +163,7 @@ def generate_shorts(
     if mode == "local":
         return _run_local(
             youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
-            word_highlight=word_highlight,
+            word_highlight=word_highlight, framing=framing,
         )
     if mode == "api":
         return _run_api(

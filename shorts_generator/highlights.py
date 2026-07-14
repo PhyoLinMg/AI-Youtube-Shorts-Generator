@@ -208,8 +208,8 @@ def call_highlight_api(
     # Ask for ~2× the user's target so dedupe has headroom, but cap so the model
     # doesn't have to generate a huge JSON payload (which times out gpt-5-mini).
     target = max(num_clips * 2, 5)
-    natural_max = max(2 if is_chunk else 3, int(duration / 90))
-    min_clips = min(target, natural_max, 8)
+    natural_max = max(2 if is_chunk else 3, int(duration / 60))
+    min_clips = min(target, natural_max, 14)
     system = HIGHLIGHT_SYSTEM_PROMPT.format(
         virality_criteria=VIRALITY_CRITERIA,
         content_type=content_info.get("content_type", "other"),
@@ -221,8 +221,8 @@ def call_highlight_api(
     last_error = "unknown"
 
     for attempt in range(1, MAX_HIGHLIGHT_API_ATTEMPTS + 1):
-        raw = llm_fn(prompt)
         try:
+            raw = llm_fn(prompt)
             parsed = _parse_json_loose(raw)
             highlights = _sanitize_highlights(parsed.get("highlights"), duration=duration)
             if highlights:
@@ -292,11 +292,12 @@ def get_highlights(
             offset = chunk.get("_offset", 0)
             text = build_transcript_text(chunk)
             print(f"[highlights] chunk {i + 1}/{len(chunks)} (offset {offset:.0f}s)", flush=True)
-            result = call_highlight_api(text, content_info, chunk["duration"], num_clips=num_clips, is_chunk=True, llm_fn=llm_fn)
-            for h in result.get("highlights", []):
-                h["start_time"] = float(h["start_time"]) + offset
-                h["end_time"] = float(h["end_time"]) + offset
-                all_highlights.append(h)
+            # build_transcript_text labels each line with the segment's absolute
+            # timestamp, so the model replies in absolute time too — clamp against
+            # the chunk's absolute end (not its relative length) and don't re-offset.
+            chunk_abs_end = offset + chunk["duration"]
+            result = call_highlight_api(text, content_info, chunk_abs_end, num_clips=num_clips, is_chunk=True, llm_fn=llm_fn)
+            all_highlights.extend(result.get("highlights", []))
         highlights = dedupe_highlights(all_highlights)
     else:
         text = build_transcript_text(transcript)

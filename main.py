@@ -52,6 +52,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Disable per-word highlight animation; caption shows a plain fading phrase instead.",
     )
+    parser.add_argument(
+        "--framing",
+        choices=["locked", "adaptive"],
+        default="locked",
+        help="locked (default): static speaker-centered crop. adaptive: cursor/person-aware crop "
+             "for screen-recording content that alternates between facecam and screen activity "
+             "(--mode local only).",
+    )
     return parser
 
 
@@ -69,6 +77,7 @@ def main() -> int:
             captions=args.captions,
             caption_fade_duration=args.caption_fade_duration,
             word_highlight=args.word_highlight,
+            framing=args.framing,
         )
     except Exception as e:
         print(f"\nFAILED: {e}", file=sys.stderr)
