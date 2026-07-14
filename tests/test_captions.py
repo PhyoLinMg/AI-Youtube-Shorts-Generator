@@ -89,6 +89,39 @@ def test_write_ass_strips_braces_from_text(tmp_path):
     assert "watch this glitch moment" in content
 
 
+def test_write_ass_emits_one_dialogue_per_word_with_highlight(tmp_path):
+    chunks = [{
+        "start": 0.0, "end": 2.0, "text": "alpha beta",
+        "words": [
+            {"start": 0.0, "end": 1.0, "text": "alpha"},
+            {"start": 1.0, "end": 2.0, "text": "beta"},
+        ],
+    }]
+    ass_path = str(tmp_path / "c.ass")
+    _write_ass(chunks, ass_path, width=608, height=1080, fade_seconds=0.3)
+    content = open(ass_path, encoding="utf-8").read()
+    assert content.count("Dialogue:") == 2          # one per word
+    assert "\\c&H00FFFF&" in content                # yellow highlight
+    assert "\\t(0,80,\\fscx125\\fscy125)" in content  # bounce
+    assert content.count("\\fad(300,0)") == 1       # fade on first word only
+
+
+def test_write_ass_word_highlight_false_is_one_line_per_chunk(tmp_path):
+    chunks = [{
+        "start": 0.0, "end": 2.0, "text": "alpha beta",
+        "words": [
+            {"start": 0.0, "end": 1.0, "text": "alpha"},
+            {"start": 1.0, "end": 2.0, "text": "beta"},
+        ],
+    }]
+    ass_path = str(tmp_path / "c.ass")
+    _write_ass(chunks, ass_path, width=608, height=1080, fade_seconds=0.3, word_highlight=False)
+    content = open(ass_path, encoding="utf-8").read()
+    assert content.count("Dialogue:") == 1
+    assert "\\c&H00FFFF&" not in content
+    assert "\\fad(300,0)" in content
+
+
 @pytest.fixture(scope="module")
 def synthetic_clip(tmp_path_factory):
     """A tiny 3s 9:16-ish clip generated once for this test module."""

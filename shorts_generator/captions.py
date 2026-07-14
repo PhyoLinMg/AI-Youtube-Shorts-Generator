@@ -10,6 +10,13 @@ import os
 import subprocess
 from typing import Dict, List, Tuple
 
+# ASS override tags for the karaoke-style active-word highlight: pop to
+# yellow + bold, bounce to 125% scale over the first 80ms of the word's own
+# Dialogue line, then settle back to 100% by 160ms. `{\r}` resets back to
+# the line's base `Caption` style for the remainder of the text.
+_HIGHLIGHT_OPEN = "{\\c&H00FFFF&\\b1\\t(0,80,\\fscx125\\fscy125)\\t(80,160,\\fscx100\\fscy100)}"
+_HIGHLIGHT_CLOSE = "{\\r}"
+
 
 class CaptionError(RuntimeError):
     """Raised when caption burn-in fails; callers should fall back to the plain clip."""
@@ -132,9 +139,39 @@ def _format_ass_timestamp(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-def _write_ass(chunks: List[Dict], ass_path: str, width: int, height: int, fade_seconds: float) -> None:
-    """Write an ASS subtitle file: one bottom-center style, one Dialogue line
-    per chunk, each carrying a fade-in-only \\fad override tag."""
+def _clean_caption_text(text: str) -> str:
+    return text.replace("{", "").replace("}", "").replace("\n", " ")
+
+
+def _render_word_line(word_texts: List[str], active_index: int) -> str:
+    """Render a chunk's full text with the word at `active_index` wrapped in
+    the highlight override tags."""
+    parts = []
+    for i, w in enumerate(word_texts):
+        if i == active_index:
+            parts.append(f"{_HIGHLIGHT_OPEN}{w}{_HIGHLIGHT_CLOSE}")
+        else:
+            parts.append(w)
+    return " ".join(parts)
+
+
+def _write_ass(
+    chunks: List[Dict],
+    ass_path: str,
+    width: int,
+    height: int,
+    fade_seconds: float,
+    word_highlight: bool = True,
+) -> None:
+    """Write an ASS subtitle file: one bottom-center style.
+
+    When `word_highlight` is True and a chunk carries a `"words"` list, one
+    Dialogue line is emitted per word, with the active word wrapped in a
+    color+bold+bounce override; only the chunk's first word carries the
+    fade-in \\fad tag. Chunks without `"words"` (or when `word_highlight` is
+    False) fall back to one plain Dialogue line per chunk with a fade-in-only
+    \\fad override tag.
+    """
     fontsize = max(12, round(height * 0.045))
     margin_v = max(10, round(height * 0.06))
     fade_ms = max(0, round(fade_seconds * 1000))
@@ -159,12 +196,24 @@ def _write_ass(chunks: List[Dict], ass_path: str, width: int, height: int, fade_
 
     lines = [header]
     for chunk in chunks:
-        text = chunk["text"].replace("{", "").replace("}", "").replace("\n", " ")
-        start_ts = _format_ass_timestamp(chunk["start"])
-        end_ts = _format_ass_timestamp(chunk["end"])
-        lines.append(
-            f"Dialogue: 0,{start_ts},{end_ts},Caption,,0,0,0,,{{\\fad({fade_ms},0)}}{text}\n"
-        )
+        words = chunk.get("words")
+        if word_highlight and words:
+            word_texts = [_clean_caption_text(w["text"]) for w in words]
+            for i, word in enumerate(words):
+                start_ts = _format_ass_timestamp(word["start"])
+                end_ts = _format_ass_timestamp(word["end"])
+                line_text = _render_word_line(word_texts, i)
+                fad_prefix = f"{{\\fad({fade_ms},0)}}" if i == 0 else ""
+                lines.append(
+                    f"Dialogue: 0,{start_ts},{end_ts},Caption,,0,0,0,,{fad_prefix}{line_text}\n"
+                )
+        else:
+            text = _clean_caption_text(chunk["text"])
+            start_ts = _format_ass_timestamp(chunk["start"])
+            end_ts = _format_ass_timestamp(chunk["end"])
+            lines.append(
+                f"Dialogue: 0,{start_ts},{end_ts},Caption,,0,0,0,,{{\\fad({fade_ms},0)}}{text}\n"
+            )
 
     with open(ass_path, "w", encoding="utf-8") as f:
         f.writelines(lines)
