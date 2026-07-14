@@ -8,12 +8,18 @@ Two modes:
 
 Both modes burn fade-in captions onto the final clips by default (see
 shorts_generator.captions); pass captions=False to disable.
+
+Every call writes into its own output/<Title>/ folder (see run_output.py):
+Shorts/, full_source.mp4, full_source.json, result.json, progress.log.
 """
+import json
+import os
 from typing import Dict, List, Optional
 
-from .clipper import crop_highlights
+from .clipper import _download_to, crop_highlights
 from .downloader import download_youtube
 from .highlights import call_muapi_llm, get_highlights
+from .run_output import RunPaths, capture_progress_log, resolve_output_dir
 from .transcriber import transcribe
 
 
@@ -25,6 +31,7 @@ def _run_local(
     language: Optional[str],
     captions: bool,
     caption_fade_duration: float,
+    paths: RunPaths,
     word_highlight: bool = True,
     framing: str = "locked",
 ) -> Dict:
@@ -33,7 +40,11 @@ def _run_local(
     from .local.llm import call_local_llm
     from .local.transcriber import transcribe_local
 
-    source_path = download_youtube_local(youtube_url, fmt=download_format)
+    if os.path.exists(paths.source_video):
+        print(f"[pipeline/local] reusing cached source: {paths.source_video}", flush=True)
+        source_path = paths.source_video
+    else:
+        source_path = download_youtube_local(youtube_url, target_path=paths.source_video, fmt=download_format)
 
     transcript = transcribe_local(source_path, language=language)
     if not transcript["segments"]:
@@ -53,6 +64,7 @@ def _run_local(
         source_path,
         top,
         aspect_ratio=aspect_ratio,
+        out_dir=paths.shorts_dir,
         transcript_segments=transcript["segments"],
         captions=captions,
         caption_fade_duration=caption_fade_duration,
@@ -62,6 +74,7 @@ def _run_local(
 
     return {
         "mode": "local",
+        "output_dir": paths.root,
         "source_video_url": source_path,
         "transcript": transcript,
         "highlights": all_highlights,
@@ -77,11 +90,29 @@ def _run_api(
     language: Optional[str],
     captions: bool,
     caption_fade_duration: float,
+    paths: RunPaths,
     word_highlight: bool = True,
 ) -> Dict:
+    # MuAPI /autocrop needs a fresh hosted URL for every crop, and that URL
+    # only comes from /youtube-download — so this call can't be skipped on
+    # rerun even if we already have a local copy of the video.
     source_url = download_youtube(youtube_url, fmt=download_format)
 
-    transcript = transcribe(source_url, language=language)
+    if os.path.exists(paths.source_video):
+        print(f"[pipeline] reusing cached local copy: {paths.source_video}", flush=True)
+    else:
+        _download_to(source_url, paths.source_video)
+        print(f"[pipeline] saved local copy: {paths.source_video}", flush=True)
+
+    if os.path.exists(paths.source_json):
+        print(f"[pipeline] reusing cached transcript: {paths.source_json}", flush=True)
+        with open(paths.source_json, "r", encoding="utf-8") as f:
+            transcript = json.load(f)
+    else:
+        transcript = transcribe(source_url, language=language)
+        with open(paths.source_json, "w", encoding="utf-8") as f:
+            json.dump(transcript, f, ensure_ascii=False)
+
     if not transcript["segments"]:
         raise RuntimeError(
             "Whisper produced no segments. The video may have no detectable speech."
@@ -103,10 +134,12 @@ def _run_api(
         captions=captions,
         caption_fade_duration=caption_fade_duration,
         word_highlight=word_highlight,
+        out_dir=paths.shorts_dir,
     )
 
     return {
         "mode": "api",
+        "output_dir": paths.root,
         "source_video_url": source_url,
         "transcript": transcript,
         "highlights": all_highlights,
@@ -147,12 +180,12 @@ def generate_shorts(
     Returns:
         {
           "mode": "api" | "local",
+          "output_dir": str,         # output/<Title> for this run
           "source_video_url": str,   # hosted URL (api) or local path (local)
           "transcript": {...},
           "highlights": [...],       # all candidates ranked
           "shorts": [...],           # top `num_clips`, each with:
-                                      #   clip_url: local path (captions burned in) or
-                                      #     hosted URL (api mode with --no-captions)
+                                      #   clip_url: local path (Shorts/Short-NN.mp4)
                                       #   hosted_clip_url: original MuAPI URL (api mode,
                                       #     only present when captions were burned in)
                                       #   captions_error: present if caption burn-in failed
@@ -160,14 +193,23 @@ def generate_shorts(
         }
     """
     mode = (mode or "api").lower()
-    if mode == "local":
-        return _run_local(
-            youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
-            word_highlight=word_highlight, framing=framing,
-        )
-    if mode == "api":
-        return _run_api(
-            youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
-            word_highlight=word_highlight,
-        )
-    raise ValueError(f"Unknown mode: {mode!r}. Use 'api' or 'local'.")
+    if mode not in ("api", "local"):
+        raise ValueError(f"Unknown mode: {mode!r}. Use 'api' or 'local'.")
+
+    paths = resolve_output_dir(youtube_url)
+    with capture_progress_log(paths.progress_log):
+        if mode == "local":
+            result = _run_local(
+                youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
+                paths, word_highlight=word_highlight, framing=framing,
+            )
+        else:
+            result = _run_api(
+                youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
+                paths, word_highlight=word_highlight,
+            )
+
+        with open(paths.result_json, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2)
+
+    return result
