@@ -85,6 +85,7 @@ def main() -> int:
 
     print("\n" + "=" * 72)
     print(f"Mode:          {result.get('mode', args.mode)}")
+    print(f"Output folder: {result.get('output_dir')}")
     print(f"Source video:  {result['source_video_url']}")
     print(f"Highlights:    {len(result['highlights'])} candidates → kept top {len(result['shorts'])}")
     print("=" * 72)
