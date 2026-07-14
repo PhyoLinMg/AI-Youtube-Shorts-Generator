@@ -78,3 +78,52 @@ def test_resolve_output_dir_builds_expected_tree(tmp_path, monkeypatch):
     assert paths.result_json == os.path.join(paths.root, "result.json")
     assert paths.progress_log == os.path.join(paths.root, "progress.log")
     assert os.path.isdir(paths.shorts_dir)
+
+
+from pathlib import Path
+
+import pytest
+
+
+def test_capture_progress_log_duplicates_stdout_to_file(tmp_path, capsys):
+    log_path = str(tmp_path / "progress.log")
+    with run_output.capture_progress_log(log_path):
+        print("hello from pipeline")
+
+    captured = capsys.readouterr()
+    assert "hello from pipeline" in captured.out
+
+    content = Path(log_path).read_text()
+    assert "hello from pipeline" in content
+    assert "run start" in content
+
+
+def test_capture_progress_log_records_failure_and_reraises(tmp_path):
+    log_path = str(tmp_path / "progress.log")
+    with pytest.raises(RuntimeError):
+        with run_output.capture_progress_log(log_path):
+            raise RuntimeError("boom")
+
+    content = Path(log_path).read_text()
+    assert "FAILED: boom" in content
+
+
+def test_capture_progress_log_restores_stdout_after(tmp_path):
+    import sys
+    log_path = str(tmp_path / "progress.log")
+    original_stdout = sys.stdout
+    with run_output.capture_progress_log(log_path):
+        pass
+    assert sys.stdout is original_stdout
+
+
+def test_capture_progress_log_appends_across_calls(tmp_path):
+    log_path = str(tmp_path / "progress.log")
+    with run_output.capture_progress_log(log_path):
+        print("first run")
+    with run_output.capture_progress_log(log_path):
+        print("second run")
+
+    content = Path(log_path).read_text()
+    assert "first run" in content
+    assert "second run" in content

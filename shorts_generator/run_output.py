@@ -8,7 +8,10 @@ it into both modes.
 """
 import os
 import re
+import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlparse
@@ -99,3 +102,38 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
         result_json=os.path.join(root, "result.json"),
         progress_log=os.path.join(root, "progress.log"),
     )
+
+
+class _Tee:
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for stream in self._streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self._streams:
+            stream.flush()
+
+
+@contextmanager
+def capture_progress_log(path: str):
+    """Duplicate stdout/stderr to `path` (appended) for the duration of the block."""
+    log_file = open(path, "a", encoding="utf-8")
+    log_file.write(f"\n=== run start {datetime.now().isoformat(timespec='seconds')} ===\n")
+    log_file.flush()
+
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout = _Tee(old_out, log_file)
+    sys.stderr = _Tee(old_err, log_file)
+    try:
+        yield
+    except Exception as e:
+        log_file.write(f"FAILED: {e}\n")
+        log_file.flush()
+        raise
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+        log_file.close()
