@@ -4,12 +4,11 @@ Returns a local mp4 path so the rest of the local pipeline can read it
 directly off disk.
 """
 import os
-import re
+import shutil
+import subprocess
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import unquote, urlparse
 from typing import Optional
-
-from ..config import LOCAL_OUTPUT_DIR
 
 
 def _import_ytdlp():
@@ -33,29 +32,6 @@ def _format_for(fmt: str) -> str:
         f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
         f"best[height<={height}][ext=mp4]/best"
     )
-
-
-def _extract_youtube_video_id(source: str) -> Optional[str]:
-    """Best-effort extraction of a YouTube video id from a URL."""
-    parsed = urlparse(source)
-    host = (parsed.netloc or "").lower()
-    if host.startswith("www."):
-        host = host[4:]
-
-    if host in ("youtu.be", "www.youtu.be"):
-        video_id = parsed.path.lstrip("/").split("/", 1)[0]
-        return video_id or None
-
-    if "youtube.com" in host:
-        if parsed.path.startswith("/watch"):
-            qs = parse_qs(parsed.query)
-            video_id = qs.get("v", [""])[0]
-            return video_id or None
-        match = re.search(r"/(?:shorts|embed|live)/([^/?#&]+)", parsed.path)
-        if match:
-            return match.group(1)
-
-    return None
 
 
 def _resolve_local_path(source: str) -> Optional[str]:
@@ -83,37 +59,36 @@ def _resolve_local_path(source: str) -> Optional[str]:
     return None
 
 
-def _existing_download(out_dir: str, video_id: str) -> Optional[str]:
-    """Return a cached download path if we already have this YouTube id."""
-    for ext in (".mp4", ".mkv", ".webm"):
-        candidate = os.path.join(out_dir, f"source_{video_id}{ext}")
-        if os.path.exists(candidate):
-            return candidate
-    return None
+def _ensure_mp4_at(src: str, dest: str) -> None:
+    """Make sure `dest` exists as an mp4 copy of `src` (remux if needed)."""
+    if os.path.abspath(src) == os.path.abspath(dest):
+        return
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if src.lower().endswith(".mp4"):
+        shutil.copyfile(src, dest)
+        return
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-c", "copy", dest],
+        check=True,
+    )
 
 
-def download_youtube_local(video_url: str, fmt: str = "720", out_dir: Optional[str] = None) -> str:
-    """Download a remote URL or return a local file path unchanged."""
+def download_youtube_local(video_url: str, target_path: str, fmt: str = "720") -> str:
+    """Resolve video_url (YouTube URL, other remote URL, local path, or
+    file:// URL) into a local mp4 at exactly `target_path`."""
     local_path = _resolve_local_path(video_url)
     if local_path:
-        print(f"[download/local] using local file: {local_path}", flush=True)
-        return local_path
+        print(f"[download/local] using local file: {local_path} -> {target_path}", flush=True)
+        _ensure_mp4_at(local_path, target_path)
+        return target_path
 
     yt_dlp = _import_ytdlp()
-    out_dir = out_dir or LOCAL_OUTPUT_DIR
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
-    video_id = _extract_youtube_video_id(video_url)
-    if video_id:
-        cached = _existing_download(out_dir, video_id)
-        if cached:
-            print(f"[download/local] reusing cached download: {cached}", flush=True)
-            return cached
-
-    print(f"[download/local] {video_url} @ {fmt}p → {out_dir}/", flush=True)
+    print(f"[download/local] {video_url} @ {fmt}p -> {target_path}", flush=True)
     ydl_opts = {
         "format": _format_for(fmt),
-        "outtmpl": os.path.join(out_dir, "source_%(id)s.%(ext)s"),
+        "outtmpl": target_path + ".download.%(ext)s",
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
@@ -122,14 +97,18 @@ def download_youtube_local(video_url: str, fmt: str = "720", out_dir: Optional[s
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(video_url, download=True)
-        path = ydl.prepare_filename(info)
+        downloaded = ydl.prepare_filename(info)
         # merge_output_format may rename the extension after merge
-        if not os.path.exists(path):
-            stem, _ = os.path.splitext(path)
+        if not os.path.exists(downloaded):
+            stem, _ = os.path.splitext(downloaded)
             for ext in (".mp4", ".mkv", ".webm"):
                 if os.path.exists(stem + ext):
-                    path = stem + ext
+                    downloaded = stem + ext
                     break
 
-    print(f"[download/local] ready: {path}", flush=True)
-    return path
+    _ensure_mp4_at(downloaded, target_path)
+    if os.path.abspath(downloaded) != os.path.abspath(target_path) and os.path.exists(downloaded):
+        os.remove(downloaded)
+
+    print(f"[download/local] ready: {target_path}", flush=True)
+    return target_path
