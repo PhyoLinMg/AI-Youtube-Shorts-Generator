@@ -86,11 +86,14 @@ def _clip_display_url(shorts_dir: Optional[str], clip_url: Optional[str]) -> Opt
 
 
 def _serialize_result(result: dict, shorts_dir: Optional[str]) -> dict:
+    # Only "shorts" is ever rendered by the dashboard — the full pipeline
+    # result also carries the whole transcript and every highlight candidate,
+    # which /status would otherwise re-serialize and re-send on every poll.
     shorts = [
         {**s, "download_url": _clip_display_url(shorts_dir, s.get("clip_url"))}
         for s in result.get("shorts", [])
     ]
-    return {**result, "shorts": shorts}
+    return {"shorts": shorts}
 
 
 def _safe_join(base_dir: str, name: str) -> Optional[str]:

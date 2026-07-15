@@ -159,11 +159,19 @@
       }
     }
 
+    let pollTimer = null;
+
+    function schedulePoll(delay) {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(poll, delay);
+    }
+
     async function poll() {
       try {
         const resp = await fetch("/status?offset=" + offset);
         if (!resp.ok) {
           showError("lost connection to server");
+          schedulePoll(5000);
           return;
         }
         showError("");
@@ -178,14 +186,18 @@
         if (data.status === "done") {
           setBusy(false);
           renderResults(data.result);
+          // Job finished — stop polling until a new run starts.
         } else if (data.status === "failed") {
           setBusy(false);
           showError(data.error || "run failed");
-        } else if (data.status === "starting" || data.status === "running") {
-          setBusy(true);
+          // Job finished — stop polling until a new run starts.
+        } else {
+          setBusy(data.status === "starting" || data.status === "running");
+          schedulePoll(5000);
         }
       } catch (e) {
         showError("lost connection to server");
+        schedulePoll(5000);
       }
     }
 
@@ -208,13 +220,13 @@
         }
         setBusy(true);
         statusLine.textContent = data.status;
+        schedulePoll(0);
       } catch (e) {
         showError("failed to start run");
       }
     });
 
     poll();
-    setInterval(poll, 5000);
   </script>
 </body>
 </html>
