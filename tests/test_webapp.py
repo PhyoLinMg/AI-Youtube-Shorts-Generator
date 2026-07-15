@@ -318,3 +318,69 @@ def test_delete_source_404s_when_run_folder_vanishes_before_summarize(client, mo
 
     resp = client.post("/history/Video_A/delete-source")
     assert resp.status_code == 404
+
+
+def test_delete_shorts_removes_clips_but_keeps_descriptions(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "Short-01.mp4").write_bytes(b"clip-one")
+    (shorts_dir / "Short-02.mp4").write_bytes(b"clip-two")
+    (shorts_dir / "descriptions.txt").write_text("keep me")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.post("/history/Video_A/delete-shorts")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["shorts_count"] == 0
+    assert data["shorts_size"] == 0
+    assert not (shorts_dir / "Short-01.mp4").exists()
+    assert not (shorts_dir / "Short-02.mp4").exists()
+    assert (shorts_dir / "descriptions.txt").exists()
+
+
+def test_delete_shorts_is_idempotent_when_already_gone(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    root.mkdir()
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.post("/history/Video_A/delete-shorts")
+    assert resp.status_code == 200
+    assert resp.get_json()["shorts_count"] == 0
+
+
+def test_delete_shorts_rejects_while_a_run_is_in_progress(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "Short-01.mp4").write_bytes(b"clip-one")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+    webapp.job.status = "running"
+
+    resp = client.post("/history/Video_A/delete-shorts")
+    assert resp.status_code == 409
+    assert (shorts_dir / "Short-01.mp4").exists()
+
+
+def test_delete_shorts_survives_a_file_vanishing_mid_delete(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "Short-01.mp4").write_bytes(b"clip-one")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    real_remove = os.remove
+
+    def flaky_remove(path):
+        os.remove(path)  # actually delete it (a concurrent deleter "wins")
+        raise FileNotFoundError(path)  # then our own call still tries and fails
+
+    # We want our route's own os.remove call to raise even though the file
+    # is genuinely gone by the time it runs — simulate by removing the file
+    # out from under the route via a monkeypatched os.listdir race is fiddly,
+    # so instead just monkeypatch os.remove to always raise FileNotFoundError
+    # regardless of real state, proving the route tolerates it either way.
+    monkeypatch.setattr(webapp.os, "remove", lambda path: (_ for _ in ()).throw(FileNotFoundError(path)))
+
+    resp = client.post("/history/Video_A/delete-shorts")
+    assert resp.status_code == 200

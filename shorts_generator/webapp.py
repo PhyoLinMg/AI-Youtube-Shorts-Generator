@@ -229,3 +229,24 @@ def delete_history_source(name):
         # (e.g. a concurrent delete-shorts request) — treat it the same as
         # "not found" rather than 500ing.
         return jsonify({"error": "run not found"}), 404
+
+
+@app.route("/history/<name>/delete-shorts", methods=["POST"])
+def delete_history_shorts(name):
+    root, error = _resolve_history_run(name)
+    if error:
+        return error
+    shorts_dir = os.path.join(root, "Shorts")
+    if os.path.isdir(shorts_dir):
+        for filename in os.listdir(shorts_dir):
+            if filename.startswith("Short-") and filename.endswith(".mp4"):
+                try:
+                    os.remove(os.path.join(shorts_dir, filename))
+                except FileNotFoundError:
+                    pass  # already gone — deleting is idempotent
+    try:
+        return jsonify(asdict(summarize_run(name, root)))
+    except OSError:
+        # `root` itself vanished between the isdir() check above and here —
+        # treat it the same as "not found" rather than 500ing.
+        return jsonify({"error": "run not found"}), 404
