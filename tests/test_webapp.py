@@ -408,3 +408,12 @@ def test_delete_shorts_survives_the_shorts_dir_vanishing_before_listdir(client, 
     resp = client.post("/history/Video_A/delete-shorts")
     assert resp.status_code == 200
     assert resp.get_json()["shorts_count"] == 0
+
+
+def test_index_includes_history_tab_markup(client):
+    resp = client.get("/")
+    assert b'data-tab="history"' in resp.data
+    assert b'id="tab-generate"' in resp.data
+    assert b'id="tab-history"' in resp.data
+    assert b'id="history-list"' in resp.data
+    assert b'id="history-refresh"' in resp.data
