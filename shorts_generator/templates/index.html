@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AI Shorts Dashboard</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { font-size: 1.4rem; }
+    fieldset { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 1.5rem; }
+    label { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.85rem; color: #444; }
+    input[type=text], input[type=number], select { width: 100%; padding: 0.4rem; box-sizing: border-box; }
+    .row { display: flex; gap: 1rem; }
+    .row > div { flex: 1; }
+    button { margin-top: 1rem; padding: 0.6rem 1.2rem; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    #log { background: #111; color: #0f0; font-family: monospace; font-size: 0.8rem; padding: 0.75rem; height: 260px; overflow-y: auto; white-space: pre-wrap; border-radius: 6px; }
+    #error-banner { background: #fee; border: 1px solid #f99; color: #900; padding: 0.6rem; border-radius: 6px; margin-bottom: 1rem; display: none; }
+    .short-card { border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; }
+    .short-card video { width: 100%; max-width: 260px; display: block; margin: 0.5rem 0; }
+    .short-card.failed { border-color: #f99; background: #fff5f5; }
+    .status-line { font-size: 0.85rem; color: #666; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>AI Shorts Dashboard</h1>
+
+  <div id="error-banner"></div>
+
+  <form id="run-form">
+    <fieldset>
+      <label for="url">YouTube URL</label>
+      <input type="text" id="url" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
+
+      <div class="row">
+        <div>
+          <label for="mode">Mode</label>
+          <select id="mode" name="mode">
+            <option value="api">api</option>
+            <option value="local">local</option>
+          </select>
+        </div>
+        <div>
+          <label for="num_clips">Num clips</label>
+          <input type="number" id="num_clips" name="num_clips" value="3" min="1">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="aspect_ratio">Aspect ratio</label>
+          <input type="text" id="aspect_ratio" name="aspect_ratio" value="9:16">
+        </div>
+        <div>
+          <label for="format">Download resolution</label>
+          <select id="format" name="format">
+            <option value="360">360</option>
+            <option value="480">480</option>
+            <option value="720" selected>720</option>
+            <option value="1080">1080</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="language">Language (blank = auto-detect)</label>
+          <input type="text" id="language" name="language" placeholder="en">
+        </div>
+        <div>
+          <label for="framing">Framing (local mode only)</label>
+          <select id="framing" name="framing">
+            <option value="locked">locked</option>
+            <option value="adaptive">adaptive</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label><input type="checkbox" id="captions" name="captions" checked> Burn captions</label>
+        </div>
+        <div>
+          <label><input type="checkbox" id="word_highlight" name="word_highlight" checked> Word highlight</label>
+        </div>
+        <div>
+          <label for="caption_fade_duration">Caption fade (s)</label>
+          <input type="number" id="caption_fade_duration" name="caption_fade_duration" value="0.3" step="0.1" min="0">
+        </div>
+      </div>
+
+      <button type="submit" id="submit-btn">Generate shorts</button>
+    </fieldset>
+  </form>
+
+  <div class="status-line" id="status-line">idle</div>
+  <pre id="log"></pre>
+
+  <div id="results"></div>
+
+  <script>
+    const form = document.getElementById("run-form");
+    const submitBtn = document.getElementById("submit-btn");
+    const statusLine = document.getElementById("status-line");
+    const logEl = document.getElementById("log");
+    const resultsEl = document.getElementById("results");
+    const errorBanner = document.getElementById("error-banner");
+
+    let offset = 0;
+
+    function setBusy(busy) {
+      submitBtn.disabled = busy;
+    }
+
+    function showError(message) {
+      errorBanner.textContent = message;
+      errorBanner.style.display = message ? "block" : "none";
+    }
+
+    function renderResults(result) {
+      resultsEl.innerHTML = "";
+      if (!result || !result.shorts) return;
+      for (const s of result.shorts) {
+        const card = document.createElement("div");
+        card.className = "short-card" + (s.download_url ? "" : " failed");
+        if (s.download_url) {
+          card.innerHTML =
+            "<strong>" + (s.title || "Untitled") + "</strong> (score " + s.score + ")" +
+            "<div>" + (s.hook_sentence || "") + "</div>" +
+            "<video controls src=\"" + s.download_url + "\"></video>" +
+            "<a href=\"" + s.download_url + "\" download>Download</a>";
+        } else {
+          card.innerHTML =
+            "<strong>" + (s.title || "Untitled") + "</strong> — failed" +
+            "<div>" + (s.error || "unknown error") + "</div>";
+        }
+        resultsEl.appendChild(card);
+      }
+    }
+
+    async function poll() {
+      try {
+        const resp = await fetch("/status?offset=" + offset);
+        if (!resp.ok) {
+          showError("lost connection to server");
+          return;
+        }
+        showError("");
+        const data = await resp.json();
+        if (data.log) {
+          logEl.textContent += data.log;
+          logEl.scrollTop = logEl.scrollHeight;
+        }
+        offset = data.offset;
+        statusLine.textContent = data.status;
+
+        if (data.status === "done") {
+          setBusy(false);
+          renderResults(data.result);
+        } else if (data.status === "failed") {
+          setBusy(false);
+          showError(data.error || "run failed");
+        } else if (data.status === "starting" || data.status === "running") {
+          setBusy(true);
+        }
+      } catch (e) {
+        showError("lost connection to server");
+      }
+    }
+
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      showError("");
+      logEl.textContent = "";
+      resultsEl.innerHTML = "";
+      offset = 0;
+      const formData = new FormData(form);
+      formData.set("captions", document.getElementById("captions").checked ? "true" : "false");
+      formData.set("word_highlight", document.getElementById("word_highlight").checked ? "true" : "false");
+
+      const resp = await fetch("/run", { method: "POST", body: formData });
+      const data = await resp.json();
+      if (!resp.ok) {
+        showError(data.error || "failed to start run");
+        return;
+      }
+      setBusy(true);
+      statusLine.textContent = data.status;
+    });
+
+    poll();
+    setInterval(poll, 5000);
+  </script>
+</body>
+</html>
