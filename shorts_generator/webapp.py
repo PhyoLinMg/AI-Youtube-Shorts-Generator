@@ -12,7 +12,7 @@ import sys
 import threading
 import traceback
 from dataclasses import asdict, dataclass
-from typing import Optional
+from typing import Any, Optional, Tuple
 
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
@@ -194,7 +194,7 @@ def history():
     return jsonify({"runs": [asdict(r) for r in list_runs()]})
 
 
-def _resolve_history_run(name: str):
+def _resolve_history_run(name: str) -> Tuple[Optional[str], Optional[Any]]:
     """Validate `name` as a run folder under LOCAL_OUTPUT_DIR.
 
     Returns `(root, None)` on success or `(None, error_response)` when the
@@ -218,6 +218,14 @@ def delete_history_source(name):
     if error:
         return error
     source_video = os.path.join(root, "full_source.mp4")
-    if os.path.isfile(source_video):
+    try:
         os.remove(source_video)
-    return jsonify(asdict(summarize_run(name, root)))
+    except FileNotFoundError:
+        pass  # already gone — deleting is idempotent
+    try:
+        return jsonify(asdict(summarize_run(name, root)))
+    except OSError:
+        # `root` itself vanished between the isdir() check above and here
+        # (e.g. a concurrent delete-shorts request) — treat it the same as
+        # "not found" rather than 500ing.
+        return jsonify({"error": "run not found"}), 404

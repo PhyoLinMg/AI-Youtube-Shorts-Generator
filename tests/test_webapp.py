@@ -273,3 +273,48 @@ def test_delete_source_rejects_while_a_run_is_in_progress(client, monkeypatch, t
     resp = client.post("/history/Video_A/delete-source")
     assert resp.status_code == 409
     assert (root / "full_source.mp4").exists()
+
+
+def test_delete_source_survives_file_vanishing_between_check_and_remove(client, monkeypatch, tmp_path):
+    """TOCTOU: if full_source.mp4 disappears between the isfile() check and
+    os.remove() (e.g. a concurrent delete), the route must still respond
+    cleanly instead of letting FileNotFoundError bubble up as a 500."""
+    root = tmp_path / "Video_A"
+    root.mkdir()
+    (root / "full_source.mp4").write_bytes(b"video-bytes")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    real_remove = os.remove
+
+    def flaky_remove(path):
+        # Simulate a concurrent actor deleting the file a moment before our
+        # os.remove() call reaches the filesystem: the file is genuinely
+        # gone by the time we get there, so the real os.remove() would also
+        # raise FileNotFoundError.
+        if os.path.exists(path):
+            real_remove(path)
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(webapp.os, "remove", flaky_remove)
+
+    resp = client.post("/history/Video_A/delete-source")
+    assert resp.status_code == 200
+    assert resp.get_json()["source_exists"] is False
+
+
+def test_delete_source_404s_when_run_folder_vanishes_before_summarize(client, monkeypatch, tmp_path):
+    """If `root` disappears between _resolve_history_run's isdir() check and
+    the trailing summarize_run() call (e.g. a concurrent delete-shorts
+    request removes the whole folder), summarize_run raises OSError — the
+    route must turn that into a clean 404, not a 500."""
+    root = tmp_path / "Video_A"
+    root.mkdir()
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    def flaky_summarize_run(name, root_path):
+        raise FileNotFoundError(root_path)
+
+    monkeypatch.setattr(webapp, "summarize_run", flaky_summarize_run)
+
+    resp = client.post("/history/Video_A/delete-source")
+    assert resp.status_code == 404
