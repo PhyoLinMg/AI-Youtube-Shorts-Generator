@@ -194,6 +194,31 @@ def test_run_api_interrupted_download_does_not_leave_partial_source_video(tmp_pa
     assert not os.path.exists(paths.source_video)
 
 
+def test_generate_shorts_uses_provided_paths_without_resolving(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+
+    def _fail_resolve(*a, **k):
+        raise AssertionError("resolve_output_dir should not be called when paths is provided")
+    monkeypatch.setattr(pipeline_module, "resolve_output_dir", _fail_resolve)
+
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(local_clipper_module, "crop_highlights_local", Mock(return_value=[]))
+
+    result = pipeline_module.generate_shorts(
+        "https://youtube.example/x",
+        mode="local",
+        paths=paths,
+    )
+
+    assert result["output_dir"] == paths.root
+    assert os.path.exists(paths.progress_log)
+
+
 def test_run_api_recovers_from_corrupted_transcript_cache(tmp_path, monkeypatch):
     paths = _paths(tmp_path)
     with open(paths.source_video, "wb") as f:

@@ -170,6 +170,7 @@ def generate_shorts(
     caption_fade_duration: float = 0.3,
     word_highlight: bool = True,
     framing: str = "locked",
+    paths: Optional[RunPaths] = None,
 ) -> Dict:
     """Run the full pipeline and return a structured result.
 
@@ -188,6 +189,10 @@ def generate_shorts(
             "adaptive" (cursor/person-aware crop for screen-recording content
             that alternates between facecam and screen activity). Only
             applies to mode="local" — mode="api" always uses MuAPI's autocrop.
+        paths: pre-resolved RunPaths to use instead of resolving them from
+            youtube_url. Callers that need to know progress_log's path before
+            the pipeline starts (e.g. a background job) should resolve it
+            themselves and pass it here.
 
     Returns:
         {
@@ -208,7 +213,7 @@ def generate_shorts(
     if mode not in ("api", "local"):
         raise ValueError(f"Unknown mode: {mode!r}. Use 'api' or 'local'.")
 
-    paths = resolve_output_dir(youtube_url)
+    paths = paths or resolve_output_dir(youtube_url)
     with capture_progress_log(paths.progress_log):
         if mode == "local":
             result = _run_local(
