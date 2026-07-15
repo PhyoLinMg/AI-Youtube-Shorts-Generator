@@ -391,7 +391,6 @@
       cursor: pointer;
     }
     .history-delete-btn:hover { border-color: var(--warn); }
-    .history-delete-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .history-empty { color: var(--muted); font-size: 0.85rem; }
   </style>
 </head>
@@ -831,6 +830,11 @@
       historyList.innerHTML = "";
       try {
         const resp = await fetch("/history");
+        if (!resp.ok) {
+          showError("failed to load history");
+          return;
+        }
+        showError("");
         const data = await resp.json();
         if (!data.runs || data.runs.length === 0) {
           const empty = document.createElement("div");
