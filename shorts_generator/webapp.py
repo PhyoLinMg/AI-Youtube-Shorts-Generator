@@ -8,7 +8,9 @@ sys.stdout/sys.stderr process-globally, not per-thread, so two concurrent
 runs would interleave each other's progress logs.
 """
 import os
+import sys
 import threading
+import traceback
 from dataclasses import dataclass
 from typing import Optional
 
@@ -69,6 +71,7 @@ def _run_job(
             job.result = result
             job.status = "done"
     except Exception as e:
+        traceback.print_exc(file=sys.stderr)
         with _job_lock:
             job.error = str(e)
             job.status = "failed"
@@ -85,6 +88,21 @@ def start_run():
     if not url:
         return jsonify({"error": "url is required"}), 400
 
+    try:
+        kwargs = dict(
+            mode=request.form.get("mode", "api"),
+            num_clips=int(request.form.get("num_clips", 3)),
+            aspect_ratio=request.form.get("aspect_ratio", "9:16"),
+            download_format=request.form.get("format", "720"),
+            language=(request.form.get("language") or "").strip() or None,
+            captions=request.form.get("captions", "true") == "true",
+            caption_fade_duration=float(request.form.get("caption_fade_duration", 0.3)),
+            word_highlight=request.form.get("word_highlight", "true") == "true",
+            framing=request.form.get("framing", "locked"),
+        )
+    except (TypeError, ValueError) as e:
+        return jsonify({"error": f"invalid input: {e}"}), 400
+
     with _job_lock:
         if job.status in ("starting", "running"):
             return jsonify({"error": "a run is already in progress"}), 409
@@ -95,16 +113,5 @@ def start_run():
         job.result = None
         job.error = None
 
-    kwargs = dict(
-        mode=request.form.get("mode", "api"),
-        num_clips=int(request.form.get("num_clips", 3)),
-        aspect_ratio=request.form.get("aspect_ratio", "9:16"),
-        download_format=request.form.get("format", "720"),
-        language=(request.form.get("language") or "").strip() or None,
-        captions=request.form.get("captions", "true") == "true",
-        caption_fade_duration=float(request.form.get("caption_fade_duration", 0.3)),
-        word_highlight=request.form.get("word_highlight", "true") == "true",
-        framing=request.form.get("framing", "locked"),
-    )
     threading.Thread(target=_run_job, args=(url,), kwargs=kwargs, daemon=True).start()
     return jsonify({"status": "starting"}), 202

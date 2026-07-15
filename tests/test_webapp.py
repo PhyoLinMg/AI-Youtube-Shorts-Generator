@@ -86,3 +86,18 @@ def test_run_starts_a_job_and_reaches_done(client, monkeypatch, tmp_path):
     assert webapp.job.status == "done"
     assert webapp.job.result == fake_result
     assert webapp.job.progress_log == fake_paths.progress_log
+
+
+def test_run_rejects_malformed_input_without_wedging_job_state(client, monkeypatch, tmp_path):
+    resp = client.post("/run", data={"url": "https://youtube.example/x", "num_clips": "not-a-number"})
+    assert resp.status_code == 400
+    assert webapp.job.status == "idle"
+
+    fake_paths = _fake_run_paths(tmp_path)
+    monkeypatch.setattr(webapp, "resolve_output_dir", lambda url: fake_paths)
+    monkeypatch.setattr(webapp, "generate_shorts", lambda url, **kwargs: {"mode": "api", "output_dir": fake_paths.root, "shorts": []})
+    monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
+
+    resp2 = client.post("/run", data={"url": "https://youtube.example/x"})
+    assert resp2.status_code == 202
+    assert webapp.job.status == "done"
