@@ -122,16 +122,38 @@
       for (const s of result.shorts) {
         const card = document.createElement("div");
         card.className = "short-card" + (s.download_url ? "" : " failed");
+
+        const titleEl = document.createElement("strong");
+        titleEl.textContent = s.title || "Untitled";
+        card.appendChild(titleEl);
+
         if (s.download_url) {
-          card.innerHTML =
-            "<strong>" + (s.title || "Untitled") + "</strong> (score " + s.score + ")" +
-            "<div>" + (s.hook_sentence || "") + "</div>" +
-            "<video controls src=\"" + s.download_url + "\"></video>" +
-            "<a href=\"" + s.download_url + "\" download>Download</a>";
+          const scoreEl = document.createElement("span");
+          scoreEl.textContent = " (score " + s.score + ")";
+          card.appendChild(scoreEl);
+
+          const hookEl = document.createElement("div");
+          hookEl.textContent = s.hook_sentence || "";
+          card.appendChild(hookEl);
+
+          const video = document.createElement("video");
+          video.controls = true;
+          video.src = s.download_url;
+          card.appendChild(video);
+
+          const link = document.createElement("a");
+          link.href = s.download_url;
+          link.setAttribute("download", "");
+          link.textContent = "Download";
+          card.appendChild(link);
         } else {
-          card.innerHTML =
-            "<strong>" + (s.title || "Untitled") + "</strong> — failed" +
-            "<div>" + (s.error || "unknown error") + "</div>";
+          const statusEl = document.createElement("span");
+          statusEl.textContent = " — failed";
+          card.appendChild(statusEl);
+
+          const errEl = document.createElement("div");
+          errEl.textContent = s.error || "unknown error";
+          card.appendChild(errEl);
         }
         resultsEl.appendChild(card);
       }
@@ -177,14 +199,18 @@
       formData.set("captions", document.getElementById("captions").checked ? "true" : "false");
       formData.set("word_highlight", document.getElementById("word_highlight").checked ? "true" : "false");
 
-      const resp = await fetch("/run", { method: "POST", body: formData });
-      const data = await resp.json();
-      if (!resp.ok) {
-        showError(data.error || "failed to start run");
-        return;
+      try {
+        const resp = await fetch("/run", { method: "POST", body: formData });
+        const data = await resp.json();
+        if (!resp.ok) {
+          showError(data.error || "failed to start run");
+          return;
+        }
+        setBusy(true);
+        statusLine.textContent = data.status;
+      } catch (e) {
+        showError("failed to start run");
       }
-      setBusy(true);
-      statusLine.textContent = data.status;
     });
 
     poll();
