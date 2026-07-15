@@ -173,7 +173,8 @@ def _write_ass(
     \\fad override tag.
     """
     fontsize = max(12, round(height * 0.045))
-    margin_v = max(10, round(height * 0.06))
+    margin_v = max(10, round(height * 0.18))
+    margin_h = max(10, round(width * 0.06))
     fade_ms = max(0, round(fade_seconds * 1000))
 
     header = (
@@ -188,7 +189,7 @@ def _write_ass(
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Caption,Arial,{fontsize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
-        f"0,0,0,0,100,100,0,0,1,2,1,2,20,20,{margin_v},1\n"
+        f"0,0,0,0,100,100,0,0,1,2,1,2,{margin_h},{margin_h},{margin_v},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"

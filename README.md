@@ -220,7 +220,7 @@ pip install -r requirements-web.txt
 python dashboard.py
 ```
 
-Then open `http://127.0.0.1:5000`. Paste a YouTube URL, set any options
+Then open `http://127.0.0.1:5050`. Paste a YouTube URL, set any options
 (mode, num clips, aspect ratio, captions, etc. — the same knobs as the CLI
 flags below), and submit. A live progress log streams while the pipeline
 runs; once it finishes, each short shows an inline preview with a download

@@ -141,3 +141,36 @@ def test_capture_progress_log_appends_across_calls(tmp_path):
     content = Path(log_path).read_text()
     assert "first run" in content
     assert "second run" in content
+
+
+def test_write_descriptions_formats_one_line_per_short(tmp_path):
+    shorts_dir = str(tmp_path)
+    shorts = [
+        {"clip_url": "Short-01.mp4", "title": "Title One", "description": "Come watch clip one."},
+        {"clip_url": "Short-02.mp4", "title": "Title Two", "description": "Come watch clip two."},
+    ]
+    path = run_output.write_descriptions(shorts_dir, shorts)
+    content = Path(path).read_text()
+    assert content == "short 01 - Title One -- Come watch clip one.\nshort 02 - Title Two -- Come watch clip two.\n"
+
+
+def test_write_descriptions_skips_failed_clips_without_renumbering(tmp_path):
+    shorts = [
+        {"clip_url": None, "title": "Failed", "error": "boom"},
+        {"clip_url": "Short-02.mp4", "title": "Survivor", "description": "Come watch it."},
+    ]
+    path = run_output.write_descriptions(str(tmp_path), shorts)
+    content = Path(path).read_text()
+    assert content == "short 02 - Survivor -- Come watch it.\n"
+
+
+def test_write_descriptions_empty_shorts_writes_empty_file(tmp_path):
+    path = run_output.write_descriptions(str(tmp_path), [])
+    assert Path(path).read_text() == ""
+
+
+def test_write_descriptions_falls_back_on_missing_fields(tmp_path):
+    shorts = [{"clip_url": "Short-01.mp4"}]
+    path = run_output.write_descriptions(str(tmp_path), shorts)
+    content = Path(path).read_text()
+    assert content == "short 01 - Untitled -- \n"

@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
@@ -132,6 +132,32 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
         result_json=os.path.join(root, "result.json"),
         progress_log=os.path.join(root, "progress.log"),
     )
+
+
+def write_descriptions(shorts_dir: str, shorts: List[Dict]) -> str:
+    """Write a copy-paste-ready descriptions.txt next to the Short-NN.mp4 files.
+
+    One line per short that actually has a clip_url — "short 01 - <title> --
+    <description>" — numbered by position in `shorts` so it lines up with
+    Short-{i:02d}.mp4 even when an earlier clip in the batch failed to crop.
+    `description` is the LLM-written social caption meant to pull an audience
+    into the clip (see highlights.py), not the in-clip hook_sentence.
+    """
+    path = os.path.join(shorts_dir, "descriptions.txt")
+    lines = []
+    for i, s in enumerate(shorts, 1):
+        if not s.get("clip_url"):
+            continue
+        title = (s.get("title") or "Untitled").strip()
+        description = (s.get("description") or "").strip()
+        lines.append(f"short {i:02d} - {title} -- {description}")
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+        if lines:
+            f.write("\n")
+
+    return path
 
 
 class _Tee:

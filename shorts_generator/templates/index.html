@@ -2,108 +2,431 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Shorts Dashboard</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-    h1 { font-size: 1.4rem; }
-    fieldset { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 1.5rem; }
-    label { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.85rem; color: #444; }
-    input[type=text], input[type=number], select { width: 100%; padding: 0.4rem; box-sizing: border-box; }
-    .row { display: flex; gap: 1rem; }
+    :root {
+      --bg: #12151a;
+      --panel: #1b2027;
+      --panel-2: #212830;
+      --line: #2c333c;
+      --text: #e7eaee;
+      --muted: #8a94a1;
+      --rec: #ff4136;
+      --ok: #2ecc8f;
+      --warn: #f5a623;
+      --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+      --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 1.25rem 1.25rem 3rem;
+    }
+
+    /* --- top bar: OSD-style status readout --- */
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 1rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .wordmark {
+      font-family: var(--mono);
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      color: var(--text);
+    }
+    .osd {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .osd-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+    .osd-dot.is-rec { background: var(--rec); animation: pulse 1.1s ease-in-out infinite; }
+    .osd-dot.is-ok { background: var(--ok); }
+    .osd-dot.is-warn { background: var(--warn); }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.25; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .osd-dot.is-rec { animation: none; }
+    }
+
+    /* --- eyebrow / section labels --- */
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 1rem;
+    }
+
+    /* --- viewfinder corner-bracket frame, pure CSS, reused at 3 scales --- */
+    .frame {
+      --vf-c: var(--muted);
+      --vf-s: 14px;
+      --vf-w: 2px;
+      position: relative;
+      background-image:
+        linear-gradient(var(--vf-c), var(--vf-c)), linear-gradient(var(--vf-c), var(--vf-c)),
+        linear-gradient(var(--vf-c), var(--vf-c)), linear-gradient(var(--vf-c), var(--vf-c)),
+        linear-gradient(var(--vf-c), var(--vf-c)), linear-gradient(var(--vf-c), var(--vf-c)),
+        linear-gradient(var(--vf-c), var(--vf-c)), linear-gradient(var(--vf-c), var(--vf-c));
+      background-repeat: no-repeat;
+      background-size:
+        var(--vf-s) var(--vf-w), var(--vf-w) var(--vf-s),
+        var(--vf-s) var(--vf-w), var(--vf-w) var(--vf-s),
+        var(--vf-s) var(--vf-w), var(--vf-w) var(--vf-s),
+        var(--vf-s) var(--vf-w), var(--vf-w) var(--vf-s);
+      background-position:
+        top left, top left,
+        top right, top right,
+        bottom left, bottom left,
+        bottom right, bottom right;
+    }
+
+    /* --- layout --- */
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+      gap: 1.25rem;
+      align-items: start;
+    }
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    .stack { display: grid; gap: 1.25rem; }
+
+    .panel {
+      background-color: var(--panel);
+      border-radius: 4px;
+      padding: 1.1rem 1.1rem 1.25rem;
+    }
+
+    #error-banner {
+      background: rgba(245, 166, 35, 0.12);
+      border: 1px solid var(--warn);
+      color: var(--warn);
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      padding: 0.6rem 0.8rem;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+      display: none;
+    }
+
+    /* --- form --- */
+    fieldset { border: 0; padding: 0; margin: 0; }
+    label {
+      display: block;
+      margin: 0.7rem 0 0.25rem;
+      font-size: 0.78rem;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+    }
+    label:first-child { margin-top: 0; }
+    input[type=text], input[type=number], select {
+      width: 100%;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 4px;
+      padding: 0.5rem 0.6rem;
+      font-family: var(--sans);
+      font-size: 0.9rem;
+    }
+    input::placeholder { color: #5a6270; }
+    input[type=text]:focus-visible, input[type=number]:focus-visible,
+    select:focus-visible, button:focus-visible, a:focus-visible {
+      outline: 2px solid var(--rec);
+      outline-offset: 2px;
+    }
+    .row { display: flex; gap: 0.9rem; }
     .row > div { flex: 1; }
-    button { margin-top: 1rem; padding: 0.6rem 1.2rem; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    #log { background: #111; color: #0f0; font-family: monospace; font-size: 0.8rem; padding: 0.75rem; height: 260px; overflow-y: auto; white-space: pre-wrap; border-radius: 6px; }
-    #error-banner { background: #fee; border: 1px solid #f99; color: #900; padding: 0.6rem; border-radius: 6px; margin-bottom: 1rem; display: none; }
-    .short-card { border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; }
-    .short-card video { width: 100%; max-width: 260px; display: block; margin: 0.5rem 0; }
-    .short-card.failed { border-color: #f99; background: #fff5f5; }
-    .status-line { font-size: 0.85rem; color: #666; margin-bottom: 0.5rem; }
+    .checkbox-row { display: flex; align-items: center; gap: 0.4rem; }
+    .checkbox-row label { display: flex; align-items: center; gap: 0.4rem; margin: 0; color: var(--text); font-size: 0.85rem; }
+    input[type=checkbox] { accent-color: var(--rec); width: 15px; height: 15px; }
+
+    button {
+      width: 100%;
+      margin-top: 1.25rem;
+      padding: 0.65rem 1.2rem;
+      background: var(--rec);
+      color: #1a0503;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* --- monitor / log console --- */
+    #log {
+      background: var(--panel-2);
+      color: var(--ok);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      padding: 0.85rem;
+      height: 220px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      border-radius: 4px;
+      margin: 0;
+    }
+
+    /* --- results --- */
+    .results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      --vf-c: var(--muted);
+      background-color: var(--panel-2);
+      border-radius: 4px;
+      padding: 0.7rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      opacity: 0;
+      transform: translateY(4px);
+      animation: card-in 0.18s ease-out forwards;
+    }
+    @keyframes card-in { to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) {
+      .card { animation: none; opacity: 1; transform: none; }
+    }
+    .card.failed { --vf-c: var(--warn); }
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+    .meter {
+      position: relative;
+      height: 4px;
+      background: var(--line);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .meter > span {
+      position: absolute;
+      inset: 0 auto 0 0;
+      background: var(--ok);
+    }
+    .score-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .score-row .meter { flex: 1; }
+    .pitch {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.35;
+    }
+    .hook {
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .reason {
+      font-size: 0.72rem;
+      color: var(--muted);
+      font-style: italic;
+      line-height: 1.3;
+    }
+    .video-frame {
+      --vf-c: var(--muted);
+      --vf-s: 10px;
+      aspect-ratio: 9 / 16;
+      background-color: #000;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .video-frame video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .card a.download {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--ok);
+      text-decoration: none;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      padding: 0.35rem 0;
+      text-align: center;
+    }
+    .card a.download:hover { border-color: var(--ok); }
+    .copy-row { display: flex; }
+    button.copy-btn {
+      width: auto;
+      margin-top: 0;
+      flex: 1;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      padding: 0.3rem 0;
+    }
+    button.copy-btn:hover { border-color: var(--text); color: var(--text); }
+    button.copy-btn.is-copied { border-color: var(--ok); color: var(--ok); }
+    .card-note {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--warn);
+    }
+    .card-status {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--warn);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .card-error {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
-  <h1>AI Shorts Dashboard</h1>
+  <header class="top-bar">
+    <span class="wordmark">AI SHORTS</span>
+    <span class="osd">
+      <span class="osd-dot" id="osd-dot"></span>
+      <span id="status-line">STANDBY</span>
+    </span>
+  </header>
 
-  <div id="error-banner"></div>
+  <div id="error-banner" role="alert"></div>
 
-  <form id="run-form">
-    <fieldset>
-      <label for="url">YouTube URL</label>
-      <input type="text" id="url" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
+  <main class="layout">
+    <section class="panel frame">
+      <h2 class="eyebrow">Source</h2>
+      <form id="run-form">
+        <fieldset>
+          <label for="url">YouTube URL</label>
+          <input type="text" id="url" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
 
-      <div class="row">
-        <div>
-          <label for="mode">Mode</label>
-          <select id="mode" name="mode">
-            <option value="api">api</option>
-            <option value="local">local</option>
-          </select>
-        </div>
-        <div>
-          <label for="num_clips">Num clips</label>
-          <input type="number" id="num_clips" name="num_clips" value="3" min="1">
-        </div>
-      </div>
+          <div class="row">
+            <div>
+              <label for="mode">Mode</label>
+              <select id="mode" name="mode">
+                <option value="api">api</option>
+                <option value="local">local</option>
+              </select>
+            </div>
+            <div>
+              <label for="num_clips">Num clips</label>
+              <input type="number" id="num_clips" name="num_clips" value="3" min="1">
+            </div>
+          </div>
 
-      <div class="row">
-        <div>
-          <label for="aspect_ratio">Aspect ratio</label>
-          <input type="text" id="aspect_ratio" name="aspect_ratio" value="9:16">
-        </div>
-        <div>
-          <label for="format">Download resolution</label>
-          <select id="format" name="format">
-            <option value="360">360</option>
-            <option value="480">480</option>
-            <option value="720" selected>720</option>
-            <option value="1080">1080</option>
-          </select>
-        </div>
-      </div>
+          <div class="row">
+            <div>
+              <label for="aspect_ratio">Aspect ratio</label>
+              <input type="text" id="aspect_ratio" name="aspect_ratio" value="9:16">
+            </div>
+            <div>
+              <label for="format">Download resolution</label>
+              <select id="format" name="format">
+                <option value="360">360</option>
+                <option value="480">480</option>
+                <option value="720" selected>720</option>
+                <option value="1080">1080</option>
+              </select>
+            </div>
+          </div>
 
-      <div class="row">
-        <div>
-          <label for="language">Language (blank = auto-detect)</label>
-          <input type="text" id="language" name="language" placeholder="en">
-        </div>
-        <div>
-          <label for="framing">Framing (local mode only)</label>
-          <select id="framing" name="framing">
-            <option value="locked">locked</option>
-            <option value="adaptive">adaptive</option>
-          </select>
-        </div>
-      </div>
+          <div class="row">
+            <div>
+              <label for="language">Language (blank = auto-detect)</label>
+              <input type="text" id="language" name="language" placeholder="en">
+            </div>
+            <div>
+              <label for="framing">Framing (local mode only)</label>
+              <select id="framing" name="framing">
+                <option value="locked">locked</option>
+                <option value="adaptive">adaptive</option>
+              </select>
+            </div>
+          </div>
 
-      <div class="row">
-        <div>
-          <label><input type="checkbox" id="captions" name="captions" checked> Burn captions</label>
-        </div>
-        <div>
-          <label><input type="checkbox" id="word_highlight" name="word_highlight" checked> Word highlight</label>
-        </div>
-        <div>
+          <div class="row">
+            <div class="checkbox-row">
+              <label><input type="checkbox" id="captions" name="captions" checked> Burn captions</label>
+            </div>
+            <div class="checkbox-row">
+              <label><input type="checkbox" id="word_highlight" name="word_highlight" checked> Word highlight</label>
+            </div>
+          </div>
           <label for="caption_fade_duration">Caption fade (s)</label>
           <input type="number" id="caption_fade_duration" name="caption_fade_duration" value="0.3" step="0.1" min="0">
-        </div>
-      </div>
 
-      <button type="submit" id="submit-btn">Generate shorts</button>
-    </fieldset>
-  </form>
+          <button type="submit" id="submit-btn">Generate shorts</button>
+        </fieldset>
+      </form>
+    </section>
 
-  <div class="status-line" id="status-line">idle</div>
-  <pre id="log"></pre>
+    <section class="stack">
+      <section class="panel frame">
+        <h2 class="eyebrow">Monitor</h2>
+        <pre id="log" aria-live="polite"></pre>
+      </section>
 
-  <div id="results"></div>
+      <section class="panel" id="results-panel" hidden>
+        <h2 class="eyebrow">Results</h2>
+        <div id="results" class="results-grid"></div>
+      </section>
+    </section>
+  </main>
 
   <script>
     const form = document.getElementById("run-form");
     const submitBtn = document.getElementById("submit-btn");
     const statusLine = document.getElementById("status-line");
+    const osdDot = document.getElementById("osd-dot");
     const logEl = document.getElementById("log");
     const resultsEl = document.getElementById("results");
+    const resultsPanel = document.getElementById("results-panel");
     const errorBanner = document.getElementById("error-banner");
+
+    const STATUS_LABEL = { idle: "STANDBY", starting: "STARTING", running: "REC", done: "DONE", failed: "FAILED" };
+    const STATUS_DOT = { idle: "", starting: "is-rec", running: "is-rec", done: "is-ok", failed: "is-warn" };
 
     let offset = 0;
 
@@ -111,47 +434,140 @@
       submitBtn.disabled = busy;
     }
 
+    function setStatus(status) {
+      statusLine.textContent = STATUS_LABEL[status] || status;
+      osdDot.className = "osd-dot " + (STATUS_DOT[status] || "");
+    }
+
     function showError(message) {
       errorBanner.textContent = message;
       errorBanner.style.display = message ? "block" : "none";
     }
 
+    function copyToClipboard(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand("copy");
+      } finally {
+        document.body.removeChild(textarea);
+      }
+      return Promise.resolve();
+    }
+
+    function makeCopyButton(label, text) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "copy-btn";
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        copyToClipboard(text).then(() => {
+          btn.textContent = "Copied";
+          btn.classList.add("is-copied");
+          setTimeout(() => {
+            btn.textContent = label;
+            btn.classList.remove("is-copied");
+          }, 1200);
+        });
+      });
+      return btn;
+    }
+
     function renderResults(result) {
       resultsEl.innerHTML = "";
+      resultsPanel.hidden = !result || !result.shorts || result.shorts.length === 0;
       if (!result || !result.shorts) return;
       for (const s of result.shorts) {
         const card = document.createElement("div");
-        card.className = "short-card" + (s.download_url ? "" : " failed");
+        card.className = "card frame" + (s.download_url ? "" : " failed");
 
-        const titleEl = document.createElement("strong");
-        titleEl.textContent = s.title || "Untitled";
+        const titleText = s.title || "Untitled";
+        const titleEl = document.createElement("div");
+        titleEl.className = "card-title";
+        titleEl.textContent = titleText;
         card.appendChild(titleEl);
 
         if (s.download_url) {
-          const scoreEl = document.createElement("span");
-          scoreEl.textContent = " (score " + s.score + ")";
-          card.appendChild(scoreEl);
+          const titleCopyRow = document.createElement("div");
+          titleCopyRow.className = "copy-row";
+          titleCopyRow.appendChild(makeCopyButton("Copy title", titleText));
+          card.appendChild(titleCopyRow);
+          const score = Number(s.score) || 0;
+          const scoreRow = document.createElement("div");
+          scoreRow.className = "score-row";
+          const meter = document.createElement("div");
+          meter.className = "meter";
+          const meterFill = document.createElement("span");
+          meterFill.style.width = score + "%";
+          meter.appendChild(meterFill);
+          scoreRow.appendChild(meter);
+          const scoreNum = document.createElement("span");
+          scoreNum.textContent = score;
+          scoreRow.appendChild(scoreNum);
+          card.appendChild(scoreRow);
 
-          const hookEl = document.createElement("div");
-          hookEl.textContent = s.hook_sentence || "";
-          card.appendChild(hookEl);
+          if (s.description) {
+            const descEl = document.createElement("div");
+            descEl.className = "pitch";
+            descEl.textContent = s.description;
+            card.appendChild(descEl);
 
+            const descCopyRow = document.createElement("div");
+            descCopyRow.className = "copy-row";
+            descCopyRow.appendChild(makeCopyButton("Copy description", s.description));
+            card.appendChild(descCopyRow);
+          }
+
+          if (s.hook_sentence) {
+            const hookEl = document.createElement("div");
+            hookEl.className = "hook";
+            hookEl.textContent = s.hook_sentence;
+            card.appendChild(hookEl);
+          }
+
+          if (s.virality_reason) {
+            const reasonEl = document.createElement("div");
+            reasonEl.className = "reason";
+            reasonEl.textContent = s.virality_reason;
+            card.appendChild(reasonEl);
+          }
+
+          const videoFrame = document.createElement("div");
+          videoFrame.className = "video-frame frame";
           const video = document.createElement("video");
           video.controls = true;
           video.src = s.download_url;
-          card.appendChild(video);
+          videoFrame.appendChild(video);
+          card.appendChild(videoFrame);
+
+          if (s.captions_error) {
+            const noteEl = document.createElement("div");
+            noteEl.className = "card-note";
+            noteEl.textContent = "captions failed — clip has no burned-in captions";
+            card.appendChild(noteEl);
+          }
 
           const link = document.createElement("a");
+          link.className = "download";
           link.href = s.download_url;
           link.setAttribute("download", "");
           link.textContent = "Download";
           card.appendChild(link);
         } else {
-          const statusEl = document.createElement("span");
-          statusEl.textContent = " — failed";
+          const statusEl = document.createElement("div");
+          statusEl.className = "card-status";
+          statusEl.textContent = "Failed";
           card.appendChild(statusEl);
 
           const errEl = document.createElement("div");
+          errEl.className = "card-error";
           errEl.textContent = s.error || "unknown error";
           card.appendChild(errEl);
         }
@@ -181,7 +597,7 @@
           logEl.scrollTop = logEl.scrollHeight;
         }
         offset = data.offset;
-        statusLine.textContent = data.status;
+        setStatus(data.status);
 
         if (data.status === "done") {
           setBusy(false);
@@ -206,6 +622,7 @@
       showError("");
       logEl.textContent = "";
       resultsEl.innerHTML = "";
+      resultsPanel.hidden = true;
       offset = 0;
       const formData = new FormData(form);
       formData.set("captions", document.getElementById("captions").checked ? "true" : "false");
@@ -219,7 +636,7 @@
           return;
         }
         setBusy(true);
-        statusLine.textContent = data.status;
+        setStatus(data.status);
         schedulePoll(0);
       } catch (e) {
         showError("failed to start run");

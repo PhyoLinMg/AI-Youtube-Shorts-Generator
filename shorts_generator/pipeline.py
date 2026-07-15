@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 from .clipper import _download_to, crop_highlights
 from .downloader import download_youtube
 from .highlights import call_muapi_llm, get_highlights
-from .run_output import RunPaths, capture_progress_log, resolve_output_dir
+from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_descriptions
 from .transcriber import transcribe
 
 
@@ -225,6 +225,8 @@ def generate_shorts(
                 youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
                 paths, word_highlight=word_highlight,
             )
+
+        write_descriptions(paths.shorts_dir, result["shorts"])
 
         with open(paths.result_json, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2)
