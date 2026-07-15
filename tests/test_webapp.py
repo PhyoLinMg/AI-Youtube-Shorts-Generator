@@ -207,3 +207,8 @@ def test_download_404s_for_a_missing_file(client, tmp_path):
 def test_download_404s_when_no_job_has_run_yet(client):
     resp = client.get("/download/Short-01.mp4")
     assert resp.status_code == 404
+
+
+def test_dashboard_entrypoint_exposes_the_flask_app():
+    import dashboard
+    assert dashboard.app is webapp.app
