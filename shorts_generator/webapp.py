@@ -77,6 +77,22 @@ def _run_job(
             job.status = "failed"
 
 
+def _clip_display_url(shorts_dir: Optional[str], clip_url: Optional[str]) -> Optional[str]:
+    if not clip_url:
+        return None
+    if clip_url.startswith("http://") or clip_url.startswith("https://"):
+        return clip_url
+    return f"/download/{os.path.basename(clip_url)}"
+
+
+def _serialize_result(result: dict, shorts_dir: Optional[str]) -> dict:
+    shorts = [
+        {**s, "download_url": _clip_display_url(shorts_dir, s.get("clip_url"))}
+        for s in result.get("shorts", [])
+    ]
+    return {**result, "shorts": shorts}
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -115,3 +131,31 @@ def start_run():
 
     threading.Thread(target=_run_job, args=(url,), kwargs=kwargs, daemon=True).start()
     return jsonify({"status": "starting"}), 202
+
+
+@app.route("/status")
+def status():
+    offset = int(request.args.get("offset", 0))
+    with _job_lock:
+        current_status = job.status
+        progress_log = job.progress_log
+        shorts_dir = job.shorts_dir
+        result = job.result
+        error = job.error
+
+    log_text = ""
+    new_offset = offset
+    if progress_log and os.path.exists(progress_log):
+        with open(progress_log, "rb") as f:
+            f.seek(offset)
+            chunk = f.read()
+            new_offset = f.tell()
+        log_text = chunk.decode("utf-8", errors="replace")
+
+    return jsonify({
+        "status": current_status,
+        "log": log_text,
+        "offset": new_offset,
+        "result": _serialize_result(result, shorts_dir) if result else None,
+        "error": error,
+    })

@@ -101,3 +101,55 @@ def test_run_rejects_malformed_input_without_wedging_job_state(client, monkeypat
     resp2 = client.post("/run", data={"url": "https://youtube.example/x"})
     assert resp2.status_code == 202
     assert webapp.job.status == "done"
+
+
+def test_status_tails_the_progress_log_from_an_offset(client, tmp_path):
+    log_path = tmp_path / "progress.log"
+    log_path.write_text("line one\n")
+    webapp.job.progress_log = str(log_path)
+    webapp.job.status = "running"
+
+    resp = client.get("/status?offset=0")
+    data = resp.get_json()
+    assert data["status"] == "running"
+    assert data["log"] == "line one\n"
+    first_offset = data["offset"]
+    assert first_offset == len("line one\n".encode("utf-8"))
+
+    with open(log_path, "a") as f:
+        f.write("line two\n")
+
+    resp = client.get(f"/status?offset={first_offset}")
+    data = resp.get_json()
+    assert data["log"] == "line two\n"
+
+
+def test_status_serializes_local_clip_as_download_link(client, tmp_path):
+    webapp.job.status = "done"
+    webapp.job.shorts_dir = str(tmp_path)
+    webapp.job.result = {
+        "shorts": [
+            {"title": "A", "score": 90, "hook_sentence": "hi", "clip_url": str(tmp_path / "Short-01.mp4")},
+            {"title": "B", "score": 10, "clip_url": None, "error": "boom"},
+        ]
+    }
+
+    resp = client.get("/status?offset=0")
+    shorts = resp.get_json()["result"]["shorts"]
+    assert shorts[0]["download_url"] == "/download/Short-01.mp4"
+    assert shorts[1]["download_url"] is None
+    assert shorts[1]["error"] == "boom"
+
+
+def test_status_serializes_hosted_clip_url_unchanged(client, tmp_path):
+    webapp.job.status = "done"
+    webapp.job.shorts_dir = str(tmp_path)
+    webapp.job.result = {
+        "shorts": [
+            {"title": "A", "score": 90, "clip_url": "https://hosted.example/Short-1.mp4"},
+        ]
+    }
+
+    resp = client.get("/status?offset=0")
+    shorts = resp.get_json()["result"]["shorts"]
+    assert shorts[0]["download_url"] == "https://hosted.example/Short-1.mp4"
