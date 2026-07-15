@@ -174,3 +174,77 @@ def test_write_descriptions_falls_back_on_missing_fields(tmp_path):
     path = run_output.write_descriptions(str(tmp_path), shorts)
     content = Path(path).read_text()
     assert content == "short 01 - Untitled -- \n"
+
+
+def _touch(path, mtime):
+    with open(path, "w") as f:
+        f.write("x")
+    os.utime(path, (mtime, mtime))
+
+
+def test_list_runs_on_missing_base_dir_returns_empty_list(tmp_path):
+    missing = str(tmp_path / "does-not-exist")
+    assert run_output.list_runs(missing) == []
+
+
+def test_list_runs_ignores_non_directory_entries(tmp_path):
+    (tmp_path / ".DS_Store").write_bytes(b"x")
+    assert run_output.list_runs(str(tmp_path)) == []
+
+
+def test_list_runs_reports_source_only(tmp_path):
+    root = tmp_path / "Video_A"
+    root.mkdir()
+    _touch(str(root / "full_source.mp4"), 1000.0)
+
+    runs = run_output.list_runs(str(tmp_path))
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.name == "Video_A"
+    assert run.source_exists is True
+    assert run.source_size == 1
+    assert run.shorts_count == 0
+    assert run.shorts_size == 0
+
+
+def test_list_runs_reports_shorts_only_and_ignores_descriptions_file(tmp_path):
+    root = tmp_path / "Video_B"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    _touch(str(shorts_dir / "Short-01.mp4"), 1000.0)
+    _touch(str(shorts_dir / "Short-02.mp4"), 1000.0)
+    (shorts_dir / "descriptions.txt").write_text("not a clip")
+
+    runs = run_output.list_runs(str(tmp_path))
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.source_exists is False
+    assert run.source_size == 0
+    assert run.shorts_count == 2
+    assert run.shorts_size == 2
+
+
+def test_list_runs_reports_both_source_and_shorts(tmp_path):
+    root = tmp_path / "Video_C"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    _touch(str(root / "full_source.mp4"), 1000.0)
+    _touch(str(shorts_dir / "Short-01.mp4"), 1000.0)
+
+    runs = run_output.list_runs(str(tmp_path))
+    run = runs[0]
+    assert run.source_exists is True
+    assert run.shorts_count == 1
+
+
+def test_list_runs_sorts_newest_first_by_file_mtime(tmp_path):
+    older = tmp_path / "Older_Video"
+    older.mkdir()
+    _touch(str(older / "full_source.mp4"), 1000.0)
+
+    newer = tmp_path / "Newer_Video"
+    newer.mkdir()
+    _touch(str(newer / "full_source.mp4"), 2000.0)
+
+    runs = run_output.list_runs(str(tmp_path))
+    assert [r.name for r in runs] == ["Newer_Video", "Older_Video"]

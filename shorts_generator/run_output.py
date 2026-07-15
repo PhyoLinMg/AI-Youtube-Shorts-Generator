@@ -134,6 +134,68 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
     )
 
 
+@dataclass
+class RunSummary:
+    name: str
+    mtime: float
+    source_exists: bool
+    source_size: int
+    shorts_count: int
+    shorts_size: int
+
+
+def _run_mtime(root: str) -> float:
+    """Newest mtime across every file in `root` (falls back to the dir's own)."""
+    mtimes = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for filename in filenames:
+            path = os.path.join(dirpath, filename)
+            try:
+                mtimes.append(os.path.getmtime(path))
+            except OSError:
+                continue
+    return max(mtimes) if mtimes else os.path.getmtime(root)
+
+
+def summarize_run(name: str, root: str) -> RunSummary:
+    """Stat a single run folder — no result.json parsing (it can be several MB)."""
+    source_video = os.path.join(root, "full_source.mp4")
+    source_exists = os.path.isfile(source_video)
+    source_size = os.path.getsize(source_video) if source_exists else 0
+
+    shorts_dir = os.path.join(root, "Shorts")
+    shorts_names = []
+    if os.path.isdir(shorts_dir):
+        shorts_names = sorted(
+            n for n in os.listdir(shorts_dir)
+            if n.startswith("Short-") and n.endswith(".mp4")
+        )
+    shorts_size = sum(os.path.getsize(os.path.join(shorts_dir, n)) for n in shorts_names)
+
+    return RunSummary(
+        name=name,
+        mtime=_run_mtime(root),
+        source_exists=source_exists,
+        source_size=source_size,
+        shorts_count=len(shorts_names),
+        shorts_size=shorts_size,
+    )
+
+
+def list_runs(base_dir: Optional[str] = None) -> List[RunSummary]:
+    """List every run folder under `base_dir`, newest first."""
+    base_dir = base_dir or LOCAL_OUTPUT_DIR
+    if not os.path.isdir(base_dir):
+        return []
+    runs = [
+        summarize_run(name, os.path.join(base_dir, name))
+        for name in os.listdir(base_dir)
+        if os.path.isdir(os.path.join(base_dir, name))
+    ]
+    runs.sort(key=lambda r: r.mtime, reverse=True)
+    return runs
+
+
 def write_descriptions(shorts_dir: str, shorts: List[Dict]) -> str:
     """Write a copy-paste-ready descriptions.txt next to the Short-NN.mp4 files.
 
