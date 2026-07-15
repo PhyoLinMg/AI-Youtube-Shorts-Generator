@@ -727,6 +727,139 @@
       }
     });
 
+    const tabButtons = document.querySelectorAll(".tab-btn");
+    const tabGenerate = document.getElementById("tab-generate");
+    const tabHistory = document.getElementById("tab-history");
+    const historyList = document.getElementById("history-list");
+    const historyRefreshBtn = document.getElementById("history-refresh");
+
+    function formatBytes(bytes) {
+      if (!bytes) return "0 B";
+      const units = ["B", "KB", "MB", "GB"];
+      let value = bytes;
+      let i = 0;
+      while (value >= 1024 && i < units.length - 1) {
+        value /= 1024;
+        i++;
+      }
+      return value.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+    }
+
+    function formatDate(epochSeconds) {
+      return new Date(epochSeconds * 1000).toLocaleString();
+    }
+
+    function updateHistoryItem(labelEl, btnEl, kind, run) {
+      if (kind === "source") {
+        labelEl.textContent = run.source_exists
+          ? "Source: " + formatBytes(run.source_size)
+          : "Source: deleted";
+        btnEl.disabled = !run.source_exists;
+      } else {
+        labelEl.textContent = run.shorts_count > 0
+          ? "Shorts: " + run.shorts_count + " clips, " + formatBytes(run.shorts_size)
+          : "Shorts: none";
+        btnEl.disabled = run.shorts_count === 0;
+      }
+    }
+
+    async function deleteHistoryFiles(name, action, kind, labelEl, btnEl) {
+      const what = kind === "source" ? "the source video" : "the shorts clips";
+      if (!confirm("Delete " + what + " for \"" + name + "\"? This can't be undone.")) return;
+      btnEl.disabled = true;
+      try {
+        const resp = await fetch("/history/" + encodeURIComponent(name) + "/" + action, { method: "POST" });
+        const data = await resp.json();
+        if (!resp.ok) {
+          showError(data.error || "delete failed");
+          btnEl.disabled = false;
+          return;
+        }
+        showError("");
+        updateHistoryItem(labelEl, btnEl, kind, data);
+      } catch (e) {
+        showError("lost connection to server");
+        btnEl.disabled = false;
+      }
+    }
+
+    function renderHistoryRow(run) {
+      const row = document.createElement("div");
+      row.className = "history-row";
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "history-name";
+      nameEl.textContent = run.name;
+      row.appendChild(nameEl);
+
+      const dateEl = document.createElement("div");
+      dateEl.className = "history-date";
+      dateEl.textContent = formatDate(run.mtime);
+      row.appendChild(dateEl);
+
+      const sourceItem = document.createElement("div");
+      sourceItem.className = "history-item";
+      const sourceLabel = document.createElement("span");
+      sourceItem.appendChild(sourceLabel);
+      const sourceBtn = document.createElement("button");
+      sourceBtn.type = "button";
+      sourceBtn.className = "history-delete-btn";
+      sourceBtn.textContent = "Delete";
+      sourceItem.appendChild(sourceBtn);
+      updateHistoryItem(sourceLabel, sourceBtn, "source", run);
+      sourceBtn.addEventListener("click", () => deleteHistoryFiles(run.name, "delete-source", "source", sourceLabel, sourceBtn));
+      row.appendChild(sourceItem);
+
+      const shortsItem = document.createElement("div");
+      shortsItem.className = "history-item";
+      const shortsLabel = document.createElement("span");
+      shortsItem.appendChild(shortsLabel);
+      const shortsBtn = document.createElement("button");
+      shortsBtn.type = "button";
+      shortsBtn.className = "history-delete-btn";
+      shortsBtn.textContent = "Delete";
+      shortsItem.appendChild(shortsBtn);
+      updateHistoryItem(shortsLabel, shortsBtn, "shorts", run);
+      shortsBtn.addEventListener("click", () => deleteHistoryFiles(run.name, "delete-shorts", "shorts", shortsLabel, shortsBtn));
+      row.appendChild(shortsItem);
+
+      return row;
+    }
+
+    async function loadHistory() {
+      historyList.innerHTML = "";
+      try {
+        const resp = await fetch("/history");
+        const data = await resp.json();
+        if (!data.runs || data.runs.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "history-empty";
+          empty.textContent = "No runs yet.";
+          historyList.appendChild(empty);
+          return;
+        }
+        for (const run of data.runs) {
+          historyList.appendChild(renderHistoryRow(run));
+        }
+      } catch (e) {
+        showError("failed to load history");
+      }
+    }
+
+    function setActiveTab(tab) {
+      for (const btn of tabButtons) {
+        btn.classList.toggle("is-active", btn.dataset.tab === tab);
+      }
+      tabGenerate.hidden = tab !== "generate";
+      tabHistory.hidden = tab !== "history";
+      if (tab === "history") loadHistory();
+    }
+
+    for (const btn of tabButtons) {
+      btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
+    }
+    historyRefreshBtn.addEventListener("click", loadHistory);
+
     poll();
   </script>
 </body>
