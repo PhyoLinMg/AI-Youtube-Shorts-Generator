@@ -231,3 +231,45 @@ def test_history_returns_serialized_run_list(client, monkeypatch):
             "source_size": 123, "shorts_count": 2, "shorts_size": 456,
         }]
     }
+
+
+def test_delete_source_removes_the_file_and_returns_updated_summary(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    root.mkdir()
+    (root / "full_source.mp4").write_bytes(b"video-bytes")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.post("/history/Video_A/delete-source")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["source_exists"] is False
+    assert data["source_size"] == 0
+    assert not (root / "full_source.mp4").exists()
+
+
+def test_delete_source_is_idempotent_when_already_gone(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    root.mkdir()
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.post("/history/Video_A/delete-source")
+    assert resp.status_code == 200
+    assert resp.get_json()["source_exists"] is False
+
+
+def test_delete_source_404s_for_unknown_run(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+    resp = client.post("/history/does-not-exist/delete-source")
+    assert resp.status_code == 404
+
+
+def test_delete_source_rejects_while_a_run_is_in_progress(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    root.mkdir()
+    (root / "full_source.mp4").write_bytes(b"video-bytes")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+    webapp.job.status = "running"
+
+    resp = client.post("/history/Video_A/delete-source")
+    assert resp.status_code == 409
+    assert (root / "full_source.mp4").exists()

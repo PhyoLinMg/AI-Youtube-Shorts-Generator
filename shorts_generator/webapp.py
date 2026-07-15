@@ -192,3 +192,32 @@ def download(name):
 @app.route("/history")
 def history():
     return jsonify({"runs": [asdict(r) for r in list_runs()]})
+
+
+def _resolve_history_run(name: str):
+    """Validate `name` as a run folder under LOCAL_OUTPUT_DIR.
+
+    Returns `(root, None)` on success or `(None, error_response)` when the
+    request should be rejected — mirrors the one-run-at-a-time guard already
+    enforced by `POST /run`, since deleting files out from under an active
+    pipeline run would corrupt it.
+    """
+    with _job_lock:
+        active = job.status in ("starting", "running")
+    if active:
+        return None, (jsonify({"error": "a run is in progress"}), 409)
+    root = _safe_join(LOCAL_OUTPUT_DIR, name)
+    if not root or not os.path.isdir(root):
+        return None, (jsonify({"error": "run not found"}), 404)
+    return root, None
+
+
+@app.route("/history/<name>/delete-source", methods=["POST"])
+def delete_history_source(name):
+    root, error = _resolve_history_run(name)
+    if error:
+        return error
+    source_video = os.path.join(root, "full_source.mp4")
+    if os.path.isfile(source_video):
+        os.remove(source_video)
+    return jsonify(asdict(summarize_run(name, root)))
