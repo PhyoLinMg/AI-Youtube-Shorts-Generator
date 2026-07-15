@@ -1,4 +1,5 @@
 import os
+import shutil
 
 import pytest
 
@@ -369,12 +370,6 @@ def test_delete_shorts_survives_a_file_vanishing_mid_delete(client, monkeypatch,
     (shorts_dir / "Short-01.mp4").write_bytes(b"clip-one")
     monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
 
-    real_remove = os.remove
-
-    def flaky_remove(path):
-        os.remove(path)  # actually delete it (a concurrent deleter "wins")
-        raise FileNotFoundError(path)  # then our own call still tries and fails
-
     # We want our route's own os.remove call to raise even though the file
     # is genuinely gone by the time it runs — simulate by removing the file
     # out from under the route via a monkeypatched os.listdir race is fiddly,
@@ -384,3 +379,32 @@ def test_delete_shorts_survives_a_file_vanishing_mid_delete(client, monkeypatch,
 
     resp = client.post("/history/Video_A/delete-shorts")
     assert resp.status_code == 200
+
+
+def test_delete_shorts_survives_the_shorts_dir_vanishing_before_listdir(client, monkeypatch, tmp_path):
+    """TOCTOU: if the Shorts/ dir disappears between the isdir() check and
+    the os.listdir() call (e.g. a concurrent whole-run delete), os.listdir()
+    raises FileNotFoundError — the route must tolerate that instead of
+    letting it bubble up as an uncaught 500."""
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "Short-01.mp4").write_bytes(b"clip-one")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    real_listdir = os.listdir
+
+    def rmtree_then_listdir(path):
+        # Simulate a concurrent actor deleting the whole Shorts/ dir a
+        # moment after our isdir() check passed but before our listdir()
+        # call reaches the filesystem: by the time listdir() actually runs,
+        # the directory is genuinely gone, so the real os.listdir() would
+        # also raise FileNotFoundError.
+        shutil.rmtree(str(shorts_dir), ignore_errors=True)
+        return real_listdir(path)
+
+    monkeypatch.setattr(webapp.os, "listdir", rmtree_then_listdir)
+
+    resp = client.post("/history/Video_A/delete-shorts")
+    assert resp.status_code == 200
+    assert resp.get_json()["shorts_count"] == 0

@@ -238,7 +238,11 @@ def delete_history_shorts(name):
         return error
     shorts_dir = os.path.join(root, "Shorts")
     if os.path.isdir(shorts_dir):
-        for filename in os.listdir(shorts_dir):
+        try:
+            filenames = os.listdir(shorts_dir)
+        except FileNotFoundError:
+            filenames = []  # dir vanished between the isdir() check and here
+        for filename in filenames:
             if filename.startswith("Short-") and filename.endswith(".mp4"):
                 try:
                     os.remove(os.path.join(shorts_dir, filename))
