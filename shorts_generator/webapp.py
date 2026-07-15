@@ -11,13 +11,14 @@ import os
 import sys
 import threading
 import traceback
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
+from .config import LOCAL_OUTPUT_DIR
 from .pipeline import generate_shorts
-from .run_output import resolve_output_dir
+from .run_output import list_runs, resolve_output_dir, summarize_run
 
 app = Flask(__name__)
 
@@ -186,3 +187,8 @@ def download(name):
     if not target or not os.path.isfile(target):
         abort(404)
     return send_from_directory(os.path.dirname(target), os.path.basename(target))
+
+
+@app.route("/history")
+def history():
+    return jsonify({"runs": [asdict(r) for r in list_runs()]})

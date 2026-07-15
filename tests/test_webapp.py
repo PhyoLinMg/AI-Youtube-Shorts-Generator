@@ -3,7 +3,7 @@ import os
 import pytest
 
 import shorts_generator.webapp as webapp
-from shorts_generator.run_output import RunPaths
+from shorts_generator.run_output import RunPaths, RunSummary
 
 
 @pytest.fixture(autouse=True)
@@ -212,3 +212,22 @@ def test_download_404s_when_no_job_has_run_yet(client):
 def test_dashboard_entrypoint_exposes_the_flask_app():
     import dashboard
     assert dashboard.app is webapp.app
+
+
+def test_history_returns_serialized_run_list(client, monkeypatch):
+    fake_runs = [
+        RunSummary(
+            name="Video_A", mtime=100.0, source_exists=True,
+            source_size=123, shorts_count=2, shorts_size=456,
+        ),
+    ]
+    monkeypatch.setattr(webapp, "list_runs", lambda: fake_runs)
+
+    resp = client.get("/history")
+    assert resp.status_code == 200
+    assert resp.get_json() == {
+        "runs": [{
+            "name": "Video_A", "mtime": 100.0, "source_exists": True,
+            "source_size": 123, "shorts_count": 2, "shorts_size": 456,
+        }]
+    }
