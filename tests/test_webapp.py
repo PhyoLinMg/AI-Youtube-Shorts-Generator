@@ -153,3 +153,40 @@ def test_status_serializes_hosted_clip_url_unchanged(client, tmp_path):
     resp = client.get("/status?offset=0")
     shorts = resp.get_json()["result"]["shorts"]
     assert shorts[0]["download_url"] == "https://hosted.example/Short-1.mp4"
+
+
+def test_safe_join_allows_files_inside_shorts_dir(tmp_path):
+    shorts_dir = tmp_path / "Shorts"
+    shorts_dir.mkdir()
+    (shorts_dir / "Short-01.mp4").write_bytes(b"x")
+
+    result = webapp._safe_join(str(shorts_dir), "Short-01.mp4")
+    assert result == str(shorts_dir / "Short-01.mp4")
+
+
+def test_safe_join_blocks_traversal_outside_shorts_dir(tmp_path):
+    shorts_dir = tmp_path / "Shorts"
+    shorts_dir.mkdir()
+    (tmp_path / "secret.txt").write_bytes(b"secret")
+
+    assert webapp._safe_join(str(shorts_dir), "../secret.txt") is None
+
+
+def test_download_serves_a_file_inside_shorts_dir(client, tmp_path):
+    (tmp_path / "Short-01.mp4").write_bytes(b"video-bytes")
+    webapp.job.shorts_dir = str(tmp_path)
+
+    resp = client.get("/download/Short-01.mp4")
+    assert resp.status_code == 200
+    assert resp.data == b"video-bytes"
+
+
+def test_download_404s_for_a_missing_file(client, tmp_path):
+    webapp.job.shorts_dir = str(tmp_path)
+    resp = client.get("/download/does-not-exist.mp4")
+    assert resp.status_code == 404
+
+
+def test_download_404s_when_no_job_has_run_yet(client):
+    resp = client.get("/download/Short-01.mp4")
+    assert resp.status_code == 404

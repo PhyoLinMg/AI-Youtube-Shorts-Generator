@@ -93,6 +93,15 @@ def _serialize_result(result: dict, shorts_dir: Optional[str]) -> dict:
     return {**result, "shorts": shorts}
 
 
+def _safe_join(base_dir: str, name: str) -> Optional[str]:
+    """Resolve `name` under `base_dir`, refusing to escape it (blocks '../')."""
+    base_real = os.path.realpath(base_dir)
+    target = os.path.realpath(os.path.join(base_real, name))
+    if target == base_real or target.startswith(base_real + os.sep):
+        return target
+    return None
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -159,3 +168,15 @@ def status():
         "result": _serialize_result(result, shorts_dir) if result else None,
         "error": error,
     })
+
+
+@app.route("/download/<path:name>")
+def download(name):
+    with _job_lock:
+        shorts_dir = job.shorts_dir
+    if not shorts_dir:
+        abort(404)
+    target = _safe_join(shorts_dir, name)
+    if not target or not os.path.isfile(target):
+        abort(404)
+    return send_from_directory(os.path.dirname(target), os.path.basename(target))
