@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Web dashboard (dashboard.py) — optional.
+flask>=3.0
