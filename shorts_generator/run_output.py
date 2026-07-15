@@ -4,7 +4,8 @@ Every call to generate_shorts() (either mode) gets its own output/<Title>/
 folder holding full_source.mp4, full_source.json (transcript), the Shorts/
 subfolder, result.json, and progress.log. This module owns resolving the
 title into a folder name and building those fixed paths; pipeline.py wires
-it into both modes.
+it into both modes. It also owns listing and summarizing past runs
+(`list_runs`/`summarize_run`) for the dashboard's History tab.
 """
 import os
 import re
@@ -183,15 +184,24 @@ def summarize_run(name: str, root: str) -> RunSummary:
 
 
 def list_runs(base_dir: Optional[str] = None) -> List[RunSummary]:
-    """List every run folder under `base_dir`, newest first."""
+    """List every run folder under `base_dir`, newest first.
+
+    A run folder that disappears mid-scan (e.g. deleted by a concurrent
+    History-tab request) is silently skipped rather than raising — every
+    other entry is still returned.
+    """
     base_dir = base_dir or LOCAL_OUTPUT_DIR
     if not os.path.isdir(base_dir):
         return []
-    runs = [
-        summarize_run(name, os.path.join(base_dir, name))
-        for name in os.listdir(base_dir)
-        if os.path.isdir(os.path.join(base_dir, name))
-    ]
+    runs = []
+    for name in os.listdir(base_dir):
+        root = os.path.join(base_dir, name)
+        if not os.path.isdir(root):
+            continue
+        try:
+            runs.append(summarize_run(name, root))
+        except OSError:
+            continue
     runs.sort(key=lambda r: r.mtime, reverse=True)
     return runs
 

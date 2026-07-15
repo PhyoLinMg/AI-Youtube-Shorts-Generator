@@ -1,4 +1,5 @@
 import os
+import shutil
 
 from shorts_generator import run_output
 
@@ -248,3 +249,44 @@ def test_list_runs_sorts_newest_first_by_file_mtime(tmp_path):
 
     runs = run_output.list_runs(str(tmp_path))
     assert [r.name for r in runs] == ["Newer_Video", "Older_Video"]
+
+
+def test_summarize_run_returns_expected_shape_for_source_only_folder(tmp_path):
+    root = tmp_path / "Video_D"
+    root.mkdir()
+    _touch(str(root / "full_source.mp4"), 1000.0)
+
+    run = run_output.summarize_run("Video_D", str(root))
+
+    assert isinstance(run, run_output.RunSummary)
+    assert run.name == "Video_D"
+    assert run.mtime == 1000.0
+    assert run.source_exists is True
+    assert run.source_size == 1
+    assert run.shorts_count == 0
+    assert run.shorts_size == 0
+
+
+def test_list_runs_skips_folder_that_vanishes_mid_scan(tmp_path, monkeypatch):
+    """A run folder deleted between the listdir() scan and its stat calls
+    (e.g. a concurrent History-tab delete) must not crash the whole listing —
+    it's just omitted, and every other run is still returned."""
+    survivor = tmp_path / "Video_Survivor"
+    survivor.mkdir()
+    _touch(str(survivor / "full_source.mp4"), 1000.0)
+
+    ghost = tmp_path / "Video_Ghost"
+    ghost.mkdir()
+    _touch(str(ghost / "full_source.mp4"), 2000.0)
+
+    real_summarize_run = run_output.summarize_run
+
+    def flaky_summarize_run(name, root):
+        if name == "Video_Ghost":
+            shutil.rmtree(root)  # simulate a concurrent delete mid-scan
+        return real_summarize_run(name, root)
+
+    monkeypatch.setattr(run_output, "summarize_run", flaky_summarize_run)
+
+    runs = run_output.list_runs(str(tmp_path))
+    assert [r.name for r in runs] == ["Video_Survivor"]
