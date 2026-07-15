@@ -211,6 +211,24 @@ xargs -a urls.txt -I{} python main.py "{}"
 | Output | local mp4 path with captions burned in (default); hosted MuAPI URL if `--no-captions` | local mp4 paths |
 | Required keys | `MUAPI_API_KEY` (+ `ffmpeg` on PATH for caption burn-in) | `OPENAI_API_KEY` or `GEMINI_API_KEY` (+ `ffmpeg` on PATH) |
 
+## Dashboard (Web UI)
+
+Prefer a browser to a terminal? Install the extra dependency and run:
+
+```bash
+pip install -r requirements-web.txt
+python dashboard.py
+```
+
+Then open `http://127.0.0.1:5000`. Paste a YouTube URL, set any options
+(mode, num clips, aspect ratio, captions, etc. — the same knobs as the CLI
+flags below), and submit. A live progress log streams while the pipeline
+runs; once it finishes, each short shows an inline preview with a download
+button (or, for a failed clip, the error that killed it).
+
+Single-user, one run at a time — starting a new run while one is in progress
+returns an error until the current one finishes.
+
 ## How It Works
 
 1. **Download**: Fetches the source video from YouTube
@@ -301,6 +319,8 @@ AI-Youtube-Shorts-Generator/
 ├── main.py                       CLI entry point
 ├── requirements.txt              core deps (api mode)
 ├── requirements-local.txt        optional deps for --mode local
+├── requirements-web.txt          optional deps for the dashboard (dashboard.py)
+├── dashboard.py                   dashboard entry point (python dashboard.py)
 ├── .env.example
 └── shorts_generator/
     ├── config.py                 env / settings (MuAPI + local LLM + Whisper)
@@ -311,6 +331,9 @@ AI-Youtube-Shorts-Generator/
     ├── clipper.py                API mode: MuAPI /autocrop (+ local caption burn-in)
     ├── captions.py                shared: phrase-chunked fade-in + per-word highlight caption burn-in (ffmpeg/libass)
     ├── pipeline.py               mode dispatcher (api ↔ local)
+    ├── webapp.py                 Flask dashboard: job state + routes
+    ├── templates/
+    │   └── index.html            dashboard page (form, live log, results)
     └── local/                    --mode local backends (offline)
         ├── downloader.py         yt-dlp download
         ├── transcriber.py        faster-whisper transcription
