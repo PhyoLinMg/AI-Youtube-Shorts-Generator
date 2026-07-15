@@ -95,8 +95,11 @@ def _serialize_result(result: dict, shorts_dir: Optional[str]) -> dict:
 
 def _safe_join(base_dir: str, name: str) -> Optional[str]:
     """Resolve `name` under `base_dir`, refusing to escape it (blocks '../')."""
-    base_real = os.path.realpath(base_dir)
-    target = os.path.realpath(os.path.join(base_real, name))
+    try:
+        base_real = os.path.realpath(base_dir)
+        target = os.path.realpath(os.path.join(base_real, name))
+    except (ValueError, OSError):
+        return None
     if target == base_real or target.startswith(base_real + os.sep):
         return target
     return None

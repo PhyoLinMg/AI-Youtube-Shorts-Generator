@@ -172,6 +172,23 @@ def test_safe_join_blocks_traversal_outside_shorts_dir(tmp_path):
     assert webapp._safe_join(str(shorts_dir), "../secret.txt") is None
 
 
+def test_safe_join_rejects_a_null_byte_in_name(tmp_path):
+    shorts_dir = tmp_path / "Shorts"
+    shorts_dir.mkdir()
+
+    assert webapp._safe_join(str(shorts_dir), "\x00.mp4") is None
+
+
+def test_safe_join_blocks_sibling_directory_with_shared_prefix(tmp_path):
+    shorts_dir = tmp_path / "Shorts"
+    shorts_dir.mkdir()
+    sibling = tmp_path / "Shorts_evil"
+    sibling.mkdir()
+    (sibling / "x.mp4").write_bytes(b"evil")
+
+    assert webapp._safe_join(str(shorts_dir), "../Shorts_evil/x.mp4") is None
+
+
 def test_download_serves_a_file_inside_shorts_dir(client, tmp_path):
     (tmp_path / "Short-01.mp4").write_bytes(b"video-bytes")
     webapp.job.shorts_dir = str(tmp_path)
