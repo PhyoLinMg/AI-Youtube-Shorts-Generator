@@ -53,6 +53,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable per-word highlight animation; caption shows a plain fading phrase instead.",
     )
     parser.add_argument(
+        "--no-hook-card",
+        dest="hook_card",
+        action="store_false",
+        default=True,
+        help="Disable the first-frame hook-card overlay (bold on-screen hook text over a "
+             "motion-picked striking still for the first 1.5s; on by default).",
+    )
+    parser.add_argument(
         "--framing",
         choices=["locked", "adaptive"],
         default="locked",
@@ -78,6 +86,7 @@ def main() -> int:
             caption_fade_duration=args.caption_fade_duration,
             word_highlight=args.word_highlight,
             framing=args.framing,
+            hook_card=args.hook_card,
         )
     except Exception as e:
         print(f"\nFAILED: {e}", file=sys.stderr)

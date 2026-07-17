@@ -34,6 +34,7 @@ def _run_local(
     paths: RunPaths,
     word_highlight: bool = True,
     framing: str = "locked",
+    hook_card: bool = True,
 ) -> Dict:
     from .local.clipper import crop_highlights_local
     from .local.downloader import download_youtube_local
@@ -70,6 +71,7 @@ def _run_local(
         caption_fade_duration=caption_fade_duration,
         word_highlight=word_highlight,
         framing=framing,
+        hook_card=hook_card,
     )
 
     return {
@@ -92,6 +94,7 @@ def _run_api(
     caption_fade_duration: float,
     paths: RunPaths,
     word_highlight: bool = True,
+    hook_card: bool = True,
 ) -> Dict:
     # MuAPI /autocrop needs a fresh hosted URL for every crop, and that URL
     # only comes from /youtube-download — so this call can't be skipped on
@@ -146,6 +149,7 @@ def _run_api(
         captions=captions,
         caption_fade_duration=caption_fade_duration,
         word_highlight=word_highlight,
+        hook_card=hook_card,
         out_dir=paths.shorts_dir,
     )
 
@@ -170,6 +174,7 @@ def generate_shorts(
     caption_fade_duration: float = 0.3,
     word_highlight: bool = True,
     framing: str = "locked",
+    hook_card: bool = True,
     paths: Optional[RunPaths] = None,
 ) -> Dict:
     """Run the full pipeline and return a structured result.
@@ -189,6 +194,9 @@ def generate_shorts(
             "adaptive" (cursor/person-aware crop for screen-recording content
             that alternates between facecam and screen activity). Only
             applies to mode="local" — mode="api" always uses MuAPI's autocrop.
+        hook_card: composite a bold on-screen hook (from each highlight's
+            "on_screen_hook") over a motion-picked striking still for the
+            clip's first 1.5 seconds (default True).
         paths: pre-resolved RunPaths to use instead of resolving them from
             youtube_url. Callers that need to know progress_log's path before
             the pipeline starts (e.g. a background job) should resolve it
@@ -204,7 +212,11 @@ def generate_shorts(
           "shorts": [...],           # top `num_clips`, each with:
                                       #   clip_url: local path (Shorts/Short-NN.mp4)
                                       #   hosted_clip_url: original MuAPI URL (api mode,
-                                      #     only present when captions were burned in)
+                                      #     only present when captions or the hook card
+                                      #     triggered a local download)
+                                      #   hook_card_error: present if the hook-card overlay
+                                      #     failed for that clip (falls back to the clip as
+                                      #     it stood before the hook-card pass)
                                       #   captions_error: present if caption burn-in failed
                                       #     for that clip (falls back to the uncaptioned clip)
         }
@@ -218,12 +230,12 @@ def generate_shorts(
         if mode == "local":
             result = _run_local(
                 youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
-                paths, word_highlight=word_highlight, framing=framing,
+                paths, word_highlight=word_highlight, framing=framing, hook_card=hook_card,
             )
         else:
             result = _run_api(
                 youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
-                paths, word_highlight=word_highlight,
+                paths, word_highlight=word_highlight, hook_card=hook_card,
             )
 
         write_descriptions(paths.shorts_dir, result["shorts"])

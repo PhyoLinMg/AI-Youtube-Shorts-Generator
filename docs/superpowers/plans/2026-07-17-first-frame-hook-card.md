@@ -279,10 +279,15 @@ def test_pick_striking_frame_falls_back_when_too_short_to_sample(tmp_path):
     short_path = str(tmp_path / "short.mp4")
     _run([
         "ffmpeg", "-y", "-loglevel", "error",
-        "-f", "lavfi", "-i", "color=c=blue:size=320x568:rate=24:duration=1",
+        "-f", "lavfi", "-i", "color=c=blue:size=320x568:rate=24:duration=0.3",
         "-pix_fmt", "yuv420p", "-c:v", "libx264", short_path,
     ])
 
+    # 0.3s @ 24fps = 8 total frames; skip_seconds=0.5 -> skip_frames=12 > 8,
+    # so zero frames survive the skip and the fallback must fire (a 1s clip
+    # was tried here originally and turned out to still yield exactly 2
+    # post-skip samples, which does NOT trigger the <2 fallback -- verified
+    # live before locking this duration in).
     assert pick_striking_frame(short_path, skip_seconds=0.5) == 0.5
 
 

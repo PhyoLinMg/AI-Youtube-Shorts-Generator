@@ -142,3 +142,146 @@ def test_output_filename_uses_short_dash_prefix(tmp_path, synthetic_clip, monkey
     )
 
     assert os.path.basename(results[0]["clip_url"]) == "Short-01.mp4"
+
+
+from shorts_generator.hook_card import HookCardError
+
+
+def _highlight_with_hook():
+    return {**_highlight(), "on_screen_hook": "WATCH THIS"}
+
+
+def _stub_hook_card(monkeypatch):
+    def _fake_pick(video_path):
+        return 0.5
+
+    def _fake_extract(video_path, ts, out_path):
+        with open(out_path, "wb") as f:
+            f.write(b"x")
+        return out_path
+
+    def _fake_render(video_path, still_path, hook_text, out_path, duration=1.5):
+        shutil.copyfile(video_path, out_path)
+        return out_path
+
+    monkeypatch.setattr(clipper, "pick_striking_frame", _fake_pick)
+    monkeypatch.setattr(clipper, "extract_frame", _fake_extract)
+    monkeypatch.setattr(clipper, "render_card_overlay", _fake_render)
+
+
+def test_hook_card_triggers_local_download_even_when_captions_disabled(tmp_path, synthetic_clip, monkeypatch):
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper, "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+    _stub_hook_card(monkeypatch)
+
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [_highlight_with_hook()],
+        aspect_ratio="9:16",
+        transcript_segments=None,
+        captions=False,
+        out_dir=str(tmp_path / "out"),
+    )
+
+    assert results[0]["clip_url"] != "https://hosted.example/short_1.mp4"
+    assert os.path.exists(results[0]["clip_url"])
+    assert results[0]["hosted_clip_url"] == "https://hosted.example/short_1.mp4"
+
+
+def test_no_local_download_when_captions_and_hook_card_both_off(tmp_path, monkeypatch):
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+
+    def _fail_if_called(*a, **k):
+        raise AssertionError("_download_to should not be called")
+    monkeypatch.setattr(clipper, "_download_to", _fail_if_called)
+
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [_highlight_with_hook()],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        captions=False,
+        hook_card=False,
+        out_dir=str(tmp_path / "out"),
+    )
+    assert results[0]["clip_url"] == "https://hosted.example/short_1.mp4"
+
+
+def test_hook_card_skipped_when_on_screen_hook_missing(tmp_path, synthetic_clip, monkeypatch):
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper, "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+
+    def _fail_if_called(*a, **k):
+        raise AssertionError("pick_striking_frame should not be called without on_screen_hook")
+    monkeypatch.setattr(clipper, "pick_striking_frame", _fail_if_called)
+
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [_highlight()],  # no on_screen_hook
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        out_dir=str(tmp_path / "out"),
+    )
+    assert results[0]["clip_url"] is not None
+    assert "hook_card_error" not in results[0]
+
+
+def test_hook_card_failure_falls_back_to_captioned_clip(tmp_path, synthetic_clip, monkeypatch):
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper, "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+
+    def _raise(*a, **k):
+        raise HookCardError("boom")
+    monkeypatch.setattr(clipper, "pick_striking_frame", _raise)
+
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [_highlight_with_hook()],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        out_dir=str(tmp_path / "out"),
+    )
+    assert results[0]["clip_url"] is not None
+    assert os.path.exists(results[0]["clip_url"])
+    assert results[0]["hook_card_error"] == "boom"
+    assert "captions_error" not in results[0]
+
+
+def test_caption_failure_preserves_a_successful_hook_card(tmp_path, synthetic_clip, monkeypatch):
+    """A caption-burn failure must not discard an already-successful hook
+    card -- fall back to the plain (uncaptioned) download and still
+    composite the card onto it, matching local mode's behavior."""
+    from shorts_generator.captions import CaptionError
+
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper, "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+    _stub_hook_card(monkeypatch)
+
+    def _raise_caption_error(*a, **k):
+        raise CaptionError("no overlapping transcript")
+    monkeypatch.setattr(clipper, "burn_captions", _raise_caption_error)
+
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [_highlight_with_hook()],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        out_dir=str(tmp_path / "out"),
+    )
+
+    assert results[0]["clip_url"] != "https://hosted.example/short_1.mp4"
+    assert os.path.exists(results[0]["clip_url"])
+    assert results[0]["captions_error"] == "no overlapping transcript"
+    assert "hook_card_error" not in results[0]

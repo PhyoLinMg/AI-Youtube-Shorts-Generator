@@ -27,3 +27,13 @@ def test_word_highlight_on_by_default():
 def test_no_word_highlight_flag_disables():
     args = build_parser().parse_args(["https://example.com/video", "--no-word-highlight"])
     assert args.word_highlight is False
+
+
+def test_hook_card_on_by_default():
+    args = build_parser().parse_args(["https://example.com/video"])
+    assert args.hook_card is True
+
+
+def test_no_hook_card_flag_disables():
+    args = build_parser().parse_args(["https://example.com/video", "--no-hook-card"])
+    assert args.hook_card is False
