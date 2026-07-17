@@ -210,7 +210,7 @@ xargs -a urls.txt -I{} python main.py "{}"
 | Highlight LLM | MuAPI `gpt-5-mini` | `LLM_PROVIDER=openai` uses OpenAI (`gpt-4o-mini` by default), `LLM_PROVIDER=gemini` uses Gemini (`gemini-2.5-flash` by default) |
 | Vertical crop | MuAPI `/autocrop` | `ffmpeg` + OpenCV face tracking |
 | Output | local mp4 path with captions and hook card burned in (default); hosted MuAPI URL only if both `--no-captions` and `--no-hook-card` | local mp4 paths |
-| Required keys | `MUAPI_API_KEY` (+ `ffmpeg` on PATH for caption burn-in) | `OPENAI_API_KEY` or `GEMINI_API_KEY` (+ `ffmpeg` on PATH) |
+| Required keys | `MUAPI_API_KEY` (+ `ffmpeg` and OpenCV for caption/hook-card burn-in) | `OPENAI_API_KEY` or `GEMINI_API_KEY` (+ `ffmpeg` and OpenCV) |
 
 ## Dashboard (Web UI)
 

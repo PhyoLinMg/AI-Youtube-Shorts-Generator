@@ -92,15 +92,25 @@ def crop_highlights(
                             entry["hook_card_error"] = str(e)
 
                     if want_captions:
-                        burn_captions(
-                            downloaded_path,
-                            transcript_segments,
-                            float(h["start_time"]),
-                            float(h["end_time"]),
-                            final_path,
-                            fade_seconds=caption_fade_duration,
-                            word_highlight=word_highlight,
-                        )
+                        try:
+                            burn_captions(
+                                downloaded_path,
+                                transcript_segments,
+                                float(h["start_time"]),
+                                float(h["end_time"]),
+                                final_path,
+                                fade_seconds=caption_fade_duration,
+                                word_highlight=word_highlight,
+                            )
+                        except CaptionError as e:
+                            # Caption burn-in failed, but the download itself
+                            # succeeded (and the hook card may already have
+                            # too) -- fall back to the plain download rather
+                            # than discarding everything back to the hosted
+                            # URL, matching local mode's behavior.
+                            print(f"[clip] {i} captions skipped: {e}", flush=True)
+                            entry["captions_error"] = str(e)
+                            os.replace(downloaded_path, final_path)
                     else:
                         os.replace(downloaded_path, final_path)
 
@@ -115,8 +125,11 @@ def crop_highlights(
 
                     entry["clip_url"] = final_path
                     entry["hosted_clip_url"] = url
-                except (CaptionError, requests.RequestException) as e:
-                    print(f"[clip] {i} captions skipped: {e}", flush=True)
+                except requests.RequestException as e:
+                    # The download itself failed -- no local file exists at
+                    # all, so there's nothing to fall back to except the
+                    # hosted URL.
+                    print(f"[clip] {i} download failed, falling back to hosted url: {e}", flush=True)
                     entry["captions_error"] = str(e)
                 finally:
                     if os.path.exists(downloaded_path):

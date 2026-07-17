@@ -181,6 +181,17 @@ def test_render_card_overlay_wraps_long_hook_text_onto_two_lines(red_clip, white
     assert os.path.exists(out_path)
 
 
+def test_render_card_overlay_escapes_special_characters_in_hook_text(red_clip, white_still, tmp_path):
+    """LLM-generated hook text flows straight into an ffmpeg drawtext filter
+    string -- colon, apostrophe, comma, semicolon, and backslash are all
+    filtergraph-significant and must not break the command."""
+    from shorts_generator.hook_card import render_card_overlay
+
+    out_path = str(tmp_path / "out.mp4")
+    render_card_overlay(red_clip, white_still, "Wait, this: really; happened\\shocking", out_path, duration=1.0)
+    assert os.path.exists(out_path)
+
+
 def test_render_card_overlay_raises_hook_card_error_on_missing_video(white_still, tmp_path):
     from shorts_generator.hook_card import render_card_overlay
 

@@ -243,7 +243,7 @@ def call_highlight_api(
             prompt = (
                 base_prompt
                 + "\n\nIMPORTANT: Return ONLY valid JSON with a top-level 'highlights' array."
-                + " Each item must include: title, start_time, end_time, score, hook_sentence, virality_reason, description."
+                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, description."
                 + " No markdown fences, no commentary."
             )
 

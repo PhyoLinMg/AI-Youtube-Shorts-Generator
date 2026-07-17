@@ -254,3 +254,34 @@ def test_hook_card_failure_falls_back_to_captioned_clip(tmp_path, synthetic_clip
     assert os.path.exists(results[0]["clip_url"])
     assert results[0]["hook_card_error"] == "boom"
     assert "captions_error" not in results[0]
+
+
+def test_caption_failure_preserves_a_successful_hook_card(tmp_path, synthetic_clip, monkeypatch):
+    """A caption-burn failure must not discard an already-successful hook
+    card -- fall back to the plain (uncaptioned) download and still
+    composite the card onto it, matching local mode's behavior."""
+    from shorts_generator.captions import CaptionError
+
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper, "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+    _stub_hook_card(monkeypatch)
+
+    def _raise_caption_error(*a, **k):
+        raise CaptionError("no overlapping transcript")
+    monkeypatch.setattr(clipper, "burn_captions", _raise_caption_error)
+
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [_highlight_with_hook()],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        out_dir=str(tmp_path / "out"),
+    )
+
+    assert results[0]["clip_url"] != "https://hosted.example/short_1.mp4"
+    assert os.path.exists(results[0]["clip_url"])
+    assert results[0]["captions_error"] == "no overlapping transcript"
+    assert "hook_card_error" not in results[0]
