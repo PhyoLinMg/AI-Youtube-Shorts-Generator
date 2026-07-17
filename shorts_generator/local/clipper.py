@@ -464,6 +464,8 @@ def crop_highlights_local(
                 except HookCardError as e:
                     print(f"[clip/local] {i} hook-card frame skipped: {e}", flush=True)
                     entry["hook_card_error"] = str(e)
+                    if os.path.exists(still_path):
+                        os.remove(still_path)
 
             if captions and transcript_segments:
                 captioned_path = out_path + ".captioned.mp4"
