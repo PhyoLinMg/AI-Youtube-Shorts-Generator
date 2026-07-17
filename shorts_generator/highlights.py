@@ -48,18 +48,19 @@ Content type: {content_type} | Density: {density}
 Your task: identify the most viral-worthy highlights from the transcript.
 
 Rules:
-- Every highlight must open with a strong HOOK — a line that grabs attention within the first 3 seconds
+- Every highlight must open with a strong HOOK — a line that grabs attention within the first 3 seconds. start_time must land ON that hook line itself, never on preamble, silence, or filler before it — the clip opens cold, mid-energy, not with a slow windup
 - Duration sweet spot: 45-90 seconds. Go shorter (20-44s) only for a perfect standalone one-liner. Go longer (91-180s) only when a story arc needs full context to land
 - Never cut mid-sentence or mid-thought — each clip must feel complete and self-contained
 - Clips must not overlap significantly with each other
 - Score 0-100 on viral potential (not general quality)
 - {num_clips_instruction}
 - For each highlight, identify the single best "hook_sentence" — the opening line that would make someone stop scrolling
+- Write an "on_screen_hook" — a short punchy fragment, 7 words or fewer, distinct from hook_sentence (it does NOT need to be a verbatim transcript line). This is bold text that gets overlaid on screen for the first 1.5 seconds, so it must work standalone with zero context: think thumbnail text, not a sentence
 - Explain in one sentence why this clip is viral ("virality_reason")
 - Write a "description" — a short social caption (1-2 sentences) meant to pull an audience into clicking this specific short. Unlike hook_sentence, this is NOT a line from the transcript — it's original marketing copy: curiosity- or CTA-driven, up to 2 relevant emoji allowed, no hashtags
 
 Respond ONLY with valid JSON (no markdown, no explanation):
-{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","virality_reason":"string","description":"string"}}]}}"""
+{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","description":"string"}}]}}"""
 
 
 CHUNK_SIZE_SECONDS = 1200       # 20-min chunks for long videos
@@ -154,6 +155,7 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
                 "end_time": end,
                 "score": max(0, min(100, _coerce_int(item.get("score"), default=0))),
                 "hook_sentence": str(item.get("hook_sentence") or "").strip(),
+                "on_screen_hook": str(item.get("on_screen_hook") or "").strip()[:60],
                 "virality_reason": str(item.get("virality_reason") or "").strip(),
                 "description": str(item.get("description") or "").strip(),
             }
@@ -241,7 +243,7 @@ def call_highlight_api(
             prompt = (
                 base_prompt
                 + "\n\nIMPORTANT: Return ONLY valid JSON with a top-level 'highlights' array."
-                + " Each item must include: title, start_time, end_time, score, hook_sentence, virality_reason, description."
+                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, description."
                 + " No markdown fences, no commentary."
             )
 
