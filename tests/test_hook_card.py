@@ -122,3 +122,68 @@ def test_pick_striking_frame_raises_hook_card_error_on_bad_video(tmp_path):
 
     with pytest.raises(HookCardError):
         pick_striking_frame(str(tmp_path / "missing.mp4"))
+
+
+@pytest.fixture(scope="module")
+def white_still(tmp_path_factory):
+    tmp_dir = tmp_path_factory.mktemp("hookcard_still")
+    path = str(tmp_dir / "still.jpg")
+    _run([
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-f", "lavfi", "-i", "color=c=white:size=270x480",
+        "-frames:v", "1", path,
+    ])
+    return path
+
+
+def _center_pixel_bgr(video_path, timestamp, tmp_path, name):
+    frame_path = str(tmp_path / name)
+    _run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{timestamp}",
+          "-i", video_path, "-vframes", "1", frame_path])
+    img = cv2.imread(frame_path)
+    h, w = img.shape[:2]
+    region = img[h // 2 - 5:h // 2 + 5, w // 2 - 5:w // 2 + 5]
+    return region.reshape(-1, 3).mean(axis=0)  # BGR
+
+
+def test_render_card_overlay_shows_card_then_reveals_live_footage(red_clip, white_still, tmp_path):
+    from shorts_generator.hook_card import render_card_overlay
+
+    out_path = str(tmp_path / "out.mp4")
+    result = render_card_overlay(red_clip, white_still, "TEST HOOK", out_path, duration=1.0)
+
+    assert result == out_path
+    assert os.path.exists(out_path)
+
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out_path],
+        capture_output=True, text=True, check=True,
+    )
+    assert float(probe.stdout.strip()) == pytest.approx(3.0, abs=0.2)
+
+    during_card = _center_pixel_bgr(out_path, 0.3, tmp_path, "during.jpg")
+    after_card = _center_pixel_bgr(out_path, 1.5, tmp_path, "after.jpg")
+
+    # red_clip is pure red (BGR ~ [0, 0, 255]); the boxed white-still card
+    # composited on top pulls the center pixel well away from pure red.
+    assert during_card[2] < 215 or during_card[0] > 40 or during_card[1] > 40
+    # After the card window the live red footage is back with nothing
+    # composited on top of it.
+    assert after_card[2] > 200 and after_card[0] < 40 and after_card[1] < 40
+
+
+def test_render_card_overlay_wraps_long_hook_text_onto_two_lines(red_clip, white_still, tmp_path):
+    from shorts_generator.hook_card import render_card_overlay
+
+    out_path = str(tmp_path / "out.mp4")
+    # Should not raise even with a 7-word hook (two-line wrap path).
+    render_card_overlay(red_clip, white_still, "You Won't Believe: This Happened Today", out_path, duration=1.0)
+    assert os.path.exists(out_path)
+
+
+def test_render_card_overlay_raises_hook_card_error_on_missing_video(white_still, tmp_path):
+    from shorts_generator.hook_card import render_card_overlay
+
+    out_path = str(tmp_path / "out.mp4")
+    with pytest.raises(HookCardError):
+        render_card_overlay(str(tmp_path / "missing.mp4"), white_still, "HOOK", out_path)
