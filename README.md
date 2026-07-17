@@ -199,6 +199,7 @@ xargs -a urls.txt -I{} python main.py "{}"
 | `--no-captions` | captions on | Disable fade-in caption burn-in (on by default in both modes) |
 | `--caption-fade-duration` | `0.3` | Caption fade-in duration in seconds |
 | `--no-word-highlight` | highlight on | Disable per-word highlight/bounce animation; captions show a plain fading phrase instead (on by default in both modes) |
+| `--no-hook-card` | hook card on | Disable the first-frame hook-card overlay (bold on-screen hook text over a motion-picked striking still for the first 1.5s; on by default in both modes) |
 
 ### API mode vs Local mode
 
@@ -208,7 +209,7 @@ xargs -a urls.txt -I{} python main.py "{}"
 | Transcription | MuAPI `/openai-whisper` | `faster-whisper` (CPU or CUDA) |
 | Highlight LLM | MuAPI `gpt-5-mini` | `LLM_PROVIDER=openai` uses OpenAI (`gpt-4o-mini` by default), `LLM_PROVIDER=gemini` uses Gemini (`gemini-2.5-flash` by default) |
 | Vertical crop | MuAPI `/autocrop` | `ffmpeg` + OpenCV face tracking |
-| Output | local mp4 path with captions burned in (default); hosted MuAPI URL if `--no-captions` | local mp4 paths |
+| Output | local mp4 path with captions and hook card burned in (default); hosted MuAPI URL only if both `--no-captions` and `--no-hook-card` | local mp4 paths |
 | Required keys | `MUAPI_API_KEY` (+ `ffmpeg` on PATH for caption burn-in) | `OPENAI_API_KEY` or `GEMINI_API_KEY` (+ `ffmpeg` on PATH) |
 
 ## Dashboard (Web UI)
