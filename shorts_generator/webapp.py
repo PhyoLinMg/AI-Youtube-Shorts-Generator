@@ -125,7 +125,7 @@ def start_run():
             mode=request.form.get("mode", "api"),
             num_clips=int(request.form.get("num_clips", 3)),
             aspect_ratio=request.form.get("aspect_ratio", "9:16"),
-            download_format=request.form.get("format", "720"),
+            download_format=request.form.get("format", "1080"),
             language=(request.form.get("language") or "").strip() or None,
             captions=request.form.get("captions", "true") == "true",
             caption_fade_duration=float(request.form.get("caption_fade_duration", 0.3)),

@@ -56,7 +56,8 @@ Rules:
 - {num_clips_instruction}
 - For each highlight, identify the single best "hook_sentence" — the opening line that would make someone stop scrolling
 - Explain in one sentence why this clip is viral ("virality_reason")
-- Write a "description" — a short social caption (1-2 sentences) meant to pull an audience into clicking this specific short. Unlike hook_sentence, this is NOT a line from the transcript — it's original marketing copy: curiosity- or CTA-driven, up to 2 relevant emoji allowed, no hashtags
+- Write a "title" — max 100 characters, aggressive clickbait style (curiosity gap, numbers, shock value, "you won't believe", etc.) optimized to maximize clicks and views, while still being accurate to the clip's content
+- Write a "description" — up to 300 words, original marketing copy (NOT a transcript line) built to maximize views and clicks: open with a strong curiosity- or CTA-driven hook, up to a few relevant emoji, then end with 15-30 relevant hashtags mixing broad reach tags (#shorts #viral #fyp #trending) with niche tags specific to the clip's topic
 
 Respond ONLY with valid JSON (no markdown, no explanation):
 {{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","virality_reason":"string","description":"string"}}]}}"""
@@ -149,7 +150,7 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
 
         cleaned.append(
             {
-                "title": str(item.get("title") or "Untitled Highlight").strip(),
+                "title": str(item.get("title") or "Untitled Highlight").strip()[:100],
                 "start_time": start,
                 "end_time": end,
                 "score": max(0, min(100, _coerce_int(item.get("score"), default=0))),

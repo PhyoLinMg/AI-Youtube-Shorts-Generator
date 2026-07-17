@@ -173,7 +173,7 @@ def _write_ass(
     \\fad override tag.
     """
     fontsize = max(12, round(height * 0.045))
-    margin_v = max(10, round(height * 0.18))
+    margin_v = max(10, round(height * 0.30))
     margin_h = max(10, round(width * 0.06))
     fade_ms = max(0, round(fade_seconds * 1000))
 

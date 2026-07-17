@@ -33,6 +33,20 @@ CENTER_EMA_ALPHA = 0.12         # smoothing for the cursor-follow center
 CENTER_MA_WINDOW = 7            # moving-average window (frames) for extra center stability
 CENTER_MAX_STEP = 10.0          # px/frame velocity clamp for the center
 
+OUTPUT_CANVAS_H = 1920          # final render height regardless of source resolution
+
+
+def _output_size(target_ratio: float) -> Tuple[int, int]:
+    """Fixed vertical-HD output canvas (e.g. 1080x1920 for 9:16) — every clip
+    gets upscaled/downscaled to this regardless of source resolution, since a
+    plain native-pixel crop off a sub-1080p source (or a narrow 9:16 slice of
+    even a 1080p landscape frame) reads as "not HD" once played back full-screen.
+    """
+    out_h = OUTPUT_CANVAS_H
+    out_w = max(2, int(round(out_h * target_ratio)))
+    out_w -= out_w % 2
+    return out_w, out_h
+
 
 def _ratio(aspect_ratio: str) -> float:
     """Parse '9:16' → 9/16, '1:1' → 1.0."""
@@ -121,18 +135,19 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
 
     x0 = max(0, min(src_w - crop_w, cx - crop_w // 2))
     y0 = max(0, min(src_h - crop_h, cy - crop_h // 2))
+    out_w, out_h = _output_size(target_ratio)
 
     # Pass 2 — write the locked crop; x0/y0 never change within the clip.
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     silent_path = out_path + ".silent.mp4"
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(silent_path, fourcc, fps, (crop_w, crop_h))
+    writer = cv2.VideoWriter(silent_path, fourcc, fps, (out_w, out_h))
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         cropped = frame[y0:y0 + crop_h, x0:x0 + crop_w]
-        writer.write(cropped)
+        writer.write(cv2.resize(cropped, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4))
 
     cap.release()
     writer.release()
@@ -305,8 +320,7 @@ def _reframe_vertical_adaptive(in_path: str, out_path: str, aspect_ratio: str) -
 
     # Fixed output size (VideoWriter needs a constant frame size even though
     # the crop box itself changes per frame).
-    out_h = 1920
-    out_w = max(2, int(round(out_h * target_ratio)) - (int(round(out_h * target_ratio)) % 2))
+    out_w, out_h = _output_size(target_ratio)
 
     raw = _classify_frames(cap, src_w)
     if not raw:

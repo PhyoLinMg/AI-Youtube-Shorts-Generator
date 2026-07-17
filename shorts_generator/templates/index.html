@@ -4,70 +4,108 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Shorts Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #12151a;
-      --panel: #1b2027;
-      --panel-2: #212830;
-      --line: #2c333c;
-      --text: #e7eaee;
-      --muted: #8a94a1;
-      --rec: #ff4136;
-      --ok: #2ecc8f;
-      --warn: #f5a623;
-      --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
-      --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+      /* darkroom / film-lab palette — warm shadow, safelight glow, fixer green */
+      --ink: #150f0a;
+      --tray: #201810;
+      --tray-2: #2b2116;
+      --rule: #3d2f21;
+      --paper: #f2e7d6;
+      --ash: #a3907a;
+      --safelight: #e05a24;
+      --fixer: #6fae93;
+      --dev-amber: #d6a94a;
+      --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+      --display: "Special Elite", var(--mono);
     }
 
     * { box-sizing: border-box; }
 
+    html { background: var(--ink); }
+
     body {
+      position: relative;
       font-family: var(--sans);
-      background: var(--bg);
-      color: var(--text);
-      max-width: 1040px;
+      background: var(--ink);
+      color: var(--paper);
+      max-width: 1280px;
       margin: 0 auto;
-      padding: 1.25rem 1.25rem 3rem;
+      padding: 1.5rem 1.5rem 3.5rem;
     }
 
-    /* --- top bar: OSD-style status readout --- */
+    /* faint grain — the one accessory this design keeps */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.05;
+      mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    }
+
+    body > * { position: relative; z-index: 1; }
+
+    /* --- top bar: darkroom timer readout --- */
     .top-bar {
       display: flex;
-      align-items: center;
+      align-items: flex-end;
       justify-content: space-between;
-      padding-bottom: 1rem;
-      margin-bottom: 1.5rem;
-      border-bottom: 1px solid var(--line);
+      gap: 1rem;
+      padding-bottom: 1.1rem;
+      margin-bottom: 1.75rem;
+      border-bottom: 1px solid var(--rule);
     }
+    .brand { display: grid; gap: 0.3rem; }
     .wordmark {
-      font-family: var(--mono);
-      font-size: 0.9rem;
-      font-weight: 700;
-      letter-spacing: 0.14em;
-      color: var(--text);
+      font-family: var(--display);
+      font-size: 1.15rem;
+      letter-spacing: 0.05em;
+      color: var(--paper);
+    }
+    .tagline {
+      font-size: 0.78rem;
+      color: var(--ash);
     }
     .osd {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.6rem;
       font-family: var(--mono);
       font-size: 0.8rem;
       letter-spacing: 0.08em;
-      color: var(--muted);
-    }
-    .osd-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      background: var(--muted);
+      color: var(--ash);
       flex-shrink: 0;
     }
-    .osd-dot.is-rec { background: var(--rec); animation: pulse 1.1s ease-in-out infinite; }
-    .osd-dot.is-ok { background: var(--ok); }
-    .osd-dot.is-warn { background: var(--warn); }
+    .osd-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--rule);
+      flex-shrink: 0;
+    }
+    .osd-dot.is-rec {
+      background: radial-gradient(circle at 35% 30%, #ff9a5c, var(--safelight) 65%, #7a2a10 100%);
+      box-shadow: 0 0 9px 2px rgba(224, 90, 36, 0.65);
+      animation: pulse 1.1s ease-in-out infinite;
+    }
+    .osd-dot.is-ok {
+      background: radial-gradient(circle at 35% 30%, #b6e2cf, var(--fixer) 65%, #2f5f4e 100%);
+      box-shadow: 0 0 8px 1px rgba(111, 174, 147, 0.55);
+    }
+    .osd-dot.is-warn {
+      background: radial-gradient(circle at 35% 30%, #f0d698, var(--dev-amber) 65%, #7a5a1e 100%);
+      box-shadow: 0 0 8px 1px rgba(214, 169, 74, 0.55);
+    }
     @keyframes pulse {
       0%, 100% { opacity: 1; }
-      50% { opacity: 0.25; }
+      50% { opacity: 0.3; }
     }
     @media (prefers-reduced-motion: reduce) {
       .osd-dot.is-rec { animation: none; }
@@ -75,18 +113,16 @@
 
     /* --- eyebrow / section labels --- */
     .eyebrow {
-      font-family: var(--mono);
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin: 0 0 1rem;
+      font-family: var(--display);
+      font-size: 0.82rem;
+      letter-spacing: 0.06em;
+      color: var(--ash);
+      margin: 0 0 1.1rem;
     }
 
-    /* --- viewfinder corner-bracket frame, pure CSS, reused at 3 scales --- */
+    /* --- corner-bracket loupe frame, reused at a few scales --- */
     .frame {
-      --vf-c: var(--muted);
+      --vf-c: var(--rule);
       --vf-s: 14px;
       --vf-w: 2px;
       position: relative;
@@ -111,30 +147,31 @@
     /* --- layout --- */
     .layout {
       display: grid;
-      grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
-      gap: 1.25rem;
+      grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+      gap: 1.5rem;
       align-items: start;
     }
     .layout[hidden] { display: none; }
-    @media (max-width: 860px) {
+    @media (max-width: 900px) {
       .layout { grid-template-columns: 1fr; }
     }
-    .stack { display: grid; gap: 1.25rem; }
+    .stack { display: grid; gap: 1.5rem; }
 
     .panel {
-      background-color: var(--panel);
-      border-radius: 4px;
-      padding: 1.1rem 1.1rem 1.25rem;
+      background-color: var(--tray);
+      border: 1px solid var(--rule);
+      border-radius: 3px;
+      padding: 1.2rem 1.2rem 1.4rem;
     }
 
     #error-banner {
-      background: rgba(245, 166, 35, 0.12);
-      border: 1px solid var(--warn);
-      color: var(--warn);
+      background: rgba(224, 90, 36, 0.12);
+      border: 1px solid var(--safelight);
+      color: #ffb591;
       font-family: var(--mono);
       font-size: 0.85rem;
       padding: 0.6rem 0.8rem;
-      border-radius: 4px;
+      border-radius: 3px;
       margin-bottom: 1rem;
       display: none;
     }
@@ -143,103 +180,139 @@
     fieldset { border: 0; padding: 0; margin: 0; }
     label {
       display: block;
-      margin: 0.7rem 0 0.25rem;
+      margin: 0.8rem 0 0.3rem;
       font-size: 0.78rem;
       letter-spacing: 0.02em;
-      color: var(--muted);
+      color: var(--ash);
     }
     label:first-child { margin-top: 0; }
     input[type=text], input[type=number], select {
       width: 100%;
-      background: var(--panel-2);
-      border: 1px solid var(--line);
-      color: var(--text);
-      border-radius: 4px;
+      background: var(--tray-2);
+      border: 1px solid var(--rule);
+      color: var(--paper);
+      border-radius: 3px;
       padding: 0.5rem 0.6rem;
       font-family: var(--sans);
       font-size: 0.9rem;
     }
-    input::placeholder { color: #5a6270; }
+    input::placeholder { color: #6b5c48; }
     input[type=text]:focus-visible, input[type=number]:focus-visible,
     select:focus-visible, button:focus-visible, a:focus-visible {
-      outline: 2px solid var(--rec);
+      outline: 2px solid var(--safelight);
       outline-offset: 2px;
     }
     .row { display: flex; gap: 0.9rem; }
     .row > div { flex: 1; }
     .checkbox-row { display: flex; align-items: center; gap: 0.4rem; }
-    .checkbox-row label { display: flex; align-items: center; gap: 0.4rem; margin: 0; color: var(--text); font-size: 0.85rem; }
-    input[type=checkbox] { accent-color: var(--rec); width: 15px; height: 15px; }
+    .checkbox-row label { display: flex; align-items: center; gap: 0.4rem; margin: 0; color: var(--paper); font-size: 0.85rem; }
+    input[type=checkbox] { accent-color: var(--safelight); width: 15px; height: 15px; }
 
     button {
       width: 100%;
-      margin-top: 1.25rem;
-      padding: 0.65rem 1.2rem;
-      background: var(--rec);
-      color: #1a0503;
+      margin-top: 1.4rem;
+      padding: 0.7rem 1.2rem;
+      background: var(--safelight);
+      color: #1c0a02;
+      font-family: var(--sans);
       font-weight: 700;
       letter-spacing: 0.04em;
       text-transform: uppercase;
       font-size: 0.85rem;
       border: none;
-      border-radius: 4px;
+      border-radius: 3px;
       cursor: pointer;
     }
+    button:hover:not(:disabled) { background: #ef6b34; }
     button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* --- monitor / log console --- */
+    /* --- processing console (enlarger timer log) --- */
     #log {
-      background: var(--panel-2);
-      color: var(--ok);
+      background: var(--tray-2);
+      color: var(--fixer);
       font-family: var(--mono);
       font-size: 0.78rem;
-      padding: 0.85rem;
+      padding: 0.9rem;
       height: 220px;
       overflow-y: auto;
       white-space: pre-wrap;
-      border-radius: 4px;
+      border-radius: 3px;
       margin: 0;
+      border: 1px solid var(--rule);
     }
 
-    /* --- results --- */
+    /* --- clips (contact sheet) --- */
     .results-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-      gap: 1rem;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1.1rem;
     }
     .card {
-      --vf-c: var(--muted);
-      background-color: var(--panel-2);
-      border-radius: 4px;
-      padding: 0.7rem;
+      --vf-c: var(--rule);
+      position: relative;
+      background-color: var(--tray-2);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      padding: 1.5rem 0.85rem 1.15rem;
       display: flex;
       flex-direction: column;
-      gap: 0.4rem;
+      gap: 0.5rem;
       opacity: 0;
       transform: translateY(4px);
       animation: card-in 0.18s ease-out forwards;
     }
+    /* sprocket-hole strip along top/bottom edge, like a strip of film stock */
+    .card::before, .card::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 11px;
+      background-image: radial-gradient(circle, var(--ink) 2.1px, transparent 2.2px);
+      background-size: 15px 11px;
+      background-repeat: repeat-x;
+      background-position: 7px center;
+      opacity: 0.9;
+    }
+    .card::before { top: 0; }
+    .card::after { bottom: 0; }
     @keyframes card-in { to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) {
       .card { animation: none; opacity: 1; transform: none; }
     }
-    .card.failed { --vf-c: var(--warn); }
+    .card.failed { --vf-c: var(--dev-amber); }
+    .frame-meta {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.03em;
+      color: var(--ash);
+      text-transform: uppercase;
+    }
     .card-title {
       font-size: 0.85rem;
       font-weight: 600;
       line-height: 1.3;
+      color: var(--paper);
     }
     .meter {
       position: relative;
-      height: 4px;
-      background: var(--line);
-      border-radius: 2px;
+      height: 5px;
+      background: var(--tray);
+      border: 1px solid var(--rule);
+      border-radius: 1px;
       overflow: hidden;
+      background-image: repeating-linear-gradient(
+        to right,
+        var(--rule) 0, var(--rule) 1px,
+        transparent 1px, transparent 10%
+      );
     }
     .meter > span {
       position: absolute;
       inset: 0 auto 0 0;
-      background: var(--ok);
+      background: var(--safelight);
     }
     .score-row {
       display: flex;
@@ -247,32 +320,40 @@
       gap: 0.5rem;
       font-family: var(--mono);
       font-size: 0.72rem;
-      color: var(--muted);
+      color: var(--ash);
     }
     .score-row .meter { flex: 1; }
+    .field-label {
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ash);
+      margin-top: 0.15rem;
+    }
     .pitch {
       font-size: 0.8rem;
       font-weight: 600;
-      color: var(--text);
+      color: var(--paper);
       line-height: 1.35;
     }
     .hook {
       font-size: 0.78rem;
-      color: var(--muted);
+      color: var(--ash);
       line-height: 1.35;
     }
     .reason {
       font-size: 0.72rem;
-      color: var(--muted);
+      color: var(--ash);
       font-style: italic;
       line-height: 1.3;
     }
     .video-frame {
-      --vf-c: var(--muted);
+      --vf-c: var(--rule);
       --vf-s: 10px;
       aspect-ratio: 9 / 16;
       background-color: #000;
-      border-radius: 3px;
+      border-radius: 2px;
       overflow: hidden;
     }
     .video-frame video { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -281,14 +362,14 @@
       font-size: 0.75rem;
       letter-spacing: 0.04em;
       text-transform: uppercase;
-      color: var(--ok);
+      color: var(--fixer);
       text-decoration: none;
-      border: 1px solid var(--line);
-      border-radius: 3px;
+      border: 1px solid var(--rule);
+      border-radius: 2px;
       padding: 0.35rem 0;
       text-align: center;
     }
-    .card a.download:hover { border-color: var(--ok); }
+    .card a.download:hover { border-color: var(--fixer); }
     .copy-row { display: flex; }
     button.copy-btn {
       width: auto;
@@ -299,47 +380,47 @@
       letter-spacing: 0.03em;
       text-transform: uppercase;
       background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--line);
-      border-radius: 3px;
+      color: var(--ash);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
       padding: 0.3rem 0;
     }
-    button.copy-btn:hover { border-color: var(--text); color: var(--text); }
-    button.copy-btn.is-copied { border-color: var(--ok); color: var(--ok); }
+    button.copy-btn:hover { border-color: var(--paper); color: var(--paper); }
+    button.copy-btn.is-copied { border-color: var(--fixer); color: var(--fixer); }
     .card-note {
       font-family: var(--mono);
       font-size: 0.7rem;
-      color: var(--warn);
+      color: var(--dev-amber);
     }
     .card-status {
       font-family: var(--mono);
       font-size: 0.72rem;
-      color: var(--warn);
+      color: var(--dev-amber);
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }
     .card-error {
       font-size: 0.78rem;
-      color: var(--muted);
+      color: var(--ash);
     }
 
     /* --- tabs --- */
-    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.4rem; }
     .tab-btn {
       width: auto;
       margin-top: 0;
-      font-family: var(--mono);
-      font-size: 0.78rem;
-      letter-spacing: 0.06em;
+      font-family: var(--display);
+      font-size: 0.8rem;
+      letter-spacing: 0.03em;
       text-transform: uppercase;
       background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--line);
-      border-radius: 4px;
+      color: var(--ash);
+      border: 1px solid var(--rule);
+      border-radius: 3px;
       padding: 0.45rem 1rem;
       cursor: pointer;
     }
-    .tab-btn.is-active { color: var(--text); border-color: var(--text); }
+    .tab-btn.is-active { color: var(--paper); border-color: var(--paper); }
 
     /* --- history --- */
     .history-header {
@@ -357,24 +438,24 @@
       letter-spacing: 0.03em;
       text-transform: uppercase;
       background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--line);
-      border-radius: 3px;
+      color: var(--ash);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
     }
-    .history-refresh-btn:hover { border-color: var(--text); color: var(--text); }
+    .history-refresh-btn:hover { border-color: var(--paper); color: var(--paper); }
     .history-row {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 0.6rem 1.2rem;
       padding: 0.7rem 0;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px solid var(--rule);
       font-family: var(--mono);
       font-size: 0.8rem;
     }
     .history-row:last-child { border-bottom: none; }
-    .history-name { flex: 1 1 220px; font-weight: 600; color: var(--text); }
-    .history-date { color: var(--muted); }
+    .history-name { flex: 1 1 220px; font-weight: 600; color: var(--paper); }
+    .history-date { color: var(--ash); }
     .history-item { display: flex; align-items: center; gap: 0.5rem; }
     .history-delete-btn {
       width: auto;
@@ -385,18 +466,21 @@
       letter-spacing: 0.03em;
       text-transform: uppercase;
       background: transparent;
-      color: var(--warn);
-      border: 1px solid var(--line);
-      border-radius: 3px;
+      color: var(--safelight);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
       cursor: pointer;
     }
-    .history-delete-btn:hover { border-color: var(--warn); }
-    .history-empty { color: var(--muted); font-size: 0.85rem; }
+    .history-delete-btn:hover { border-color: var(--safelight); }
+    .history-empty { color: var(--ash); font-size: 0.85rem; }
   </style>
 </head>
 <body>
   <header class="top-bar">
-    <span class="wordmark">AI SHORTS</span>
+    <div class="brand">
+      <span class="wordmark">AI SHORTS LAB</span>
+      <span class="tagline">Footage in. Cut, captioned vertical shorts out.</span>
+    </div>
     <span class="osd">
       <span class="osd-dot" id="osd-dot"></span>
       <span id="status-line">STANDBY</span>
@@ -412,7 +496,7 @@
 
   <main class="layout" id="tab-generate">
     <section class="panel frame">
-      <h2 class="eyebrow">Source</h2>
+      <h2 class="eyebrow">Footage</h2>
       <form id="run-form">
         <fieldset>
           <label for="url">YouTube URL</label>
@@ -442,8 +526,8 @@
               <select id="format" name="format">
                 <option value="360">360</option>
                 <option value="480">480</option>
-                <option value="720" selected>720</option>
-                <option value="1080">1080</option>
+                <option value="720">720</option>
+                <option value="1080" selected>1080</option>
               </select>
             </div>
           </div>
@@ -480,12 +564,12 @@
 
     <section class="stack">
       <section class="panel frame">
-        <h2 class="eyebrow">Monitor</h2>
+        <h2 class="eyebrow">Processing</h2>
         <pre id="log" aria-live="polite"></pre>
       </section>
 
       <section class="panel" id="results-panel" hidden>
-        <h2 class="eyebrow">Results</h2>
+        <h2 class="eyebrow">Clips</h2>
         <div id="results" class="results-grid"></div>
       </section>
     </section>
@@ -564,13 +648,52 @@
       return btn;
     }
 
+    // mm:ss timecode from a source-video offset in seconds
+    function formatTimecode(seconds) {
+      const total = Math.max(0, Math.round(Number(seconds) || 0));
+      const m = Math.floor(total / 60);
+      const s = total % 60;
+      return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+    }
+
+    function scoreColor(score) {
+      if (score >= 75) return "var(--safelight)";
+      if (score >= 45) return "var(--dev-amber)";
+      return "var(--ash)";
+    }
+
+    function appendLabeledText(card, label, className, text) {
+      const wrap = document.createElement("div");
+      const tag = document.createElement("div");
+      tag.className = "field-label";
+      tag.textContent = label;
+      wrap.appendChild(tag);
+      const body = document.createElement("div");
+      body.className = className;
+      body.textContent = text;
+      wrap.appendChild(body);
+      card.appendChild(wrap);
+    }
+
     function renderResults(result) {
       resultsEl.innerHTML = "";
       resultsPanel.hidden = !result || !result.shorts || result.shorts.length === 0;
       if (!result || !result.shorts) return;
-      for (const s of result.shorts) {
+      result.shorts.forEach((s, idx) => {
         const card = document.createElement("div");
         card.className = "card frame" + (s.download_url ? "" : " failed");
+
+        const meta = document.createElement("div");
+        meta.className = "frame-meta";
+        const frameNo = document.createElement("span");
+        frameNo.textContent = "No. " + String(idx + 1).padStart(2, "0");
+        meta.appendChild(frameNo);
+        if (typeof s.start_time === "number" && typeof s.end_time === "number") {
+          const tc = document.createElement("span");
+          tc.textContent = formatTimecode(s.start_time) + "–" + formatTimecode(s.end_time);
+          meta.appendChild(tc);
+        }
+        card.appendChild(meta);
 
         const titleText = s.title || "Untitled";
         const titleEl = document.createElement("div");
@@ -590,6 +713,7 @@
           meter.className = "meter";
           const meterFill = document.createElement("span");
           meterFill.style.width = score + "%";
+          meterFill.style.background = scoreColor(score);
           meter.appendChild(meterFill);
           scoreRow.appendChild(meter);
           const scoreNum = document.createElement("span");
@@ -598,11 +722,7 @@
           card.appendChild(scoreRow);
 
           if (s.description) {
-            const descEl = document.createElement("div");
-            descEl.className = "pitch";
-            descEl.textContent = s.description;
-            card.appendChild(descEl);
-
+            appendLabeledText(card, "Pitch", "pitch", s.description);
             const descCopyRow = document.createElement("div");
             descCopyRow.className = "copy-row";
             descCopyRow.appendChild(makeCopyButton("Copy description", s.description));
@@ -610,17 +730,11 @@
           }
 
           if (s.hook_sentence) {
-            const hookEl = document.createElement("div");
-            hookEl.className = "hook";
-            hookEl.textContent = s.hook_sentence;
-            card.appendChild(hookEl);
+            appendLabeledText(card, "Hook", "hook", s.hook_sentence);
           }
 
           if (s.virality_reason) {
-            const reasonEl = document.createElement("div");
-            reasonEl.className = "reason";
-            reasonEl.textContent = s.virality_reason;
-            card.appendChild(reasonEl);
+            appendLabeledText(card, "Why it works", "reason", s.virality_reason);
           }
 
           const videoFrame = document.createElement("div");
@@ -656,7 +770,7 @@
           card.appendChild(errEl);
         }
         resultsEl.appendChild(card);
-      }
+      });
     }
 
     let pollTimer = null;
