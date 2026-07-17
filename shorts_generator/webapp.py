@@ -48,6 +48,7 @@ def _run_job(
     caption_fade_duration: float,
     word_highlight: bool,
     framing: str,
+    hook_card: bool,
 ) -> None:
     try:
         paths = resolve_output_dir(url)
@@ -66,6 +67,7 @@ def _run_job(
             caption_fade_duration=caption_fade_duration,
             word_highlight=word_highlight,
             framing=framing,
+            hook_card=hook_card,
             paths=paths,
         )
         with _job_lock:
@@ -130,6 +132,7 @@ def start_run():
             captions=request.form.get("captions", "true") == "true",
             caption_fade_duration=float(request.form.get("caption_fade_duration", 0.3)),
             word_highlight=request.form.get("word_highlight", "true") == "true",
+            hook_card=request.form.get("hook_card", "true") == "true",
             framing=request.form.get("framing", "locked"),
         )
     except (TypeError, ValueError) as e:
