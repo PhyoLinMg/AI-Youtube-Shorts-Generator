@@ -10,7 +10,9 @@ The LLM call is pluggable via the `llm_fn` argument so the same prompts can
 drive either MuAPI (default, --mode api) or a direct local LLM client
 (--mode local).
 """
+import hashlib
 import json
+import os
 import re
 import time
 from typing import Callable, Dict, List, Optional
@@ -19,6 +21,17 @@ from . import muapi
 
 
 LLMFn = Callable[[str], str]
+
+
+def _transcript_fingerprint(transcript: Dict) -> str:
+    """Stable content hash used to invalidate the highlights cache when the
+    transcript actually changes — independent of *how* it was obtained
+    (freshly transcribed vs. read from either transcriber's own cache)."""
+    payload = json.dumps(
+        {"duration": transcript.get("duration"), "segments": transcript.get("segments")},
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 CONTENT_TYPE_PROMPT = """Analyze this video transcript sample and classify the content type.

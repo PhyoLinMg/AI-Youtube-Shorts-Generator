@@ -1,4 +1,4 @@
-from shorts_generator.highlights import _sanitize_highlights, call_highlight_api
+from shorts_generator.highlights import _sanitize_highlights, _transcript_fingerprint, call_highlight_api
 
 
 def _raw_highlight(**overrides):
@@ -30,6 +30,24 @@ def test_sanitize_highlights_defaults_on_screen_hook_to_empty_string():
     raw = {"start_time": 1.0, "end_time": 5.0}
     cleaned = _sanitize_highlights([raw], duration=100.0)
     assert cleaned[0]["on_screen_hook"] == ""
+
+
+def test_transcript_fingerprint_stable_for_identical_transcripts():
+    t1 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi"}]}
+    t2 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi"}]}
+    assert _transcript_fingerprint(t1) == _transcript_fingerprint(t2)
+
+
+def test_transcript_fingerprint_changes_when_segments_change():
+    t1 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi"}]}
+    t2 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "bye"}]}
+    assert _transcript_fingerprint(t1) != _transcript_fingerprint(t2)
+
+
+def test_transcript_fingerprint_changes_when_duration_changes():
+    t1 = {"duration": 10.0, "segments": []}
+    t2 = {"duration": 20.0, "segments": []}
+    assert _transcript_fingerprint(t1) != _transcript_fingerprint(t2)
 
 
 def test_call_highlight_api_retry_log_surfaces_real_error(capsys):
