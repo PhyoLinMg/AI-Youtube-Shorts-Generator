@@ -6,8 +6,10 @@ import pytest
 
 from shorts_generator.captions import (
     CaptionError,
+    FONT_DIR,
     _HIGHLIGHT_OPEN,
     _chunk_segments,
+    _escape_ffmpeg_path,
     _format_ass_timestamp,
     _probe_resolution,
     _write_ass,
@@ -241,6 +243,35 @@ def test_burn_captions_raises_caption_error_when_ffmpeg_missing(tmp_path, synthe
 
     with pytest.raises(CaptionError):
         burn_captions(synthetic_clip, segments, clip_start=0.0, clip_end=3.0, out_path=out_path, fade_seconds=0.3)
+
+
+def test_escape_ffmpeg_path_escapes_backslashes_and_colons():
+    assert _escape_ffmpeg_path("C:\\videos\\out.ass") == "C:/videos/out.ass".replace(":", "\\:")
+
+
+def test_burn_captions_vf_includes_fontsdir(tmp_path, synthetic_clip, monkeypatch):
+    """The subtitles filter must point at the bundled fonts directory so
+    Montserrat Black renders even on a host with no matching system font."""
+    captured = {}
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "ffmpeg":
+            captured["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr("shorts_generator.captions.subprocess.run", fake_run)
+
+    out_path = str(tmp_path / "burned.mp4")
+    segments = [{"start": 0.0, "end": 3.0, "text": "hello there caption test"}]
+
+    burn_captions(synthetic_clip, segments, clip_start=0.0, clip_end=3.0, out_path=out_path, fade_seconds=0.3)
+
+    vf_arg = captured["cmd"][captured["cmd"].index("-vf") + 1]
+    assert vf_arg.startswith("subtitles=")
+    assert ":fontsdir=" in vf_arg
+    assert vf_arg.endswith(_escape_ffmpeg_path(FONT_DIR))
 
 
 def test_chunk_segments_uses_real_word_timestamps():

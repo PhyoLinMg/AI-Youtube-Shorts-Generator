@@ -19,6 +19,15 @@ from typing import Dict, List, Tuple
 _HIGHLIGHT_OPEN = "{\\c&H00FFFF&\\b1}"
 _HIGHLIGHT_CLOSE = "{\\r}"
 
+FONT_DIR = os.path.join(os.path.dirname(__file__), "assets", "fonts")
+
+
+def _escape_ffmpeg_path(path: str) -> str:
+    """Escape a filesystem path for use as an ffmpeg filter argument value
+    (backslashes to forward slashes, colons escaped so they aren't parsed
+    as a filter option separator)."""
+    return path.replace("\\", "/").replace(":", "\\:")
+
 
 class CaptionError(RuntimeError):
     """Raised when caption burn-in fails; callers should fall back to the plain clip."""
@@ -271,11 +280,12 @@ def burn_captions(
     _write_ass(chunks, ass_path, width, height, fade_seconds, word_highlight=word_highlight)
 
     try:
-        escaped_ass_path = ass_path.replace("\\", "/").replace(":", "\\:")
+        escaped_ass_path = _escape_ffmpeg_path(ass_path)
+        escaped_font_dir = _escape_ffmpeg_path(FONT_DIR)
         cmd = [
             "ffmpeg", "-y", "-loglevel", "error",
             "-i", video_path,
-            "-vf", f"subtitles={escaped_ass_path}",
+            "-vf", f"subtitles={escaped_ass_path}:fontsdir={escaped_font_dir}",
             "-c:v", "libx264", "-preset", "fast", "-crf", "20",
             "-c:a", "copy",
             out_path,
