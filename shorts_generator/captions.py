@@ -11,10 +11,12 @@ import subprocess
 from typing import Dict, List, Tuple
 
 # ASS override tags for the karaoke-style active-word highlight: pop to
-# yellow + bold, bounce to 125% scale over the first 80ms of the word's own
-# Dialogue line, then settle back to 100% by 160ms. `{\r}` resets back to
-# the line's base `Caption` style for the remainder of the text.
-_HIGHLIGHT_OPEN = "{\\c&H00FFFF&\\b1\\t(0,80,\\fscx125\\fscy125)\\t(80,160,\\fscx100\\fscy100)}"
+# yellow + bold. No scale/size change — the caption line is centered, so
+# resizing the active word would shift the whole line's rendered width
+# and re-center it every word (visible as the line jumping side to side).
+# `{\r}` resets back to the line's base `Caption` style for the remainder
+# of the text.
+_HIGHLIGHT_OPEN = "{\\c&H00FFFF&\\b1}"
 _HIGHLIGHT_CLOSE = "{\\r}"
 
 

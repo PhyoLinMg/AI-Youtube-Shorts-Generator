@@ -6,6 +6,7 @@ import pytest
 
 from shorts_generator.captions import (
     CaptionError,
+    _HIGHLIGHT_OPEN,
     _chunk_segments,
     _format_ass_timestamp,
     _probe_resolution,
@@ -109,8 +110,20 @@ def test_write_ass_emits_one_dialogue_per_word_with_highlight(tmp_path):
     content = open(ass_path, encoding="utf-8").read()
     assert content.count("Dialogue:") == 2          # one per word
     assert "\\c&H00FFFF&" in content                # yellow highlight
-    assert "\\t(0,80,\\fscx125\\fscy125)" in content  # bounce
+    assert "\\b1" in content                        # bold
+    assert "\\fscx" not in content                  # no scale bounce
+    assert "\\fscy" not in content                  # no scale bounce
     assert content.count("\\fad(300,0)") == 1       # fade on first word only
+
+
+def test_highlight_open_has_no_scale_bounce():
+    """Scale animation on the active word changes its rendered width, which
+    re-centers the whole (centered) caption line as focus moves word to
+    word. The highlight must pop via color/bold only, never scale."""
+    assert "\\fscx" not in _HIGHLIGHT_OPEN
+    assert "\\fscy" not in _HIGHLIGHT_OPEN
+    assert "\\c&H00FFFF&" in _HIGHLIGHT_OPEN
+    assert "\\b1" in _HIGHLIGHT_OPEN
 
 
 def test_write_ass_word_lines_fill_gaps_between_words(tmp_path):
