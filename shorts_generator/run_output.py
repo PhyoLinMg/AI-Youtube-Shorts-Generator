@@ -32,6 +32,7 @@ class RunPaths:
     shorts_dir: str
     source_video: str
     source_json: str
+    highlights_json: str
     result_json: str
     progress_log: str
 
@@ -130,6 +131,7 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
         shorts_dir=shorts_dir,
         source_video=os.path.join(root, "full_source.mp4"),
         source_json=os.path.join(root, "full_source.json"),
+        highlights_json=os.path.join(root, "highlights.json"),
         result_json=os.path.join(root, "result.json"),
         progress_log=os.path.join(root, "progress.log"),
     )

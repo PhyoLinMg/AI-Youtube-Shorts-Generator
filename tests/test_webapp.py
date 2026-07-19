@@ -33,6 +33,7 @@ def _fake_run_paths(tmp_path):
         shorts_dir=shorts_dir,
         source_video=os.path.join(root, "full_source.mp4"),
         source_json=os.path.join(root, "full_source.json"),
+        highlights_json=os.path.join(root, "highlights.json"),
         result_json=os.path.join(root, "result.json"),
         progress_log=os.path.join(root, "progress.log"),
     )

@@ -92,6 +92,7 @@ def test_resolve_output_dir_builds_expected_tree(tmp_path, monkeypatch):
     assert paths.source_json == os.path.join(paths.root, "full_source.json")
     assert paths.result_json == os.path.join(paths.root, "result.json")
     assert paths.progress_log == os.path.join(paths.root, "progress.log")
+    assert paths.highlights_json == os.path.join(paths.root, "highlights.json")
     assert os.path.isdir(paths.shorts_dir)
 
 
