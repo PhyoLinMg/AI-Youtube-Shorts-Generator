@@ -40,7 +40,7 @@ def test_run_local_threads_captions_params(tmp_path, monkeypatch):
         lambda url, target_path, fmt: "/tmp/source.mp4",
     )
     monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
-    monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
 
     crop_mock = Mock(return_value=[{"clip_url": "/tmp/out/Short-01.mp4"}])
     monkeypatch.setattr(local_clipper_module, "crop_highlights_local", crop_mock)
@@ -79,7 +79,7 @@ def test_run_local_skips_download_when_source_already_exists(tmp_path, monkeypat
 
     monkeypatch.setattr(local_downloader_module, "download_youtube_local", _fail_if_called)
     monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
-    monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
     monkeypatch.setattr(local_clipper_module, "crop_highlights_local", Mock(return_value=[]))
 
     result = pipeline_module._run_local(
@@ -107,7 +107,7 @@ def test_run_api_threads_captions_params(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
     monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
     monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
-    monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
 
     crop_mock = Mock(return_value=[{"clip_url": "https://hosted.example/Short-1.mp4"}])
     monkeypatch.setattr(pipeline_module, "crop_highlights", crop_mock)
@@ -151,7 +151,7 @@ def test_run_api_skips_local_copy_and_transcribe_when_cached(tmp_path, monkeypat
         raise AssertionError("transcribe should not be called when full_source.json is cached")
     monkeypatch.setattr(pipeline_module, "transcribe", _fail_transcribe)
 
-    monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
     monkeypatch.setattr(pipeline_module, "crop_highlights", Mock(return_value=[]))
 
     result = pipeline_module._run_api(
@@ -211,7 +211,7 @@ def test_generate_shorts_uses_provided_paths_without_resolving(tmp_path, monkeyp
         lambda url, target_path, fmt: "/tmp/source.mp4",
     )
     monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
-    monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
     monkeypatch.setattr(local_clipper_module, "crop_highlights_local", Mock(return_value=[]))
 
     result = pipeline_module.generate_shorts(
@@ -233,7 +233,7 @@ def test_run_api_recovers_from_corrupted_transcript_cache(tmp_path, monkeypatch)
 
     monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
     monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
-    monkeypatch.setattr(pipeline_module, "get_highlights", lambda transcript, num_clips, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
     monkeypatch.setattr(pipeline_module, "crop_highlights", Mock(return_value=[]))
 
     result = pipeline_module._run_api(

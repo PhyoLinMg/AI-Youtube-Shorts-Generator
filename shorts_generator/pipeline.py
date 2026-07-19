@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 
 from .clipper import _download_to, crop_highlights
 from .downloader import download_youtube
-from .highlights import call_muapi_llm, get_highlights
+from .highlights import call_muapi_llm, get_highlights_cached
 from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_descriptions
 from .transcriber import transcribe
 
@@ -53,7 +53,9 @@ def _run_local(
             "Whisper produced no segments. The video may have no detectable speech."
         )
 
-    highlights_result = get_highlights(transcript, num_clips=num_clips, llm_fn=call_local_llm)
+    highlights_result = get_highlights_cached(
+        transcript, num_clips=num_clips, cache_path=paths.highlights_json, llm_fn=call_local_llm,
+    )
     all_highlights: List[Dict] = highlights_result.get("highlights", [])
     if not all_highlights:
         raise RuntimeError("Highlight generator returned zero clips.")
@@ -133,7 +135,9 @@ def _run_api(
             "Whisper produced no segments. The video may have no detectable speech."
         )
 
-    highlights_result = get_highlights(transcript, num_clips=num_clips, llm_fn=call_muapi_llm)
+    highlights_result = get_highlights_cached(
+        transcript, num_clips=num_clips, cache_path=paths.highlights_json, llm_fn=call_muapi_llm,
+    )
     all_highlights: List[Dict] = highlights_result.get("highlights", [])
     if not all_highlights:
         raise RuntimeError("Highlight generator returned zero clips.")
