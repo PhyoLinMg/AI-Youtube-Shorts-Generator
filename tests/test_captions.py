@@ -126,6 +126,16 @@ def test_highlight_open_has_no_scale_bounce():
     assert "\\b1" in _HIGHLIGHT_OPEN
 
 
+def test_write_ass_uses_montserrat_black_font(tmp_path):
+    chunks = [{"start": 0.0, "end": 1.0, "text": "hello world"}]
+    ass_path = str(tmp_path / "c.ass")
+
+    _write_ass(chunks, ass_path, width=608, height=1080, fade_seconds=0.3)
+
+    content = open(ass_path, encoding="utf-8").read()
+    assert "Style: Caption,Montserrat Black," in content
+
+
 def test_write_ass_word_lines_fill_gaps_between_words(tmp_path):
     """Real whisper word timestamps can have small gaps between consecutive
     words (silences, plosives). Each word's Dialogue line should extend to

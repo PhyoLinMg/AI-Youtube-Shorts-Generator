@@ -190,7 +190,7 @@ def _write_ass(
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Caption,Arial,{fontsize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
+        f"Style: Caption,Montserrat Black,{fontsize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
         f"0,0,0,0,100,100,0,0,1,2,1,2,{margin_h},{margin_h},{margin_v},1\n"
         "\n"
         "[Events]\n"
