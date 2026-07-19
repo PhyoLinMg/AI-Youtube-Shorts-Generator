@@ -12,6 +12,7 @@ drive either MuAPI (default, --mode api) or a direct local LLM client
 """
 import json
 import re
+import time
 from typing import Callable, Dict, List, Optional
 
 from . import muapi
@@ -58,7 +59,7 @@ Rules:
 - Write an "on_screen_hook" — a short punchy fragment, 7 words or fewer, distinct from hook_sentence (it does NOT need to be a verbatim transcript line). This is bold text that gets overlaid on screen for the first 1.5 seconds, so it must work standalone with zero context: think thumbnail text, not a sentence
 - Explain in one sentence why this clip is viral ("virality_reason")
 - Write a "title" — max 100 characters, aggressive clickbait style (curiosity gap, numbers, shock value, "you won't believe", etc.) optimized to maximize clicks and views, while still being accurate to the clip's content
-- Write a "description" — up to 300 words, original marketing copy (NOT a transcript line) built to maximize views and clicks: open with a strong curiosity- or CTA-driven hook, up to a few relevant emoji, then end with 15-30 relevant hashtags mixing broad reach tags (#shorts #viral #fyp #trending) with niche tags specific to the clip's topic
+- Write a "description" — up to 300 words, original marketing copy (NOT a transcript line) built to maximize views and clicks: open with a strong curiosity- or CTA-driven hook, then end with 15-30 relevant hashtags mixing broad reach tags (#shorts #viral #fyp #trending) with niche tags specific to the clip's topic. Do NOT include any emojis in the title or description
 
 Respond ONLY with valid JSON (no markdown, no explanation):
 {{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","description":"string"}}]}}"""
@@ -238,7 +239,7 @@ def call_highlight_api(
 
         if attempt < MAX_HIGHLIGHT_API_ATTEMPTS:
             print(
-                f"[highlights] invalid model output on attempt {attempt}/{MAX_HIGHLIGHT_API_ATTEMPTS}; retrying",
+                f"[highlights] attempt {attempt}/{MAX_HIGHLIGHT_API_ATTEMPTS} failed ({last_error}); retrying",
                 flush=True,
             )
             prompt = (
@@ -301,7 +302,9 @@ def get_highlights(
             # timestamp, so the model replies in absolute time too — clamp against
             # the chunk's absolute end (not its relative length) and don't re-offset.
             chunk_abs_end = offset + chunk["duration"]
+            t0 = time.time()
             result = call_highlight_api(text, content_info, chunk_abs_end, num_clips=num_clips, is_chunk=True, llm_fn=llm_fn)
+            print(f"[highlights] chunk {i + 1}/{len(chunks)} done in {time.time() - t0:.1f}s", flush=True)
             all_highlights.extend(result.get("highlights", []))
         highlights = dedupe_highlights(all_highlights)
     else:

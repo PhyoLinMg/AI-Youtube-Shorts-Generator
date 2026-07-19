@@ -19,6 +19,11 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+# OpenAI/OpenRouter SDK default (600s read x up to 3 tries) lets a single
+# stalled provider-side request block the whole chunk loop for the better
+# part of an hour with zero output. Cap it so a stall fails fast and the
+# SDK's own retry kicks in instead of hanging silently.
+LOCAL_LLM_TIMEOUT_SECONDS = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "180"))
 LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "base")
 LOCAL_WHISPER_DEVICE = os.getenv("LOCAL_WHISPER_DEVICE", "auto")  # auto / cpu / cuda
 LOCAL_OUTPUT_DIR = os.getenv("LOCAL_OUTPUT_DIR", "output")

@@ -2,6 +2,7 @@
 from ..config import (
     GEMINI_MODEL,
     LLM_PROVIDER,
+    LOCAL_LLM_TIMEOUT_SECONDS,
     OPENAI_MODEL,
     OPENROUTER_BASE_URL,
     OPENROUTER_MODEL,
@@ -21,7 +22,7 @@ def call_openai_llm(prompt: str) -> str:
             "    pip install -r requirements-local.txt"
         ) from e
 
-    client = OpenAI(api_key=require_openai_key())
+    client = OpenAI(api_key=require_openai_key(), timeout=LOCAL_LLM_TIMEOUT_SECONDS)
     response = client.chat.completions.create(
         model=OPENAI_MODEL,
         temperature=0.7,
@@ -76,6 +77,7 @@ def call_openrouter_llm(prompt: str) -> str:
     client = OpenAI(
         api_key=require_openrouter_key(),
         base_url=OPENROUTER_BASE_URL,
+        timeout=LOCAL_LLM_TIMEOUT_SECONDS,
         # OpenRouter requires/expects these to identify the app, especially
         # for routing and rate-limiting free-tier models.
         default_headers={
