@@ -326,3 +326,54 @@ def get_highlights(
         highlights = dedupe_highlights(result.get("highlights", []))
 
     return {"highlights": highlights}
+
+
+def get_highlights_cached(
+    transcript: Dict,
+    num_clips: int,
+    cache_path: str,
+    llm_fn: Optional[LLMFn] = None,
+) -> Dict:
+    """Wraps get_highlights with an on-disk cache keyed by a transcript
+    content fingerprint + num_clips, so rerunning the pipeline on a video
+    whose transcript hasn't changed skips the LLM call(s) entirely.
+
+    A fingerprint mismatch, num_clips mismatch, or unparseable cache file
+    all fall back to a full recompute (which then overwrites the cache) —
+    no partial reuse.
+    """
+    fingerprint = _transcript_fingerprint(transcript)
+
+    if os.path.exists(cache_path):
+        cached = None
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+        except json.JSONDecodeError:
+            print(f"[highlights] cached highlights corrupted, recomputing: {cache_path}", flush=True)
+
+        if (
+            isinstance(cached, dict)
+            and cached.get("transcript_fingerprint") == fingerprint
+            and cached.get("num_clips") == num_clips
+            and isinstance(cached.get("highlights"), list)
+        ):
+            print(f"[highlights] reusing cached highlights: {cache_path}", flush=True)
+            return {"highlights": cached["highlights"]}
+
+    result = get_highlights(transcript, num_clips=num_clips, llm_fn=llm_fn or call_muapi_llm)
+
+    tmp_path = cache_path + ".part"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "transcript_fingerprint": fingerprint,
+                "num_clips": num_clips,
+                "highlights": result.get("highlights", []),
+            },
+            f,
+            ensure_ascii=False,
+        )
+    os.replace(tmp_path, cache_path)
+
+    return result
