@@ -61,6 +61,24 @@ Virality signals to prioritize (ranked by impact):
 """
 
 
+HOOK_STRENGTH_RUBRIC = """
+Hook-landing speed (the ~1-second swipe-decision window):
+- High (90+): the first spoken line states a COMPLETE, surprising or contrarian
+  idea that stands alone with zero prior context — e.g. "If I made the universe,
+  I wouldn't need your praise." A viewer hearing only the first ~1 second grasps
+  a full claim.
+- Low (<40): the opener is a thesis that requires processing — holding two
+  concepts, or setup before the point lands — e.g. "The Ultimate Irony:
+  Capitalism Will Create the Communist Utopia." Also low: windup/throat-clearing
+  ("So the thing is...", "What people don't realize...") and curiosity-gap
+  teases ("You won't believe what happened").
+- Reward: a declarative self-contained contrarian statement, a named-authority
+  factual claim, or a complete vivid image.
+- Penalize: dependency on prior context, multi-step reasoning, or a
+  promise-of-payoff-later.
+"""
+
+
 HIGHLIGHT_SYSTEM_PROMPT = """You are an elite short-form video editor who has studied thousands of viral clips on TikTok, Instagram Reels, and YouTube Shorts. You know exactly what makes viewers stop scrolling, watch to the end, and share.
 
 {virality_criteria}
@@ -68,6 +86,8 @@ HIGHLIGHT_SYSTEM_PROMPT = """You are an elite short-form video editor who has st
 Content type: {content_type} | Density: {density}
 
 Your task: identify the most viral-worthy highlights from the transcript.
+
+{hook_strength_rubric}
 
 Rules:
 - Every highlight must open with a strong HOOK — a line that grabs attention within the first 3 seconds. start_time must land ON that hook line itself, never on preamble, silence, or filler before it — the clip opens cold, mid-energy, not with a slow windup
@@ -77,15 +97,18 @@ Rules:
 - Score 0-100 on viral potential (not general quality)
 - {num_clips_instruction}
 - For each highlight, identify the single best "hook_sentence" — the opening line that would make someone stop scrolling
-- Write an "on_screen_hook" — a short punchy fragment, 7 words or fewer, distinct from hook_sentence (it does NOT need to be a verbatim transcript line). This is bold text that gets overlaid on screen for the first 1.5 seconds, so it must work standalone with zero context: think thumbnail text, not a sentence
+- Write an "on_screen_hook" — a short punchy fragment, 7 words or fewer, distinct from hook_sentence (it does NOT need to be a verbatim transcript line). This is bold text that gets overlaid on screen for the first 1.5 seconds, so it must work standalone with zero context. It must STATE the complete claim or payoff itself — never tease it. Bad (curiosity-gap teases, do NOT do this): "You won't believe what happened", "The truth about X", "Wait for it...". Good: a full contrarian statement or the punchline itself, e.g. "I'd rather be wrong than boring." Think thumbnail text that gives away the point, not a cliffhanger.
 - Explain in one sentence why this clip is viral ("virality_reason")
+- Score "hook_strength" 0-100 on how completely and immediately the opening line lands within the ~1-second swipe-decision window, per the hook-landing rubric above (this is independent from the overall viral "score")
+- Set "hook_self_contained" (true/false) — true only if the opener needs zero prior context to land
+- Write a "hook_reason" — one sentence on why the opener lands or fails within that first second (this is a human-review note, not shown to viewers)
 - Write a "title" — max 100 characters, aggressive clickbait style (curiosity gap, numbers, shock value, "you won't believe", etc.) optimized to maximize clicks and views, while still being accurate to the clip's content
 - Write a "description" — SHORTS-optimized, max 220 characters, original copy (NOT a transcript line) built to maximize views from BOTH the Shorts feed and YouTube search: line 1 is a hook line (<=150 chars, the only line most viewers see before "more"); line 2 works your primary keyword + 1-2 related terms in naturally (no keyword lists); line 3 is a short punchy CTA that drives session watch time — prefer a specific next-action tied to this content ("watch part 2" / "full video on my channel" / a pointed comment prompt) over a generic "follow/subscribe" ask. Do NOT include any emojis.
 - Write a "yt_title" — max 60 characters, a sharp Shorts title: Result/Hook + specific topic + for [audience]. Accurate to the clip, no emojis.
 - Write "yt_hashtags" — a JSON array of exactly 2-3 highly relevant NICHE hashtags (lowercase, leading #, no spaces). Always include "#Shorts" plus 1-2 topic-specific tags. Do NOT use generic spam tags (#fyp, #viral, #trending).
 
 Respond ONLY with valid JSON (no markdown, no explanation):
-{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"]}}]}}"""
+{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","hook_strength":int,"hook_self_contained":bool,"hook_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"]}}]}}"""
 
 
 CHUNK_SIZE_SECONDS = 1200       # 20-min chunks for long videos
@@ -93,6 +116,9 @@ LONG_VIDEO_THRESHOLD = 1800     # chunk videos longer than 30 min
 CHUNK_OVERLAP_SECONDS = 60
 GPT_CALL_TIMEOUT_SECONDS = 300  # cap LLM polls at 5 min — a wedged call should fail fast
 MAX_HIGHLIGHT_API_ATTEMPTS = 3
+HIGHLIGHT_SCHEMA_VERSION = 2    # bump whenever the highlight dict shape changes,
+                                # so a stale on-disk cache (missing new fields)
+                                # is treated as a miss instead of silently reused
 
 
 def call_muapi_llm(prompt: str) -> str:
@@ -151,6 +177,14 @@ def _coerce_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes")
+    return default
+
+
 def _sanitize_hashtags(raw_tags: object) -> List[str]:
     """Keep 2-3 niche hashtags; always include #Shorts; drop generic spam."""
     hashtags: List[str] = []
@@ -201,6 +235,9 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
                 "hook_sentence": str(item.get("hook_sentence") or "").strip(),
                 "on_screen_hook": str(item.get("on_screen_hook") or "").strip()[:60],
                 "virality_reason": str(item.get("virality_reason") or "").strip(),
+                "hook_strength": max(0, min(100, _coerce_int(item.get("hook_strength"), default=0))),
+                "hook_self_contained": _coerce_bool(item.get("hook_self_contained"), default=False),
+                "hook_reason": str(item.get("hook_reason") or "").strip(),
                 "description": str(item.get("description") or "").strip()[:220],
                 "yt_title": str(item.get("yt_title") or "").strip()[:60],
                 "yt_hashtags": _sanitize_hashtags(item.get("yt_hashtags")),
@@ -262,6 +299,7 @@ def call_highlight_api(
     min_clips = min(target, natural_max, 14)
     system = HIGHLIGHT_SYSTEM_PROMPT.format(
         virality_criteria=VIRALITY_CRITERIA,
+        hook_strength_rubric=HOOK_STRENGTH_RUBRIC,
         content_type=content_info.get("content_type", "other"),
         density=content_info.get("density", "medium"),
         num_clips_instruction=f"Generate at least {min_clips} highlights",
@@ -289,7 +327,7 @@ def call_highlight_api(
             prompt = (
                 base_prompt
                 + "\n\nIMPORTANT: Return ONLY valid JSON with a top-level 'highlights' array."
-                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, description, yt_title, yt_hashtags."
+                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, hook_strength, hook_self_contained, hook_reason, description, yt_title, yt_hashtags."
                 + " No markdown fences, no commentary."
             )
 
@@ -387,6 +425,7 @@ def get_highlights_cached(
             isinstance(cached, dict)
             and cached.get("transcript_fingerprint") == fingerprint
             and cached.get("num_clips") == num_clips
+            and cached.get("schema_version") == HIGHLIGHT_SCHEMA_VERSION
             and isinstance(cached.get("highlights"), list)
         ):
             print(f"[highlights] reusing cached highlights: {cache_path}", flush=True)
@@ -400,6 +439,7 @@ def get_highlights_cached(
             {
                 "transcript_fingerprint": fingerprint,
                 "num_clips": num_clips,
+                "schema_version": HIGHLIGHT_SCHEMA_VERSION,
                 "highlights": result.get("highlights", []),
             },
             f,
