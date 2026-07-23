@@ -418,3 +418,57 @@ def test_index_includes_history_tab_markup(client):
     assert b'id="tab-history"' in resp.data
     assert b'id="history-list"' in resp.data
     assert b'id="history-refresh"' in resp.data
+
+
+def test_history_shorts_reads_result_json_when_present(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "My_Clip.mp4").write_bytes(b"clip-bytes")
+    (root / "result.json").write_text(
+        '{"shorts": [{"clip_url": "My_Clip.mp4", "title": "My Clip", "description": "watch this"}]}'
+    )
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.get("/history/Video_A/shorts")
+    assert resp.status_code == 200
+    shorts = resp.get_json()["shorts"]
+    assert len(shorts) == 1
+    assert shorts[0]["title"] == "My Clip"
+    assert shorts[0]["description"] == "watch this"
+    assert shorts[0]["download_url"] == "/history/Video_A/download/My_Clip.mp4"
+
+
+def test_history_shorts_falls_back_to_clip_files_when_result_json_missing(client, monkeypatch, tmp_path):
+    """A run that crashed after cropping but before result.json was written
+    (e.g. the write_descriptions hashtags-list bug) still has real clips on
+    disk — the endpoint must recover a title from the filename instead of
+    reporting zero shorts."""
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "Some_Great_Clip.mp4").write_bytes(b"clip-bytes")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.get("/history/Video_A/shorts")
+    assert resp.status_code == 200
+    shorts = resp.get_json()["shorts"]
+    assert len(shorts) == 1
+    assert shorts[0]["title"] == "Some Great Clip"
+    assert shorts[0]["download_url"] == "/history/Video_A/download/Some_Great_Clip.mp4"
+
+
+def test_history_shorts_empty_when_result_json_and_shorts_dir_both_missing(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    root.mkdir()
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.get("/history/Video_A/shorts")
+    assert resp.status_code == 200
+    assert resp.get_json()["shorts"] == []
+
+
+def test_history_shorts_404s_for_unknown_run(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+    resp = client.get("/history/does-not-exist/shorts")
+    assert resp.status_code == 404

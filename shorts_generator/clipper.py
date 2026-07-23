@@ -6,7 +6,7 @@ ratio, MuAPI returns a vertically-cropped short ready for posting. When
 captions or the hook card are enabled (both on by default), that hosted
 clip is downloaded locally and processed with ffmpeg (shorts_generator.
 captions, shorts_generator.hook_card) — the one place API mode now needs a
-local ffmpeg and OpenCV on PATH/installed.
+local ffmpeg on PATH/installed.
 """
 import os
 from typing import Dict, List, Optional
@@ -15,9 +15,10 @@ import requests
 
 from . import muapi
 from .captions import CaptionError, burn_captions
-from .hook_card import HookCardError, extract_frame, pick_striking_frame, render_card_overlay
+from .hook_card import HookCardError, render_card_overlay
 from .config import LOCAL_OUTPUT_DIR
 from .downloader import _extract_video_url
+from .run_output import unique_short_filename
 
 
 def crop_clip(source_video_url: str, start_time: float, end_time: float, aspect_ratio: str = "9:16") -> str:
@@ -58,6 +59,7 @@ def crop_highlights(
     """Crop every highlight, attaching the resulting URL back onto the dict."""
     out_dir = out_dir or LOCAL_OUTPUT_DIR
     out = []
+    used_names: set = set()
     for i, h in enumerate(highlights, 1):
         print(f"[clip] {i}/{len(highlights)}: {h.get('title', '(untitled)')}", flush=True)
         try:
@@ -75,21 +77,11 @@ def crop_highlights(
 
             if want_captions or want_hook_card:
                 os.makedirs(out_dir, exist_ok=True)
-                final_path = os.path.join(out_dir, f"Short-{i:02d}.mp4")
+                filename = unique_short_filename(h.get("title"), used_names)
+                final_path = os.path.join(out_dir, filename)
                 downloaded_path = final_path + ".download.mp4"
-                still_path = final_path + ".still.jpg"
-                have_still = False
                 try:
                     _download_to(url, downloaded_path)
-
-                    if want_hook_card:
-                        try:
-                            ts = pick_striking_frame(downloaded_path)
-                            extract_frame(downloaded_path, ts, still_path)
-                            have_still = True
-                        except HookCardError as e:
-                            print(f"[clip] {i} hook-card frame skipped: {e}", flush=True)
-                            entry["hook_card_error"] = str(e)
 
                     if want_captions:
                         try:
@@ -114,10 +106,10 @@ def crop_highlights(
                     else:
                         os.replace(downloaded_path, final_path)
 
-                    if have_still:
+                    if want_hook_card:
                         try:
                             card_path = final_path + ".card.mp4"
-                            render_card_overlay(final_path, still_path, hook_text, card_path)
+                            render_card_overlay(final_path, hook_text, card_path)
                             os.replace(card_path, final_path)
                         except HookCardError as e:
                             print(f"[clip] {i} hook-card overlay skipped: {e}", flush=True)
@@ -134,8 +126,6 @@ def crop_highlights(
                 finally:
                     if os.path.exists(downloaded_path):
                         os.remove(downloaded_path)
-                    if os.path.exists(still_path):
-                        os.remove(still_path)
 
             out.append(entry)
         except Exception as e:

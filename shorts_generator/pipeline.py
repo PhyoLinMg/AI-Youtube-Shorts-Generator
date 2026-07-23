@@ -199,8 +199,8 @@ def generate_shorts(
             that alternates between facecam and screen activity). Only
             applies to mode="local" — mode="api" always uses MuAPI's autocrop.
         hook_card: composite a bold on-screen hook (from each highlight's
-            "on_screen_hook") over a motion-picked striking still for the
-            clip's first 1.5 seconds (default True).
+            "on_screen_hook") over the clip's live footage for its first
+            1.5 seconds (default True).
         paths: pre-resolved RunPaths to use instead of resolving them from
             youtube_url. Callers that need to know progress_log's path before
             the pipeline starts (e.g. a background job) should resolve it
@@ -214,7 +214,7 @@ def generate_shorts(
           "transcript": {...},
           "highlights": [...],       # all candidates ranked
           "shorts": [...],           # top `num_clips`, each with:
-                                      #   clip_url: local path (Shorts/Short-NN.mp4)
+                                      #   clip_url: local path (Shorts/<title>.mp4)
                                       #   hosted_clip_url: original MuAPI URL (api mode,
                                       #     only present when captions or the hook card
                                       #     triggered a local download)

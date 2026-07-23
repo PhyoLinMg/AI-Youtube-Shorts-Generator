@@ -22,7 +22,8 @@ import numpy as np
 
 from ..captions import CaptionError, burn_captions
 from ..config import LOCAL_OUTPUT_DIR
-from ..hook_card import HookCardError, extract_frame, pick_striking_frame, render_card_overlay
+from ..hook_card import HookCardError, render_card_overlay
+from ..run_output import unique_short_filename
 
 # --- adaptive framing tunables -------------------------------------------------
 PERSON_FACE_MIN_W_FRAC = 0.12   # face width as a fraction of src width to count as "main person"
@@ -453,8 +454,9 @@ def crop_highlights_local(
     out_dir = out_dir or LOCAL_OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     results: List[Dict] = []
+    used_names: set = set()
     for i, h in enumerate(highlights, 1):
-        out_path = os.path.join(out_dir, f"Short-{i:02d}.mp4")
+        out_path = os.path.join(out_dir, unique_short_filename(h.get("title"), used_names))
         print(f"[clip/local] {i}/{len(highlights)}: {h.get('title', '(untitled)')}", flush=True)
         try:
             crop_clip_local(
@@ -468,18 +470,7 @@ def crop_highlights_local(
             entry = {**h, "clip_url": out_path}
 
             hook_text = str(h.get("on_screen_hook") or "").strip()
-            still_path = out_path + ".still.jpg"
-            have_still = False
-            if hook_card and hook_text:
-                try:
-                    ts = pick_striking_frame(out_path)
-                    extract_frame(out_path, ts, still_path)
-                    have_still = True
-                except HookCardError as e:
-                    print(f"[clip/local] {i} hook-card frame skipped: {e}", flush=True)
-                    entry["hook_card_error"] = str(e)
-                    if os.path.exists(still_path):
-                        os.remove(still_path)
+            want_hook_card = hook_card and bool(hook_text)
 
             if captions and transcript_segments:
                 captioned_path = out_path + ".captioned.mp4"
@@ -500,17 +491,14 @@ def crop_highlights_local(
                     if os.path.exists(captioned_path):
                         os.remove(captioned_path)
 
-            if have_still:
+            if want_hook_card:
                 try:
                     card_path = out_path + ".card.mp4"
-                    render_card_overlay(out_path, still_path, hook_text, card_path)
+                    render_card_overlay(out_path, hook_text, card_path)
                     os.replace(card_path, out_path)
                 except HookCardError as e:
                     print(f"[clip/local] {i} hook-card overlay skipped: {e}", flush=True)
                     entry["hook_card_error"] = str(e)
-                finally:
-                    if os.path.exists(still_path):
-                        os.remove(still_path)
 
             results.append(entry)
         except Exception as e:

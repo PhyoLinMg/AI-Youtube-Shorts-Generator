@@ -348,6 +348,12 @@
       font-style: italic;
       line-height: 1.3;
     }
+    .hashtags {
+      font-family: var(--mono);
+      font-size: 0.74rem;
+      color: var(--paper);
+      line-height: 1.35;
+    }
     .video-frame {
       --vf-c: var(--rule);
       --vf-s: 10px;
@@ -472,6 +478,27 @@
       cursor: pointer;
     }
     .history-delete-btn:hover { border-color: var(--safelight); }
+    .history-review-btn {
+      width: auto;
+      margin-top: 0;
+      padding: 0.25rem 0.6rem;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      background: transparent;
+      color: var(--fixer);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    .history-review-btn:hover:not(:disabled) { border-color: var(--fixer); }
+    .history-review-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .history-entry { border-bottom: 1px solid var(--rule); }
+    .history-entry:last-child { border-bottom: none; }
+    .history-entry .history-row { border-bottom: none; }
+    .history-detail { padding: 0 0 1.2rem; }
+    .history-detail[hidden] { display: none; }
     .history-empty { color: var(--ash); font-size: 0.85rem; }
   </style>
 </head>
@@ -678,102 +705,127 @@
       card.appendChild(wrap);
     }
 
+    function buildShortCard(s, idx) {
+      const card = document.createElement("div");
+      card.className = "card frame" + (s.download_url ? "" : " failed");
+
+      const meta = document.createElement("div");
+      meta.className = "frame-meta";
+      const frameNo = document.createElement("span");
+      frameNo.textContent = "No. " + String(idx + 1).padStart(2, "0");
+      meta.appendChild(frameNo);
+      if (typeof s.start_time === "number" && typeof s.end_time === "number") {
+        const tc = document.createElement("span");
+        tc.textContent = formatTimecode(s.start_time) + "–" + formatTimecode(s.end_time);
+        meta.appendChild(tc);
+      }
+      card.appendChild(meta);
+
+      const titleText = s.title || "Untitled";
+      const titleEl = document.createElement("div");
+      titleEl.className = "card-title";
+      titleEl.textContent = titleText;
+      card.appendChild(titleEl);
+
+      if (s.download_url) {
+        const titleCopyRow = document.createElement("div");
+        titleCopyRow.className = "copy-row";
+        titleCopyRow.appendChild(makeCopyButton("Copy title", titleText));
+        card.appendChild(titleCopyRow);
+        const score = Number(s.score) || 0;
+        const scoreRow = document.createElement("div");
+        scoreRow.className = "score-row";
+        const meter = document.createElement("div");
+        meter.className = "meter";
+        const meterFill = document.createElement("span");
+        meterFill.style.width = score + "%";
+        meterFill.style.background = scoreColor(score);
+        meter.appendChild(meterFill);
+        scoreRow.appendChild(meter);
+        const scoreNum = document.createElement("span");
+        scoreNum.textContent = score;
+        scoreRow.appendChild(scoreNum);
+        card.appendChild(scoreRow);
+
+        if (s.description) {
+          appendLabeledText(card, "Pitch", "pitch", s.description);
+          const descCopyRow = document.createElement("div");
+          descCopyRow.className = "copy-row";
+          descCopyRow.appendChild(makeCopyButton("Copy description", s.description));
+          card.appendChild(descCopyRow);
+        }
+
+        if (Array.isArray(s.yt_hashtags) && s.yt_hashtags.length) {
+          const hashtagsText = s.yt_hashtags.join(" ");
+          appendLabeledText(card, "Hashtags", "hashtags", hashtagsText);
+          const tagsCopyRow = document.createElement("div");
+          tagsCopyRow.className = "copy-row";
+          tagsCopyRow.appendChild(makeCopyButton("Copy hashtags", hashtagsText));
+          card.appendChild(tagsCopyRow);
+        }
+
+        if (s.hook_sentence) {
+          appendLabeledText(card, "Hook", "hook", s.hook_sentence);
+        }
+
+        if (s.virality_reason) {
+          appendLabeledText(card, "Why it works", "reason", s.virality_reason);
+        }
+
+        const videoFrame = document.createElement("div");
+        videoFrame.className = "video-frame frame";
+        const video = document.createElement("video");
+        video.controls = true;
+        video.src = s.download_url;
+        videoFrame.appendChild(video);
+        card.appendChild(videoFrame);
+
+        if (s.captions_error) {
+          const noteEl = document.createElement("div");
+          noteEl.className = "card-note";
+          noteEl.textContent = "captions failed — clip has no burned-in captions";
+          card.appendChild(noteEl);
+        }
+
+        const link = document.createElement("a");
+        link.className = "download";
+        link.href = s.download_url;
+        link.setAttribute("download", "");
+        link.textContent = "Download";
+        card.appendChild(link);
+      } else {
+        const statusEl = document.createElement("div");
+        statusEl.className = "card-status";
+        statusEl.textContent = "Failed";
+        card.appendChild(statusEl);
+
+        const errEl = document.createElement("div");
+        errEl.className = "card-error";
+        errEl.textContent = s.error || "unknown error";
+        card.appendChild(errEl);
+      }
+      return card;
+    }
+
+    function renderShortsGrid(container, shorts) {
+      container.innerHTML = "";
+      if (!shorts || shorts.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = "No shorts found.";
+        container.appendChild(empty);
+        return;
+      }
+      shorts.forEach((s, idx) => container.appendChild(buildShortCard(s, idx)));
+    }
+
     function renderResults(result) {
-      resultsEl.innerHTML = "";
       resultsPanel.hidden = !result || !result.shorts || result.shorts.length === 0;
-      if (!result || !result.shorts) return;
-      result.shorts.forEach((s, idx) => {
-        const card = document.createElement("div");
-        card.className = "card frame" + (s.download_url ? "" : " failed");
-
-        const meta = document.createElement("div");
-        meta.className = "frame-meta";
-        const frameNo = document.createElement("span");
-        frameNo.textContent = "No. " + String(idx + 1).padStart(2, "0");
-        meta.appendChild(frameNo);
-        if (typeof s.start_time === "number" && typeof s.end_time === "number") {
-          const tc = document.createElement("span");
-          tc.textContent = formatTimecode(s.start_time) + "–" + formatTimecode(s.end_time);
-          meta.appendChild(tc);
-        }
-        card.appendChild(meta);
-
-        const titleText = s.title || "Untitled";
-        const titleEl = document.createElement("div");
-        titleEl.className = "card-title";
-        titleEl.textContent = titleText;
-        card.appendChild(titleEl);
-
-        if (s.download_url) {
-          const titleCopyRow = document.createElement("div");
-          titleCopyRow.className = "copy-row";
-          titleCopyRow.appendChild(makeCopyButton("Copy title", titleText));
-          card.appendChild(titleCopyRow);
-          const score = Number(s.score) || 0;
-          const scoreRow = document.createElement("div");
-          scoreRow.className = "score-row";
-          const meter = document.createElement("div");
-          meter.className = "meter";
-          const meterFill = document.createElement("span");
-          meterFill.style.width = score + "%";
-          meterFill.style.background = scoreColor(score);
-          meter.appendChild(meterFill);
-          scoreRow.appendChild(meter);
-          const scoreNum = document.createElement("span");
-          scoreNum.textContent = score;
-          scoreRow.appendChild(scoreNum);
-          card.appendChild(scoreRow);
-
-          if (s.description) {
-            appendLabeledText(card, "Pitch", "pitch", s.description);
-            const descCopyRow = document.createElement("div");
-            descCopyRow.className = "copy-row";
-            descCopyRow.appendChild(makeCopyButton("Copy description", s.description));
-            card.appendChild(descCopyRow);
-          }
-
-          if (s.hook_sentence) {
-            appendLabeledText(card, "Hook", "hook", s.hook_sentence);
-          }
-
-          if (s.virality_reason) {
-            appendLabeledText(card, "Why it works", "reason", s.virality_reason);
-          }
-
-          const videoFrame = document.createElement("div");
-          videoFrame.className = "video-frame frame";
-          const video = document.createElement("video");
-          video.controls = true;
-          video.src = s.download_url;
-          videoFrame.appendChild(video);
-          card.appendChild(videoFrame);
-
-          if (s.captions_error) {
-            const noteEl = document.createElement("div");
-            noteEl.className = "card-note";
-            noteEl.textContent = "captions failed — clip has no burned-in captions";
-            card.appendChild(noteEl);
-          }
-
-          const link = document.createElement("a");
-          link.className = "download";
-          link.href = s.download_url;
-          link.setAttribute("download", "");
-          link.textContent = "Download";
-          card.appendChild(link);
-        } else {
-          const statusEl = document.createElement("div");
-          statusEl.className = "card-status";
-          statusEl.textContent = "Failed";
-          card.appendChild(statusEl);
-
-          const errEl = document.createElement("div");
-          errEl.className = "card-error";
-          errEl.textContent = s.error || "unknown error";
-          card.appendChild(errEl);
-        }
-        resultsEl.appendChild(card);
-      });
+      if (!result || !result.shorts) {
+        resultsEl.innerHTML = "";
+        return;
+      }
+      renderShortsGrid(resultsEl, result.shorts);
     }
 
     let pollTimer = null;
@@ -881,7 +933,7 @@
       }
     }
 
-    async function deleteHistoryFiles(name, action, kind, labelEl, btnEl) {
+    async function deleteHistoryFiles(name, action, kind, labelEl, btnEl, detailEl, reviewBtn) {
       const what = kind === "source" ? "the source video" : "the shorts clips";
       if (!confirm("Delete " + what + " for \"" + name + "\"? This can't be undone.")) return;
       btnEl.disabled = true;
@@ -895,13 +947,51 @@
         }
         showError("");
         updateHistoryItem(labelEl, btnEl, kind, data);
+        if (kind === "shorts") {
+          // clips on disk changed — drop any cached review grid so the next
+          // expand re-fetches instead of showing deleted clips
+          delete detailEl.dataset.loaded;
+          detailEl.innerHTML = "";
+          detailEl.hidden = true;
+          reviewBtn.textContent = "Review";
+          reviewBtn.disabled = data.shorts_count === 0;
+        }
       } catch (e) {
         showError("lost connection to server");
         btnEl.disabled = false;
       }
     }
 
+    async function loadShortsForRun(name, detailEl) {
+      if (detailEl.dataset.loaded === "true") return;
+      detailEl.innerHTML = '<div class="history-empty">Loading…</div>';
+      try {
+        const resp = await fetch("/history/" + encodeURIComponent(name) + "/shorts");
+        const data = await resp.json();
+        if (!resp.ok) {
+          detailEl.innerHTML = "";
+          const err = document.createElement("div");
+          err.className = "history-empty";
+          err.textContent = data.error || "failed to load shorts";
+          detailEl.appendChild(err);
+          return;
+        }
+        renderShortsGrid(detailEl, data.shorts);
+        detailEl.className = "history-detail results-grid";
+        detailEl.dataset.loaded = "true";
+      } catch (e) {
+        detailEl.innerHTML = "";
+        const err = document.createElement("div");
+        err.className = "history-empty";
+        err.textContent = "failed to load shorts";
+        detailEl.appendChild(err);
+      }
+    }
+
     function renderHistoryRow(run) {
+      const entry = document.createElement("div");
+      entry.className = "history-entry";
+
       const row = document.createElement("div");
       row.className = "history-row";
 
@@ -925,7 +1015,6 @@
       sourceBtn.textContent = "Delete";
       sourceItem.appendChild(sourceBtn);
       updateHistoryItem(sourceLabel, sourceBtn, "source", run);
-      sourceBtn.addEventListener("click", () => deleteHistoryFiles(run.name, "delete-source", "source", sourceLabel, sourceBtn));
       row.appendChild(sourceItem);
 
       const shortsItem = document.createElement("div");
@@ -938,10 +1027,33 @@
       shortsBtn.textContent = "Delete";
       shortsItem.appendChild(shortsBtn);
       updateHistoryItem(shortsLabel, shortsBtn, "shorts", run);
-      shortsBtn.addEventListener("click", () => deleteHistoryFiles(run.name, "delete-shorts", "shorts", shortsLabel, shortsBtn));
       row.appendChild(shortsItem);
 
-      return row;
+      const detailEl = document.createElement("div");
+      detailEl.className = "history-detail";
+      detailEl.hidden = true;
+
+      const reviewItem = document.createElement("div");
+      reviewItem.className = "history-item";
+      const reviewBtn = document.createElement("button");
+      reviewBtn.type = "button";
+      reviewBtn.className = "history-review-btn";
+      reviewBtn.textContent = "Review";
+      reviewBtn.disabled = run.shorts_count === 0;
+      reviewBtn.addEventListener("click", () => {
+        detailEl.hidden = !detailEl.hidden;
+        reviewBtn.textContent = detailEl.hidden ? "Review" : "Hide";
+        if (!detailEl.hidden) loadShortsForRun(run.name, detailEl);
+      });
+      reviewItem.appendChild(reviewBtn);
+      row.appendChild(reviewItem);
+
+      sourceBtn.addEventListener("click", () => deleteHistoryFiles(run.name, "delete-source", "source", sourceLabel, sourceBtn, detailEl, reviewBtn));
+      shortsBtn.addEventListener("click", () => deleteHistoryFiles(run.name, "delete-shorts", "shorts", shortsLabel, shortsBtn, detailEl, reviewBtn));
+
+      entry.appendChild(row);
+      entry.appendChild(detailEl);
+      return entry;
     }
 
     async function loadHistory() {

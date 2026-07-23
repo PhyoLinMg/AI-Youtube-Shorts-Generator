@@ -22,6 +22,19 @@ def test_sanitize_title_truncates_long_titles():
     assert len(result) == 100
 
 
+def test_unique_short_filename_slugifies_title():
+    used = set()
+    assert run_output.unique_short_filename("My Great Clip", used) == "My_Great_Clip.mp4"
+
+
+def test_unique_short_filename_dedupes_repeated_titles():
+    used = set()
+    first = run_output.unique_short_filename("Same Title", used)
+    second = run_output.unique_short_filename("Same Title", used)
+    third = run_output.unique_short_filename("Same Title", used)
+    assert [first, second, third] == ["Same_Title.mp4", "Same_Title_2.mp4", "Same_Title_3.mp4"]
+
+
 class _FakeResponse:
     def __init__(self, status_code=200, json_data=None):
         self.status_code = status_code
@@ -153,7 +166,10 @@ def test_write_descriptions_formats_one_line_per_short(tmp_path):
     ]
     path = run_output.write_descriptions(shorts_dir, shorts)
     content = Path(path).read_text()
-    assert content == "short 01 - Title One -- Come watch clip one.\nshort 02 - Title Two -- Come watch clip two.\n"
+    assert content == (
+        "short 01 - Title One\nCome watch clip one.\n\n"
+        "short 02 - Title Two\nCome watch clip two.\n"
+    )
 
 
 def test_write_descriptions_skips_failed_clips_without_renumbering(tmp_path):
@@ -163,7 +179,7 @@ def test_write_descriptions_skips_failed_clips_without_renumbering(tmp_path):
     ]
     path = run_output.write_descriptions(str(tmp_path), shorts)
     content = Path(path).read_text()
-    assert content == "short 02 - Survivor -- Come watch it.\n"
+    assert content == "short 02 - Survivor\nCome watch it.\n"
 
 
 def test_write_descriptions_empty_shorts_writes_empty_file(tmp_path):
@@ -175,7 +191,31 @@ def test_write_descriptions_falls_back_on_missing_fields(tmp_path):
     shorts = [{"clip_url": "Short-01.mp4"}]
     path = run_output.write_descriptions(str(tmp_path), shorts)
     content = Path(path).read_text()
-    assert content == "short 01 - Untitled -- \n"
+    assert content == "short 01 - Untitled\n\n"
+
+
+def test_write_descriptions_appends_hashtags_list(tmp_path):
+    shorts = [{
+        "clip_url": "Short-01.mp4",
+        "title": "Title One",
+        "description": "Come watch clip one.",
+        "yt_hashtags": ["#Shorts", "#topic"],
+    }]
+    path = run_output.write_descriptions(str(tmp_path), shorts)
+    content = Path(path).read_text()
+    assert "#Shorts #topic" in content
+
+
+def test_write_descriptions_does_not_duplicate_hashtags_already_in_description(tmp_path):
+    shorts = [{
+        "clip_url": "Short-01.mp4",
+        "title": "Title One",
+        "description": "Come watch clip one. #Shorts #topic",
+        "yt_hashtags": ["#Shorts", "#topic"],
+    }]
+    path = run_output.write_descriptions(str(tmp_path), shorts)
+    content = Path(path).read_text()
+    assert content.count("#Shorts") == 1
 
 
 def _touch(path, mtime):

@@ -125,7 +125,7 @@ def test_word_highlight_flag_forwarded_to_burn(tmp_path, synthetic_clip, monkeyp
     assert captured["word_highlight"] is False
 
 
-def test_output_filename_uses_short_dash_prefix(tmp_path, synthetic_clip, monkeypatch):
+def test_output_filename_uses_highlight_title(tmp_path, synthetic_clip, monkeypatch):
     monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
     monkeypatch.setattr(
         clipper,
@@ -141,7 +141,27 @@ def test_output_filename_uses_short_dash_prefix(tmp_path, synthetic_clip, monkey
         out_dir=str(tmp_path / "out"),
     )
 
-    assert os.path.basename(results[0]["clip_url"]) == "Short-01.mp4"
+    assert os.path.basename(results[0]["clip_url"]) == "Test_Clip.mp4"
+
+
+def test_output_filename_dedupes_repeated_titles(tmp_path, synthetic_clip, monkeypatch):
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper,
+        "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [_highlight(), _highlight()],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        out_dir=str(tmp_path / "out"),
+    )
+
+    basenames = sorted(os.path.basename(r["clip_url"]) for r in results)
+    assert basenames == ["Test_Clip.mp4", "Test_Clip_2.mp4"]
 
 
 from shorts_generator.hook_card import HookCardError
@@ -152,20 +172,10 @@ def _highlight_with_hook():
 
 
 def _stub_hook_card(monkeypatch):
-    def _fake_pick(video_path):
-        return 0.5
-
-    def _fake_extract(video_path, ts, out_path):
-        with open(out_path, "wb") as f:
-            f.write(b"x")
-        return out_path
-
-    def _fake_render(video_path, still_path, hook_text, out_path, duration=1.5):
+    def _fake_render(video_path, hook_text, out_path, duration=1.5):
         shutil.copyfile(video_path, out_path)
         return out_path
 
-    monkeypatch.setattr(clipper, "pick_striking_frame", _fake_pick)
-    monkeypatch.setattr(clipper, "extract_frame", _fake_extract)
     monkeypatch.setattr(clipper, "render_card_overlay", _fake_render)
 
 
@@ -218,8 +228,8 @@ def test_hook_card_skipped_when_on_screen_hook_missing(tmp_path, synthetic_clip,
     )
 
     def _fail_if_called(*a, **k):
-        raise AssertionError("pick_striking_frame should not be called without on_screen_hook")
-    monkeypatch.setattr(clipper, "pick_striking_frame", _fail_if_called)
+        raise AssertionError("render_card_overlay should not be called without on_screen_hook")
+    monkeypatch.setattr(clipper, "render_card_overlay", _fail_if_called)
 
     results = clipper.crop_highlights(
         "https://source.example/video.mp4",
@@ -241,7 +251,7 @@ def test_hook_card_failure_falls_back_to_captioned_clip(tmp_path, synthetic_clip
 
     def _raise(*a, **k):
         raise HookCardError("boom")
-    monkeypatch.setattr(clipper, "pick_striking_frame", _raise)
+    monkeypatch.setattr(clipper, "render_card_overlay", _raise)
 
     results = clipper.crop_highlights(
         "https://source.example/video.mp4",

@@ -47,6 +47,20 @@ def sanitize_title(title: str, max_length: int = 100) -> str:
     return cleaned or "untitled"
 
 
+def unique_short_filename(title: str, used_names: set) -> str:
+    """Slugify a highlight's own title into a `.mp4` filename, deduping
+    against `used_names` (mutated in place) when two highlights share a
+    title within the same run."""
+    base = sanitize_title(title)
+    name = f"{base}.mp4"
+    n = 2
+    while name in used_names:
+        name = f"{base}_{n}.mp4"
+        n += 1
+    used_names.add(name)
+    return name
+
+
 def _title_via_oembed(url: str) -> Optional[str]:
     try:
         resp = requests.get(
@@ -171,7 +185,7 @@ def summarize_run(name: str, root: str) -> RunSummary:
     if os.path.isdir(shorts_dir):
         shorts_names = sorted(
             n for n in os.listdir(shorts_dir)
-            if n.startswith("Short-") and n.endswith(".mp4")
+            if n.endswith(".mp4")
         )
     shorts_size = sum(os.path.getsize(os.path.join(shorts_dir, n)) for n in shorts_names)
 
@@ -209,26 +223,30 @@ def list_runs(base_dir: Optional[str] = None) -> List[RunSummary]:
 
 
 def write_descriptions(shorts_dir: str, shorts: List[Dict]) -> str:
-    """Write a copy-paste-ready descriptions.txt next to the Short-NN.mp4 files.
+    """Write a copy-paste-ready descriptions.txt next to the short clip files.
 
-    One line per short that actually has a clip_url — "short 01 - <title> --
-    <description>" — numbered by position in `shorts` so it lines up with
-    Short-{i:02d}.mp4 even when an earlier clip in the batch failed to crop.
-    `description` is the LLM-written social caption meant to pull an audience
-    into the clip (see highlights.py), not the in-clip hook_sentence.
+    One block per short that actually has a clip_url, numbered by position in
+    `shorts` regardless of the clip's own title-derived filename. Prefers the
+    Shorts-optimized yt_title / yt_hashtags (emitted by the highlight step in
+    highlights.py) when present, falling back to the highlight-step `title`
+    otherwise.
     """
     path = os.path.join(shorts_dir, "descriptions.txt")
-    lines = []
+    blocks = []
     for i, s in enumerate(shorts, 1):
         if not s.get("clip_url"):
             continue
-        title = (s.get("title") or "Untitled").strip()
+        title = (s.get("yt_title") or s.get("title") or "Untitled").strip()
         description = (s.get("description") or "").strip()
-        lines.append(f"short {i:02d} - {title} -- {description}")
+        hashtags = s.get("yt_hashtags") or []
+        hashtags_text = " ".join(hashtags)
+        if hashtags_text and hashtags_text not in description:
+            description = (description + "\n\n" + hashtags_text).strip()
+        blocks.append(f"short {i:02d} - {title}\n{description}")
 
     with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-        if lines:
+        f.write("\n\n".join(blocks))
+        if blocks:
             f.write("\n")
 
     return path

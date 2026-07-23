@@ -57,8 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="hook_card",
         action="store_false",
         default=True,
-        help="Disable the first-frame hook-card overlay (bold on-screen hook text over a "
-             "motion-picked striking still for the first 1.5s; on by default).",
+        help="Disable the opening hook-card overlay (bold on-screen hook text over the "
+             "live footage for the first 1.5s; on by default).",
     )
     parser.add_argument(
         "--framing",
@@ -100,8 +100,12 @@ def main() -> int:
     print("=" * 72)
     for i, s in enumerate(result["shorts"], 1):
         print(f"\n#{i}  score={s.get('score')}  {s.get('start_time'):.1f}s → {s.get('end_time'):.1f}s")
-        print(f"     title:  {s.get('title')}")
+        print(f"     title:  {s.get('yt_title') or s.get('title')}")
         print(f"     hook:   {s.get('hook_sentence')}")
+        if s.get("description"):
+            print(f"     desc:   {s.get('description')}")
+        if s.get("yt_hashtags"):
+            print(f"     tags:   {' '.join(s.get('yt_hashtags'))}")
         if s.get("clip_url"):
             print(f"     clip:   {s['clip_url']}")
         else:

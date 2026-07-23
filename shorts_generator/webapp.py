@@ -7,6 +7,7 @@ time constraint is load-bearing: `capture_progress_log` (run_output.py) swaps
 sys.stdout/sys.stderr process-globally, not per-thread, so two concurrent
 runs would interleave each other's progress logs.
 """
+import json
 import os
 import sys
 import threading
@@ -197,6 +198,72 @@ def history():
     return jsonify({"runs": [asdict(r) for r in list_runs()]})
 
 
+def _history_clip_display_url(name: str, shorts_dir: str, clip_url: Optional[str]) -> Optional[str]:
+    if not clip_url:
+        return None
+    filename = os.path.basename(clip_url)
+    if not _safe_join(shorts_dir, filename) or not os.path.isfile(os.path.join(shorts_dir, filename)):
+        return None
+    return f"/history/{name}/download/{filename}"
+
+
+def _shorts_from_clip_files(shorts_dir: str) -> list:
+    """Reconstruct a minimal shorts list straight from Shorts/*.mp4.
+
+    Used when result.json is missing — e.g. a run crashed after cropping
+    finished but before the result was written (see write_descriptions'
+    former hashtags-list bug). Filenames are title-derived (unique_short_filename),
+    so this recovers a usable title even with no description/hashtags.
+    """
+    if not os.path.isdir(shorts_dir):
+        return []
+    return [
+        {"clip_url": n, "title": os.path.splitext(n)[0].replace("_", " ")}
+        for n in sorted(os.listdir(shorts_dir))
+        if n.endswith(".mp4")
+    ]
+
+
+@app.route("/history/<name>/shorts")
+def history_shorts(name):
+    """Past shorts for a run — title/description/score plus a playable URL.
+
+    Read-only: unlike delete-source/delete-shorts, reviewing an old run's
+    clips doesn't touch files an in-progress run could be writing, so this
+    isn't gated by the one-run-at-a-time lock.
+    """
+    root = _safe_join(LOCAL_OUTPUT_DIR, name)
+    if not root or not os.path.isdir(root):
+        return jsonify({"error": "run not found"}), 404
+    shorts_dir = os.path.join(root, "Shorts")
+    result_path = os.path.join(root, "result.json")
+    if not os.path.isfile(result_path):
+        shorts_source = _shorts_from_clip_files(shorts_dir)
+    else:
+        try:
+            with open(result_path, "r", encoding="utf-8") as f:
+                result = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return jsonify({"error": "could not read result.json"}), 500
+        shorts_source = result.get("shorts", [])
+    shorts = [
+        {**s, "download_url": _history_clip_display_url(name, shorts_dir, s.get("clip_url"))}
+        for s in shorts_source
+    ]
+    return jsonify({"shorts": shorts})
+
+
+@app.route("/history/<name>/download/<path:filename>")
+def history_download(name, filename):
+    root = _safe_join(LOCAL_OUTPUT_DIR, name)
+    if not root:
+        abort(404)
+    target = _safe_join(os.path.join(root, "Shorts"), filename)
+    if not target or not os.path.isfile(target):
+        abort(404)
+    return send_from_directory(os.path.dirname(target), os.path.basename(target))
+
+
 def _resolve_history_run(name: str) -> Tuple[Optional[str], Optional[Any]]:
     """Validate `name` as a run folder under LOCAL_OUTPUT_DIR.
 
@@ -246,7 +313,7 @@ def delete_history_shorts(name):
         except FileNotFoundError:
             filenames = []  # dir vanished between the isdir() check and here
         for filename in filenames:
-            if filename.startswith("Short-") and filename.endswith(".mp4"):
+            if filename.endswith(".mp4"):
                 try:
                     os.remove(os.path.join(shorts_dir, filename))
                 except FileNotFoundError:

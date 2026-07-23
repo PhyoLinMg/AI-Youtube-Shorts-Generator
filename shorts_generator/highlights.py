@@ -22,6 +22,14 @@ from . import muapi
 
 LLMFn = Callable[[str], str]
 
+# Generic spam tags that hurt Shorts reach — the model is told to avoid these,
+# but we drop them defensively so they never reach YouTube.
+_GENERIC_SPAM_TAGS = {
+    "#fyp", "#foryou", "#foryoupage", "#viral", "#viralvideo",
+    "#trending", "#trendingshorts", "#shortsfeed", "#ytshorts",
+    "#youtube", "#fypシ",
+}
+
 
 def _transcript_fingerprint(transcript: Dict) -> str:
     """Stable content hash used to invalidate the highlights cache when the
@@ -72,10 +80,12 @@ Rules:
 - Write an "on_screen_hook" — a short punchy fragment, 7 words or fewer, distinct from hook_sentence (it does NOT need to be a verbatim transcript line). This is bold text that gets overlaid on screen for the first 1.5 seconds, so it must work standalone with zero context: think thumbnail text, not a sentence
 - Explain in one sentence why this clip is viral ("virality_reason")
 - Write a "title" — max 100 characters, aggressive clickbait style (curiosity gap, numbers, shock value, "you won't believe", etc.) optimized to maximize clicks and views, while still being accurate to the clip's content
-- Write a "description" — up to 300 words, original marketing copy (NOT a transcript line) built to maximize views and clicks: open with a strong curiosity- or CTA-driven hook, then end with 15-30 relevant hashtags mixing broad reach tags (#shorts #viral #fyp #trending) with niche tags specific to the clip's topic. Do NOT include any emojis in the title or description
+- Write a "description" — SHORTS-optimized, max 220 characters, original copy (NOT a transcript line) built to maximize views from BOTH the Shorts feed and YouTube search: line 1 is a hook line (<=150 chars, the only line most viewers see before "more"); line 2 works your primary keyword + 1-2 related terms in naturally (no keyword lists); line 3 is a short punchy CTA that drives session watch time — prefer a specific next-action tied to this content ("watch part 2" / "full video on my channel" / a pointed comment prompt) over a generic "follow/subscribe" ask. Do NOT include any emojis.
+- Write a "yt_title" — max 60 characters, a sharp Shorts title: Result/Hook + specific topic + for [audience]. Accurate to the clip, no emojis.
+- Write "yt_hashtags" — a JSON array of exactly 2-3 highly relevant NICHE hashtags (lowercase, leading #, no spaces). Always include "#Shorts" plus 1-2 topic-specific tags. Do NOT use generic spam tags (#fyp, #viral, #trending).
 
 Respond ONLY with valid JSON (no markdown, no explanation):
-{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","description":"string"}}]}}"""
+{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"]}}]}}"""
 
 
 CHUNK_SIZE_SECONDS = 1200       # 20-min chunks for long videos
@@ -141,6 +151,25 @@ def _coerce_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _sanitize_hashtags(raw_tags: object) -> List[str]:
+    """Keep 2-3 niche hashtags; always include #Shorts; drop generic spam."""
+    hashtags: List[str] = []
+    if isinstance(raw_tags, list):
+        for t in raw_tags:
+            if not isinstance(t, str):
+                continue
+            tag = t.strip().lower()
+            if tag and not tag.startswith("#"):
+                tag = "#" + tag
+            if not tag or tag in _GENERIC_SPAM_TAGS:
+                continue
+            if tag not in hashtags and len(hashtags) < 4:
+                hashtags.append(tag)
+    if "#shorts" not in [h.lower() for h in hashtags]:
+        hashtags.insert(0, "#Shorts")
+    return hashtags[:4]
+
+
 def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
     """Normalize model output into the expected shape; skip invalid entries."""
     if not isinstance(raw_highlights, list):
@@ -172,7 +201,9 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
                 "hook_sentence": str(item.get("hook_sentence") or "").strip(),
                 "on_screen_hook": str(item.get("on_screen_hook") or "").strip()[:60],
                 "virality_reason": str(item.get("virality_reason") or "").strip(),
-                "description": str(item.get("description") or "").strip(),
+                "description": str(item.get("description") or "").strip()[:220],
+                "yt_title": str(item.get("yt_title") or "").strip()[:60],
+                "yt_hashtags": _sanitize_hashtags(item.get("yt_hashtags")),
             }
         )
 
@@ -258,7 +289,7 @@ def call_highlight_api(
             prompt = (
                 base_prompt
                 + "\n\nIMPORTANT: Return ONLY valid JSON with a top-level 'highlights' array."
-                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, description."
+                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, description, yt_title, yt_hashtags."
                 + " No markdown fences, no commentary."
             )
 
