@@ -747,12 +747,12 @@
         scoreRow.appendChild(scoreNum);
         card.appendChild(scoreRow);
 
-        if (typeof s.hook_strength === "number" || s.hook_strength) {
+        if (typeof s.hook_strength === "number") {
           const hookStrength = Number(s.hook_strength) || 0;
           const hookRow = document.createElement("div");
           hookRow.className = "score-row";
           const hookLabel = document.createElement("span");
-          hookLabel.textContent = "Hook";
+          hookLabel.textContent = "Hook score";
           hookRow.appendChild(hookLabel);
           const hookMeter = document.createElement("div");
           hookMeter.className = "meter";
@@ -785,7 +785,7 @@
         }
 
         if (s.hook_sentence) {
-          appendLabeledText(card, "Hook", "hook", s.hook_sentence);
+          appendLabeledText(card, "Hook line", "hook", s.hook_sentence);
         }
 
         if (s.virality_reason) {

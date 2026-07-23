@@ -407,9 +407,9 @@ def get_highlights_cached(
     content fingerprint + num_clips, so rerunning the pipeline on a video
     whose transcript hasn't changed skips the LLM call(s) entirely.
 
-    A fingerprint mismatch, num_clips mismatch, or unparseable cache file
-    all fall back to a full recompute (which then overwrites the cache) —
-    no partial reuse.
+    A fingerprint mismatch, num_clips mismatch, schema_version mismatch, or
+    unparseable cache file all fall back to a full recompute (which then
+    overwrites the cache) — no partial reuse.
     """
     fingerprint = _transcript_fingerprint(transcript)
 
