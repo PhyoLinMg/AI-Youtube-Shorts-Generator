@@ -229,7 +229,9 @@ def write_descriptions(shorts_dir: str, shorts: List[Dict]) -> str:
     `shorts` regardless of the clip's own title-derived filename. Prefers the
     Shorts-optimized yt_title / yt_hashtags (emitted by the highlight step in
     highlights.py) when present, falling back to the highlight-step `title`
-    otherwise.
+    otherwise. Each block also carries a hook-grade line (`hook_strength` /
+    `hook_self_contained`, a human-review-only signal, not used for ranking)
+    so this file doubles as a pick-list, not just a copy-paste source.
     """
     path = os.path.join(shorts_dir, "descriptions.txt")
     blocks = []
@@ -242,7 +244,10 @@ def write_descriptions(shorts_dir: str, shorts: List[Dict]) -> str:
         hashtags_text = " ".join(hashtags)
         if hashtags_text and hashtags_text not in description:
             description = (description + "\n\n" + hashtags_text).strip()
-        blocks.append(f"short {i:02d} - {title}\n{description}")
+        hook_strength = s.get("hook_strength") or 0
+        self_contained = "yes" if s.get("hook_self_contained") else "no"
+        hook_line = f"hook: {hook_strength}  self-contained: {self_contained}"
+        blocks.append(f"short {i:02d} - {title}\n{hook_line}\n{description}")
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n\n".join(blocks))

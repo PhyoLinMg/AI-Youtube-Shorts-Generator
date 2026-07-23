@@ -167,8 +167,8 @@ def test_write_descriptions_formats_one_line_per_short(tmp_path):
     path = run_output.write_descriptions(shorts_dir, shorts)
     content = Path(path).read_text()
     assert content == (
-        "short 01 - Title One\nCome watch clip one.\n\n"
-        "short 02 - Title Two\nCome watch clip two.\n"
+        "short 01 - Title One\nhook: 0  self-contained: no\nCome watch clip one.\n\n"
+        "short 02 - Title Two\nhook: 0  self-contained: no\nCome watch clip two.\n"
     )
 
 
@@ -179,7 +179,7 @@ def test_write_descriptions_skips_failed_clips_without_renumbering(tmp_path):
     ]
     path = run_output.write_descriptions(str(tmp_path), shorts)
     content = Path(path).read_text()
-    assert content == "short 02 - Survivor\nCome watch it.\n"
+    assert content == "short 02 - Survivor\nhook: 0  self-contained: no\nCome watch it.\n"
 
 
 def test_write_descriptions_empty_shorts_writes_empty_file(tmp_path):
@@ -191,7 +191,21 @@ def test_write_descriptions_falls_back_on_missing_fields(tmp_path):
     shorts = [{"clip_url": "Short-01.mp4"}]
     path = run_output.write_descriptions(str(tmp_path), shorts)
     content = Path(path).read_text()
-    assert content == "short 01 - Untitled\n\n"
+    assert content == "short 01 - Untitled\nhook: 0  self-contained: no\n\n"
+
+
+def test_write_descriptions_includes_hook_grade_line(tmp_path):
+    shorts = [{
+        "clip_url": "Short-01.mp4",
+        "title": "Title One",
+        "description": "Come watch clip one.",
+        "hook_strength": 82,
+        "hook_self_contained": True,
+    }]
+    path = run_output.write_descriptions(str(tmp_path), shorts)
+    content = Path(path).read_text()
+    lines = content.splitlines()
+    assert lines[1] == "hook: 82  self-contained: yes"
 
 
 def test_write_descriptions_appends_hashtags_list(tmp_path):
