@@ -19,6 +19,15 @@ def _fake_highlights_result():
     return {"highlights": [{"start_time": 0.0, "end_time": 3.0, "score": 90, "title": "Clip"}]}
 
 
+def _fake_highlights_result_many(count):
+    return {
+        "highlights": [
+            {"start_time": float(i), "end_time": float(i) + 3.0, "score": 100 - i, "title": f"Clip {i}"}
+            for i in range(count)
+        ]
+    }
+
+
 def _paths(tmp_path):
     root = str(tmp_path / "Video_Title")
     shorts_dir = os.path.join(root, "Shorts")
@@ -67,6 +76,37 @@ def test_run_local_threads_captions_params(tmp_path, monkeypatch):
     assert kwargs["word_highlight"] is False
     assert kwargs["hook_card"] is False
     assert kwargs["transcript_segments"] == _fake_transcript()["segments"]
+
+
+def test_run_local_crops_double_num_clips_candidates(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    crop_mock = Mock(return_value=[])
+    monkeypatch.setattr(local_clipper_module, "crop_highlights_local", crop_mock)
+
+    pipeline_module._run_local(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=False,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    args, _ = crop_mock.call_args
+    top = args[1]
+    assert len(top) == 4
 
 
 def test_run_local_skips_download_when_source_already_exists(tmp_path, monkeypatch):
@@ -132,6 +172,35 @@ def test_run_api_threads_captions_params(tmp_path, monkeypatch):
     assert kwargs["word_highlight"] is False
     assert kwargs["hook_card"] is False
     assert kwargs["transcript_segments"] == _fake_transcript()["segments"]
+
+
+def test_run_api_crops_double_num_clips_candidates(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    crop_mock = Mock(return_value=[])
+    monkeypatch.setattr(pipeline_module, "crop_highlights", crop_mock)
+
+    pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    args, _ = crop_mock.call_args
+    top = args[1]
+    assert len(top) == 4
 
 
 def test_run_api_skips_local_copy_and_transcribe_when_cached(tmp_path, monkeypatch):
