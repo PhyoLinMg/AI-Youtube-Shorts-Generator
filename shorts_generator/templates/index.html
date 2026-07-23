@@ -747,6 +747,26 @@
         scoreRow.appendChild(scoreNum);
         card.appendChild(scoreRow);
 
+        if (typeof s.hook_strength === "number" || s.hook_strength) {
+          const hookStrength = Number(s.hook_strength) || 0;
+          const hookRow = document.createElement("div");
+          hookRow.className = "score-row";
+          const hookLabel = document.createElement("span");
+          hookLabel.textContent = "Hook";
+          hookRow.appendChild(hookLabel);
+          const hookMeter = document.createElement("div");
+          hookMeter.className = "meter";
+          const hookMeterFill = document.createElement("span");
+          hookMeterFill.style.width = hookStrength + "%";
+          hookMeterFill.style.background = scoreColor(hookStrength);
+          hookMeter.appendChild(hookMeterFill);
+          hookRow.appendChild(hookMeter);
+          const hookNum = document.createElement("span");
+          hookNum.textContent = hookStrength + (s.hook_self_contained ? " (self-contained)" : "");
+          hookRow.appendChild(hookNum);
+          card.appendChild(hookRow);
+        }
+
         if (s.description) {
           appendLabeledText(card, "Pitch", "pitch", s.description);
           const descCopyRow = document.createElement("div");
@@ -770,6 +790,10 @@
 
         if (s.virality_reason) {
           appendLabeledText(card, "Why it works", "reason", s.virality_reason);
+        }
+
+        if (s.hook_reason) {
+          appendLabeledText(card, "Hook read", "reason", s.hook_reason);
         }
 
         const videoFrame = document.createElement("div");

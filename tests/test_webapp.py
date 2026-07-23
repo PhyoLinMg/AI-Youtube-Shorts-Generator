@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 
@@ -155,6 +156,33 @@ def test_status_serializes_hosted_clip_url_unchanged(client, tmp_path):
     resp = client.get("/status?offset=0")
     shorts = resp.get_json()["result"]["shorts"]
     assert shorts[0]["download_url"] == "https://hosted.example/Short-1.mp4"
+
+
+def test_status_passes_through_hook_strength_fields_unmodified(client, tmp_path):
+    """hook_strength/hook_self_contained/hook_reason are a human-review-only
+    signal added to every highlight dict — /status must not filter them out,
+    since it builds each entry via a full `{**s, ...}` spread. This guards
+    against a future refactor accidentally introducing a field whitelist."""
+    webapp.job.status = "done"
+    webapp.job.shorts_dir = str(tmp_path)
+    webapp.job.result = {
+        "shorts": [
+            {
+                "title": "A",
+                "score": 90,
+                "clip_url": str(tmp_path / "Short-01.mp4"),
+                "hook_strength": 73,
+                "hook_self_contained": True,
+                "hook_reason": "Opens mid-sentence, needs the prior beat to land.",
+            },
+        ]
+    }
+
+    resp = client.get("/status?offset=0")
+    shorts = resp.get_json()["result"]["shorts"]
+    assert shorts[0]["hook_strength"] == 73
+    assert shorts[0]["hook_self_contained"] is True
+    assert shorts[0]["hook_reason"] == "Opens mid-sentence, needs the prior beat to land."
 
 
 def test_safe_join_allows_files_inside_shorts_dir(tmp_path):
@@ -437,6 +465,34 @@ def test_history_shorts_reads_result_json_when_present(client, monkeypatch, tmp_
     assert shorts[0]["title"] == "My Clip"
     assert shorts[0]["description"] == "watch this"
     assert shorts[0]["download_url"] == "/history/Video_A/download/My_Clip.mp4"
+
+
+def test_history_shorts_passes_through_hook_strength_fields_unmodified(client, monkeypatch, tmp_path):
+    """Same contract as /status, but for the History tab's endpoint, which
+    reads result.json straight off disk and spreads each entry via
+    `{**s, ...}` — the hook-strength review fields must survive that too."""
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "My_Clip.mp4").write_bytes(b"clip-bytes")
+    (root / "result.json").write_text(json.dumps({
+        "shorts": [{
+            "clip_url": "My_Clip.mp4",
+            "title": "My Clip",
+            "hook_strength": 42,
+            "hook_self_contained": False,
+            "hook_reason": "Lands the punchline but needs the setup line first.",
+        }]
+    }))
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.get("/history/Video_A/shorts")
+    assert resp.status_code == 200
+    shorts = resp.get_json()["shorts"]
+    assert len(shorts) == 1
+    assert shorts[0]["hook_strength"] == 42
+    assert shorts[0]["hook_self_contained"] is False
+    assert shorts[0]["hook_reason"] == "Lands the punchline but needs the setup line first."
 
 
 def test_history_shorts_falls_back_to_clip_files_when_result_json_missing(client, monkeypatch, tmp_path):
