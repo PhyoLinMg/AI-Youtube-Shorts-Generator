@@ -128,6 +128,19 @@ def test_mouth_region_energy_ignores_change_outside_face_box():
     assert energy == 0.0
 
 
+def test_mouth_region_energy_handles_decrease_without_uint8_wraparound():
+    # prev brighter than current: on uint8 this underflows/wraps unless the
+    # implementation upcasts to a signed dtype before subtracting.
+    gray = np.full((200, 200), 100, dtype=np.uint8)
+    prev_gray = np.full((200, 200), 100, dtype=np.uint8)
+    # same patch as the "changed" test above: 20 rows x 40 cols = 800 px
+    prev_gray[110:130, 80:120] = 200
+    gray[110:130, 80:120] = 50
+    energy = local_clipper_module._mouth_region_energy(gray, prev_gray, (100.0, 100.0, 80.0, 80.0))
+    # correct signed diff: |50 - 200| = 150 per pixel, 800 px in the patch
+    assert energy == 800 * 150
+
+
 def test_captions_burned_in_by_default(tmp_path, synthetic_source):
     out_dir = str(tmp_path / "out")
     results = crop_highlights_local(
