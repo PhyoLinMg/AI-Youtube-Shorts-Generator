@@ -58,12 +58,43 @@ New tests (add to wherever this repo's local-clipper tests currently live, e.g. 
 2. Re-render the confirmed-broken clip (`I_Was_a_Pentecostal_Minister_Chuck_s_Shocking_Confession_to_Neil_deGrasse_Tyson`, or re-run the pipeline on the same source video) and visually confirm: no bisected face at any sampled timestamp, and a visible hard-cut crop change at the point the active speaker changes.
 3. Spot-check 2-3 existing single-person clips from prior runs are byte-identical (or visually identical) before/after — confirms the fallback path is truly a no-op for the common case.
 
+## Known limitation (found during Task 8 verification, 2026-07-24)
+
+Verification step 2 was run against the confirmed-broken clip
+(`I_Was_a_Pentecostal_Minister_Chuck_s_Shocking_Confession_to_Neil_deGrasse_Tyson`,
+re-cropped from the cached `full_source.mp4` at its exact `start_time`/`end_time`
+via `crop_clip_local`, bypassing the need to re-download/re-transcribe) and
+**the bisection is still present** — the fix as implemented does not resolve
+this specific clip.
+
+Root cause: this clip is not a *continuous* two-person wide shot, which is
+what Phases 1-4 above assume (one stable x-position anchor per person for the
+whole clip). It's multi-cam-edited: it cuts between a wide two-shot (both
+speakers visible, ~1200px apart on a 1920px-wide source) and tight solo
+close-ups of each speaker (each at yet other x-positions). Diagnostic dump of
+real detections across the 41s clip showed `largest_per_frame`'s two dominant
+position-clusters (both from close-up segments) only ~13% of `src_w` apart —
+under `TWO_PERSON_MIN_SEPARATION_FRAC` (25%) — so `_cluster_face_centers`
+never splits into 2, the two-speaker branch never triggers, and the clip
+falls through to the unchanged single-anchor path, reproducing the original
+bug byte-for-byte.
+
+This is a real design gap, not an implementation bug: every task's code
+matches its own spec exactly (174 tests green, single-person no-regression
+independently verified via diff inspection and a spot-check re-crop). The
+"one anchor per person for the whole clip" model this branch implements
+genuinely fixes clips that stay in a continuous two-shot; it does not handle
+sources that also cut to solo close-ups mid-clip. Handling that would need
+per-segment (not per-clip) anchoring or scene-cut detection — out of scope
+for this branch; tracked as follow-up work, not blocking this merge.
+
 ## Out of scope
 
 - `framing="adaptive"` and `--mode api` — untouched.
 - 3+ person shots (panel/roundtable) — falls back to today's single-anchor behavior; not attempting multi-person clustering beyond 2.
 - Split-screen/stacked visual layout — explicitly rejected in favor of active-speaker switching (see Decisions above).
 - Any change to the hook-strength/highlight-picking logic (unrelated system, already shipped 2026-07-24).
+- Scene-cut / multi-framing sources (wide two-shot cutting to solo close-ups mid-clip) — see "Known limitation" above. A future iteration would need per-segment anchoring rather than one anchor per person for the whole clip.
 
 ## Critical files
 

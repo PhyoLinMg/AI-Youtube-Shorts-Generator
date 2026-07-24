@@ -819,9 +819,34 @@ Open `/tmp/verify_frame.png` and confirm: no face is cut in half; whichever pers
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: all pass
 
-- [ ] **Step 4: Report back**
+- [x] **Step 4: Report back**
 
-Summarize: which clip was re-verified, whether the cutoff is resolved, and the final pytest count. No commit for this task (verification only, no code changes).
+**Result: cutoff NOT resolved for this clip.** Re-cropped
+`I_Was_a_Pentecostal_Minister_Chuck_s_Shocking_Confession_to_Neil_deGrasse_Tyson`
+(1484.5-1525.5) from the cached `full_source.mp4` via `crop_clip_local` on
+this branch's HEAD (commit `72af99d`). The face is still bisected at the same
+timestamps as the pre-fix output — pixel-identical crop framing to the old
+code.
+
+Root cause (diagnosed via a throwaway script dumping raw face detections):
+this clip isn't a continuous two-shot — it cuts between a wide two-shot and
+solo close-ups of each speaker. The two dominant face-position clusters
+(both from close-up segments) are only ~13% of `src_w` apart, under the 25%
+`TWO_PERSON_MIN_SEPARATION_FRAC` threshold, so `_cluster_face_centers` never
+splits into 2 and the clip falls through to the unchanged single-anchor
+path. Full writeup added to `mds/active-speaker-locked-framing.md` under
+"Known limitation."
+
+Full test suite: 174 passed. Spot-check (`Neil_deGrasse_Tyson_Defines_God_as_a_Pocket_of_Scientific_Ignorance`,
+400.2-407.1, genuinely single-person): re-cropped frame is visually identical
+to the original output (only diff is the caption overlay the original had
+burned in, which `crop_clip_local` doesn't apply) — confirms the
+no-regression guarantee holds for the common case.
+
+Decision (user, 2026-07-24): merge as-is with the limitation documented,
+rather than expanding scope to handle scene-cut/multi-framing sources now.
+The branch still correctly fixes genuine continuous side-by-side clips and
+is provably a no-op for single-person clips.
 
 ---
 
