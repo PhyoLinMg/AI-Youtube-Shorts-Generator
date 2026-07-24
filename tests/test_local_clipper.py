@@ -54,6 +54,23 @@ def test_clamp_crop_origin_clamps_to_right_edge():
     assert _clamp_crop_origin((990.0, 500.0), (200, 200), (1000, 1000)) == (800, 400)
 
 
+def test_apply_hysteresis_default_dwell_matches_mode_dwell_seconds():
+    # fps=10, MODE_DWELL_SECONDS=0.75 -> dwell=8 frames; a 5-frame flip (< dwell) must not stick
+    raw = ["person"] * 10 + ["cursor"] * 5 + ["person"] * 10
+    result = local_clipper_module._apply_hysteresis(raw, fps=10.0)
+    assert result == ["person"] * 25  # the 5-frame cursor blip never persisted long enough to flip
+
+
+def test_apply_hysteresis_custom_dwell_flips_faster():
+    # same raw sequence, but dwell_seconds=0.3 -> dwell=3 frames; a 5-frame blip DOES flip.
+    # Hysteresis is symmetric: entry into "B" is delayed 2 frames (indices 10-11 still read
+    # "A" while the run builds to dwell=3), and exit back to "A" is delayed 2 frames the same
+    # way (indices 15-16 still read "B"). The 5-frame B run just shifts 2 later -> 12 A / 5 B / 8 A.
+    raw = ["A"] * 10 + ["B"] * 5 + ["A"] * 10
+    result = local_clipper_module._apply_hysteresis(raw, fps=10.0, dwell_seconds=0.3)
+    assert result == ["A"] * 12 + ["B"] * 5 + ["A"] * 8
+
+
 def test_captions_burned_in_by_default(tmp_path, synthetic_source):
     out_dir = str(tmp_path / "out")
     results = crop_highlights_local(

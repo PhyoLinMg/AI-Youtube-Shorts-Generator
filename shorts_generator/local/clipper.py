@@ -235,9 +235,11 @@ def _classify_frames(cap, src_w: int) -> List[Tuple[str, Optional[Tuple[int, int
     return raw
 
 
-def _apply_hysteresis(raw_classes: List[str], fps: float) -> List[str]:
+def _apply_hysteresis(
+    raw_classes: List[str], fps: float, dwell_seconds: float = MODE_DWELL_SECONDS,
+) -> List[str]:
     """Only flip mode once the opposite raw class persists >= dwell frames."""
-    dwell = max(1, int(round(MODE_DWELL_SECONDS * fps)))
+    dwell = max(1, int(round(dwell_seconds * fps)))
     if not raw_classes:
         return []
     modes = [raw_classes[0]]
