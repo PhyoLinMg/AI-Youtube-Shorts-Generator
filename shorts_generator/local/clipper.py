@@ -216,10 +216,14 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
 
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-    # Pass 1 — sample the clip (~5 frames/sec is plenty) and take the median
-    # face position as a single, stable anchor for the whole clip.
+    # Pass 1 — sample the clip (~5 frames/sec is plenty). Collect both:
+    #   - largest_per_frame: today's exact single-largest-face-per-frame series,
+    #     used unchanged for the single-person fallback median.
+    #   - all_detections: every detected face across every sampled frame, used
+    #     only to decide whether this clip actually has two distinct people.
     sample_stride = max(1, int(fps // 5))
-    sample_centers: List[Tuple[int, int]] = []
+    largest_per_frame: List[Tuple[int, int]] = []
+    all_detections: List[Tuple[float, float, float, float]] = []
     frame_idx = 0
     while True:
         ret, frame = cap.read()
@@ -229,19 +233,24 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
             if len(faces) > 0:
+                for (fx, fy, fw, fh) in faces:
+                    all_detections.append((fx + fw / 2, fy + fh / 2, float(fw), float(fh)))
                 x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-                sample_centers.append((x + w // 2, y + h // 2))
+                largest_per_frame.append((x + w // 2, y + h // 2))
         frame_idx += 1
 
-    if sample_centers:
-        xs = sorted(c[0] for c in sample_centers)
-        ys = sorted(c[1] for c in sample_centers)
-        cx, cy = xs[len(xs) // 2], ys[len(ys) // 2]
-    else:
-        cx, cy = src_w // 2, src_h // 2
-
-    x0, y0 = _clamp_crop_origin((cx, cy), (crop_w, crop_h), (src_w, src_h))
+    clusters = _cluster_face_centers(all_detections, src_w)
     out_w, out_h = _output_size(target_ratio)
+
+    if len(clusters) < 2:
+        # Single-person (or no-face) path -- byte-identical to before this change.
+        if largest_per_frame:
+            xs = sorted(c[0] for c in largest_per_frame)
+            ys = sorted(c[1] for c in largest_per_frame)
+            cx, cy = xs[len(xs) // 2], ys[len(ys) // 2]
+        else:
+            cx, cy = src_w // 2, src_h // 2
+        x0, y0 = _clamp_crop_origin((cx, cy), (crop_w, crop_h), (src_w, src_h))
 
     # Pass 2 — write the locked crop; x0/y0 never change within the clip.
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)

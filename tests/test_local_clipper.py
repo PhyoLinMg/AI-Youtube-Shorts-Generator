@@ -1,6 +1,7 @@
 import os
 import subprocess
 
+import cv2
 import numpy as np
 import pytest
 
@@ -178,6 +179,38 @@ def test_two_speaker_positions_suppresses_brief_flicker():
     )
     expected_a = local_clipper_module._clamp_crop_origin((200.0, 500.0), (200, 200), (1000, 1000))
     assert positions == [expected_a] * 22
+
+
+def test_reframe_vertical_falls_back_to_frame_center_when_no_faces(tmp_path, synthetic_source):
+    out_path = str(tmp_path / "out.mp4")
+    local_clipper_module._reframe_vertical(synthetic_source, out_path, "9:16")
+    assert os.path.exists(out_path)
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", out_path],
+        capture_output=True, text=True, check=True,
+    )
+    width, height = (int(v) for v in probe.stdout.strip().split(","))
+    assert (width, height) == local_clipper_module._output_size(9 / 16)
+
+
+def test_reframe_vertical_single_person_locks_to_detected_face(tmp_path, synthetic_source, monkeypatch):
+    def _fake_detect(self, gray, *args, **kwargs):
+        # one consistent face box every call: src is 640x360 (see synthetic_source fixture)
+        return [(220, 100, 100, 120)]
+
+    monkeypatch.setattr(cv2.CascadeClassifier, "detectMultiScale", _fake_detect)
+
+    out_path = str(tmp_path / "out_single.mp4")
+    local_clipper_module._reframe_vertical(synthetic_source, out_path, "9:16")
+    assert os.path.exists(out_path)
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", out_path],
+        capture_output=True, text=True, check=True,
+    )
+    width, height = (int(v) for v in probe.stdout.strip().split(","))
+    assert (width, height) == local_clipper_module._output_size(9 / 16)
 
 
 def test_captions_burned_in_by_default(tmp_path, synthetic_source):
