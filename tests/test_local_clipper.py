@@ -1,6 +1,7 @@
 import os
 import subprocess
 
+import numpy as np
 import pytest
 
 import shorts_generator.local.clipper as local_clipper_module
@@ -100,6 +101,31 @@ def test_cluster_face_centers_stray_outlier_does_not_split():
 
 def test_cluster_face_centers_empty_input():
     assert local_clipper_module._cluster_face_centers([], src_w=1000.0) == []
+
+
+def test_mouth_region_energy_zero_when_region_unchanged():
+    gray = np.full((200, 200), 100, dtype=np.uint8)
+    prev_gray = gray.copy()
+    # face box centered at (100, 100), 80x80
+    energy = local_clipper_module._mouth_region_energy(gray, prev_gray, (100.0, 100.0, 80.0, 80.0))
+    assert energy == 0.0
+
+
+def test_mouth_region_energy_positive_when_mouth_region_changed():
+    gray = np.full((200, 200), 100, dtype=np.uint8)
+    prev_gray = gray.copy()
+    # mouth region is the lower half of the face box: y in [cy, cy+h/2] = [100, 140], x in [60, 140]
+    gray[110:130, 80:120] = 200
+    energy = local_clipper_module._mouth_region_energy(gray, prev_gray, (100.0, 100.0, 80.0, 80.0))
+    assert energy > 0.0
+
+
+def test_mouth_region_energy_ignores_change_outside_face_box():
+    gray = np.full((200, 200), 100, dtype=np.uint8)
+    prev_gray = gray.copy()
+    gray[0:20, 0:20] = 200  # far corner, outside the face box entirely
+    energy = local_clipper_module._mouth_region_energy(gray, prev_gray, (100.0, 100.0, 80.0, 80.0))
+    assert energy == 0.0
 
 
 def test_captions_burned_in_by_default(tmp_path, synthetic_source):

@@ -124,6 +124,28 @@ def _cluster_face_centers(
     return [_cluster_median(by_x)]
 
 
+def _mouth_region_energy(
+    gray: np.ndarray,
+    prev_gray: np.ndarray,
+    anchor: Tuple[float, float, float, float],
+) -> float:
+    """Sum of abs pixel difference from `prev_gray` in the lower half of the
+    face box (cx, cy, w, h) — a cheap, model-free proxy for "is this
+    person's mouth moving right now." Plain numpy (no cv2) so this is
+    testable without a real video decode.
+    """
+    cx, cy, w, h = anchor
+    x0 = int(max(0, cx - w / 2))
+    x1 = int(min(gray.shape[1], cx + w / 2))
+    y0 = int(max(0, cy))
+    y1 = int(min(gray.shape[0], cy + h / 2))
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    region = gray[y0:y1, x0:x1].astype(np.int16)
+    prev_region = prev_gray[y0:y1, x0:x1].astype(np.int16)
+    return float(np.abs(region - prev_region).sum())
+
+
 def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> str:
     """ffmpeg -ss start -to end → re-encoded mp4 with audio."""
     cmd = [
