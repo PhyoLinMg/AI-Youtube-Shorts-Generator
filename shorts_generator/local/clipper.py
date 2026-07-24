@@ -146,6 +146,24 @@ def _mouth_region_energy(
     return float(np.abs(region - prev_region).sum())
 
 
+def _two_speaker_positions(
+    anchor_a: Tuple[float, float, float, float],
+    anchor_b: Tuple[float, float, float, float],
+    raw_labels: List[str],
+    fps: float,
+    crop_size: Tuple[int, int],
+    src_size: Tuple[int, int],
+) -> List[Tuple[int, int]]:
+    """Per-frame crop origin for a two-speaker clip: hysteresis-smooth the
+    raw per-frame "A"/"B" active-speaker labels, then hard-cut between each
+    speaker's own fixed, clamped crop origin — no interpolation between them.
+    """
+    smoothed = _apply_hysteresis(raw_labels, fps, dwell_seconds=SPEAKER_DWELL_SECONDS)
+    pos_a = _clamp_crop_origin((anchor_a[0], anchor_a[1]), crop_size, src_size)
+    pos_b = _clamp_crop_origin((anchor_b[0], anchor_b[1]), crop_size, src_size)
+    return [pos_a if label == "A" else pos_b for label in smoothed]
+
+
 def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> str:
     """ffmpeg -ss start -to end → re-encoded mp4 with audio."""
     cmd = [

@@ -141,6 +141,45 @@ def test_mouth_region_energy_handles_decrease_without_uint8_wraparound():
     assert energy == 800 * 150
 
 
+def test_two_speaker_positions_hard_cuts_at_speaker_change():
+    anchor_a = (200.0, 500.0, 100.0, 120.0)
+    anchor_b = (800.0, 500.0, 100.0, 120.0)
+    # 10 frames of A, then 10 frames of B. fps=10, SPEAKER_DWELL_SECONDS=0.35 ->
+    # dwell = round(0.35*10) = 4 frames. The hysteresis flip only fires once 4
+    # consecutive opposite-class raw frames have been seen, so the smoothed
+    # switch lands 3 frames after the raw switch: raw B starts at index 10,
+    # smoothed flip happens at index 10 + dwell - 1 = 13. Result: 13 frames of
+    # A's position, then 7 frames of B's position.
+    raw_labels = ["A"] * 10 + ["B"] * 10
+    positions = local_clipper_module._two_speaker_positions(
+        anchor_a, anchor_b, raw_labels, fps=10.0,
+        crop_size=(200, 200), src_size=(1000, 1000),
+    )
+    assert len(positions) == 20
+    expected_a = local_clipper_module._clamp_crop_origin((200.0, 500.0), (200, 200), (1000, 1000))
+    expected_b = local_clipper_module._clamp_crop_origin((800.0, 500.0), (200, 200), (1000, 1000))
+    assert positions[:13] == [expected_a] * 13
+    assert positions[13:] == [expected_b] * 7
+    # confirm it's a hard cut: the position at the switch boundary jumps directly,
+    # no intermediate value between expected_a and expected_b
+    assert positions[12] == expected_a
+    assert positions[13] == expected_b
+
+
+def test_two_speaker_positions_suppresses_brief_flicker():
+    anchor_a = (200.0, 500.0, 100.0, 120.0)
+    anchor_b = (800.0, 500.0, 100.0, 120.0)
+    # a 2-frame "B" blip inside a long "A" run. dwell=4 frames (see above), and
+    # 2 < 4, so the blip never persists long enough to flip the smoothed result.
+    raw_labels = ["A"] * 10 + ["B"] * 2 + ["A"] * 10
+    positions = local_clipper_module._two_speaker_positions(
+        anchor_a, anchor_b, raw_labels, fps=10.0,
+        crop_size=(200, 200), src_size=(1000, 1000),
+    )
+    expected_a = local_clipper_module._clamp_crop_origin((200.0, 500.0), (200, 200), (1000, 1000))
+    assert positions == [expected_a] * 22
+
+
 def test_captions_burned_in_by_default(tmp_path, synthetic_source):
     out_dir = str(tmp_path / "out")
     results = crop_highlights_local(
