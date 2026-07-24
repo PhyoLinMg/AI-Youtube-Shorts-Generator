@@ -28,6 +28,10 @@ from ..run_output import unique_short_filename
 # --- adaptive framing tunables -------------------------------------------------
 PERSON_FACE_MIN_W_FRAC = 0.12   # face width as a fraction of src width to count as "main person"
 MODE_DWELL_SECONDS = 0.75       # raw class must persist this long before the mode flips
+TWO_PERSON_MIN_SEPARATION_FRAC = 0.25   # min x-gap (as a fraction of src_w) to call it 2 distinct people
+MIN_CLUSTER_SAMPLE_FRAC = 0.15          # each cluster must own at least this share of all detections
+SPEAKER_DWELL_SECONDS = 0.35            # active-speaker switch dwell — faster than MODE_DWELL_SECONDS,
+                                         # since conversational turn-taking is quicker than screen/person mode switches
 ZOOM_PERSON = 0.62              # crop_h as a fraction of src_h when person-centric (tight)
 ZOOM_CURSOR = 1.0               # crop_h as a fraction of src_h when cursor-heavy (full height)
 ZOOM_EMA_ALPHA = 0.08           # smoothing for the zoom scalar (slow ramp, no pumping)
@@ -72,6 +76,52 @@ def _clamp_crop_origin(
     x0 = max(0, min(src_w - crop_w, int(cx - crop_w // 2)))
     y0 = max(0, min(src_h - crop_h, int(cy - crop_h // 2)))
     return x0, y0
+
+
+def _cluster_face_centers(
+    detections: List[Tuple[float, float, float, float]],
+    src_w: float,
+) -> List[Tuple[float, float, float, float]]:
+    """Cluster (cx, cy, w, h) face detections into 1 or 2 people by x-position.
+
+    Returns one (cx, cy, w, h) median entry per accepted cluster, sorted by cx
+    ascending. Falls back to a single cluster (the median of everything)
+    unless the split is both well-separated (>= TWO_PERSON_MIN_SEPARATION_FRAC
+    * src_w gap) and well-supported on both sides (>= MIN_CLUSTER_SAMPLE_FRAC
+    of all detections each) — this is what keeps single-person clips and
+    stray misdetections on the single-anchor path.
+    """
+    if not detections:
+        return []
+
+    def _median(vals: List[float]) -> float:
+        s = sorted(vals)
+        return s[len(s) // 2]
+
+    def _cluster_median(group: List[Tuple[float, float, float, float]]) -> Tuple[float, float, float, float]:
+        return (
+            _median([d[0] for d in group]),
+            _median([d[1] for d in group]),
+            _median([d[2] for d in group]),
+            _median([d[3] for d in group]),
+        )
+
+    by_x = sorted(detections, key=lambda d: d[0])
+    best_gap = 0.0
+    best_split = None
+    for i in range(1, len(by_x)):
+        gap = by_x[i][0] - by_x[i - 1][0]
+        if gap > best_gap:
+            best_gap = gap
+            best_split = i
+
+    if best_split is not None and best_gap >= TWO_PERSON_MIN_SEPARATION_FRAC * src_w:
+        left, right = by_x[:best_split], by_x[best_split:]
+        min_count = MIN_CLUSTER_SAMPLE_FRAC * len(by_x)
+        if len(left) >= min_count and len(right) >= min_count:
+            return [_cluster_median(left), _cluster_median(right)]
+
+    return [_cluster_median(by_x)]
 
 
 def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> str:

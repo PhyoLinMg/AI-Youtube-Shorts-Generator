@@ -71,6 +71,37 @@ def test_apply_hysteresis_custom_dwell_flips_faster():
     assert result == ["A"] * 12 + ["B"] * 5 + ["A"] * 8
 
 
+def test_cluster_face_centers_single_person_tight_range():
+    # all detections clustered around x=500 on a 1000-wide frame -> 1 cluster
+    detections = [(495.0, 300.0, 100.0, 120.0), (505.0, 305.0, 98.0, 118.0), (500.0, 298.0, 102.0, 121.0)]
+    clusters = local_clipper_module._cluster_face_centers(detections, src_w=1000.0)
+    assert len(clusters) == 1
+    assert clusters[0][0] == pytest.approx(500.0, abs=10)
+
+
+def test_cluster_face_centers_two_well_separated_people():
+    # 10 detections around x=150, 10 around x=850 on a 1000-wide frame -> 2 clusters
+    left = [(150.0 + i, 300.0, 100.0, 120.0) for i in range(10)]
+    right = [(850.0 + i, 320.0, 100.0, 120.0) for i in range(10)]
+    clusters = local_clipper_module._cluster_face_centers(left + right, src_w=1000.0)
+    assert len(clusters) == 2
+    assert clusters[0][0] < 300  # left cluster first (sorted by x ascending)
+    assert clusters[1][0] > 700
+
+
+def test_cluster_face_centers_stray_outlier_does_not_split():
+    # 19 detections around x=500 plus 1 stray outlier at x=950 -> outlier is
+    # below MIN_CLUSTER_SAMPLE_FRAC, must NOT be treated as a second person
+    main_group = [(500.0 + i, 300.0, 100.0, 120.0) for i in range(19)]
+    outlier = [(950.0, 300.0, 100.0, 120.0)]
+    clusters = local_clipper_module._cluster_face_centers(main_group + outlier, src_w=1000.0)
+    assert len(clusters) == 1
+
+
+def test_cluster_face_centers_empty_input():
+    assert local_clipper_module._cluster_face_centers([], src_w=1000.0) == []
+
+
 def test_captions_burned_in_by_default(tmp_path, synthetic_source):
     out_dir = str(tmp_path / "out")
     results = crop_highlights_local(
