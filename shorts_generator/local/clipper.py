@@ -59,6 +59,21 @@ def _ratio(aspect_ratio: str) -> float:
         return 9.0 / 16.0
 
 
+def _clamp_crop_origin(
+    center: Tuple[float, float],
+    crop_size: Tuple[int, int],
+    src_size: Tuple[int, int],
+) -> Tuple[int, int]:
+    """Top-left origin of a `crop_size` window centered on `center`, clamped
+    so the window never runs off the `src_size` frame."""
+    cx, cy = center
+    crop_w, crop_h = crop_size
+    src_w, src_h = src_size
+    x0 = max(0, min(src_w - crop_w, int(cx - crop_w // 2)))
+    y0 = max(0, min(src_h - crop_h, int(cy - crop_h // 2)))
+    return x0, y0
+
+
 def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> str:
     """ffmpeg -ss start -to end → re-encoded mp4 with audio."""
     cmd = [
@@ -135,8 +150,7 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
     else:
         cx, cy = src_w // 2, src_h // 2
 
-    x0 = max(0, min(src_w - crop_w, cx - crop_w // 2))
-    y0 = max(0, min(src_h - crop_h, cy - crop_h // 2))
+    x0, y0 = _clamp_crop_origin((cx, cy), (crop_w, crop_h), (src_w, src_h))
     out_w, out_h = _output_size(target_ratio)
 
     # Pass 2 — write the locked crop; x0/y0 never change within the clip.
@@ -388,8 +402,7 @@ def _reframe_vertical_adaptive(in_path: str, out_path: str, aspect_ratio: str) -
         crop_w = max(2, min(src_w, int(round(crop_h * target_ratio))))
         crop_w -= crop_w % 2
         crop_h -= crop_h % 2
-        x0 = max(0, min(src_w - crop_w, int(cx - crop_w // 2)))
-        y0 = max(0, min(src_h - crop_h, int(cy - crop_h // 2)))
+        x0, y0 = _clamp_crop_origin((cx, cy), (crop_w, crop_h), (src_w, src_h))
         cropped = frame[y0:y0 + crop_h, x0:x0 + crop_w]
         writer.write(cv2.resize(cropped, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4))
         idx += 1

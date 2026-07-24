@@ -5,7 +5,7 @@ import pytest
 
 import shorts_generator.local.clipper as local_clipper_module
 from shorts_generator import captions as captions_module
-from shorts_generator.local.clipper import crop_highlights_local
+from shorts_generator.local.clipper import _clamp_crop_origin, crop_highlights_local
 
 
 @pytest.fixture(scope="module")
@@ -37,6 +37,21 @@ def _segments():
         {"start": 0.5, "end": 2.5, "text": "hello there this is a test caption"},
         {"start": 2.5, "end": 4.5, "text": "and here is a second phrase for good measure"},
     ]
+
+
+def test_clamp_crop_origin_centers_when_room_on_both_sides():
+    # src 1000x1000, crop 200x200, center at 500,500 -> origin should center it
+    assert _clamp_crop_origin((500.0, 500.0), (200, 200), (1000, 1000)) == (400, 400)
+
+
+def test_clamp_crop_origin_clamps_to_left_edge():
+    # center near x=0 would push origin negative -> clamp to 0
+    assert _clamp_crop_origin((10.0, 500.0), (200, 200), (1000, 1000)) == (0, 400)
+
+
+def test_clamp_crop_origin_clamps_to_right_edge():
+    # center near x=src_w would push origin past src_w - crop_w -> clamp there
+    assert _clamp_crop_origin((990.0, 500.0), (200, 200), (1000, 1000)) == (800, 400)
 
 
 def test_captions_burned_in_by_default(tmp_path, synthetic_source):
