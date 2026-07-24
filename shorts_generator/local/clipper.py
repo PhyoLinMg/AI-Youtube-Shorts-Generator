@@ -252,17 +252,47 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
             cx, cy = src_w // 2, src_h // 2
         x0, y0 = _clamp_crop_origin((cx, cy), (crop_w, crop_h), (src_w, src_h))
 
-    # Pass 2 — write the locked crop; x0/y0 never change within the clip.
+    else:
+        anchor_a, anchor_b = clusters
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        raw_labels: List[str] = []
+        prev_gray = None
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if prev_gray is None:
+                raw_labels.append("A")
+            else:
+                energy_a = _mouth_region_energy(gray, prev_gray, anchor_a)
+                energy_b = _mouth_region_energy(gray, prev_gray, anchor_b)
+                raw_labels.append("A" if energy_a >= energy_b else "B")
+            prev_gray = gray
+        positions = _two_speaker_positions(
+            anchor_a, anchor_b, raw_labels, fps, (crop_w, crop_h), (src_w, src_h),
+        )
+
+    # Pass 2 (or 3, for two-speaker clips) — write the crop. Single-person
+    # clips use one fixed x0/y0 for the whole clip; two-speaker clips hard-cut
+    # per frame between each speaker's own fixed position (`positions`).
+    two_speaker = len(clusters) >= 2
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     silent_path = out_path + ".silent.mp4"
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(silent_path, fourcc, fps, (out_w, out_h))
+    idx = 0
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        cropped = frame[y0:y0 + crop_h, x0:x0 + crop_w]
+        if two_speaker:
+            fx0, fy0 = positions[idx] if idx < len(positions) else positions[-1]
+        else:
+            fx0, fy0 = x0, y0
+        cropped = frame[fy0:fy0 + crop_h, fx0:fx0 + crop_w]
         writer.write(cv2.resize(cropped, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4))
+        idx += 1
 
     cap.release()
     writer.release()

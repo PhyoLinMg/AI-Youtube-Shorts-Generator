@@ -213,6 +213,32 @@ def test_reframe_vertical_single_person_locks_to_detected_face(tmp_path, synthet
     assert (width, height) == local_clipper_module._output_size(9 / 16)
 
 
+def test_reframe_vertical_two_speakers_completes_and_outputs_correct_size(tmp_path, synthetic_source, monkeypatch):
+    call_count = {"n": 0}
+
+    def _fake_detect(self, gray, *args, **kwargs):
+        call_count["n"] += 1
+        # alternate which side is reported "biggest" across sampled calls so
+        # all_detections ends up with two well-separated, well-supported
+        # clusters (left ~x=100, right ~x=540 on a 640-wide frame)
+        if call_count["n"] % 2 == 0:
+            return [(60, 80, 90, 110), (500, 90, 90, 110)]
+        return [(70, 85, 88, 108), (510, 95, 88, 108)]
+
+    monkeypatch.setattr(cv2.CascadeClassifier, "detectMultiScale", _fake_detect)
+
+    out_path = str(tmp_path / "out_two_speaker.mp4")
+    local_clipper_module._reframe_vertical(synthetic_source, out_path, "9:16")
+    assert os.path.exists(out_path)
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", out_path],
+        capture_output=True, text=True, check=True,
+    )
+    width, height = (int(v) for v in probe.stdout.strip().split(","))
+    assert (width, height) == local_clipper_module._output_size(9 / 16)
+
+
 def test_captions_burned_in_by_default(tmp_path, synthetic_source):
     out_dir = str(tmp_path / "out")
     results = crop_highlights_local(
