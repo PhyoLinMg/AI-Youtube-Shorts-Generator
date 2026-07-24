@@ -227,8 +227,22 @@ def test_reframe_vertical_two_speakers_completes_and_outputs_correct_size(tmp_pa
 
     monkeypatch.setattr(cv2.CascadeClassifier, "detectMultiScale", _fake_detect)
 
+    # Spy on _two_speaker_positions (wraps the real implementation) so the
+    # test actually proves the two-speaker branch ran, rather than merely
+    # checking output shape -- which a silent fallback to the single-person
+    # path would also satisfy.
+    real_two_speaker_positions = local_clipper_module._two_speaker_positions
+    two_speaker_calls = {"n": 0}
+
+    def _spy_two_speaker_positions(*args, **kwargs):
+        two_speaker_calls["n"] += 1
+        return real_two_speaker_positions(*args, **kwargs)
+
+    monkeypatch.setattr(local_clipper_module, "_two_speaker_positions", _spy_two_speaker_positions)
+
     out_path = str(tmp_path / "out_two_speaker.mp4")
     local_clipper_module._reframe_vertical(synthetic_source, out_path, "9:16")
+    assert two_speaker_calls["n"] == 1
     assert os.path.exists(out_path)
     probe = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
