@@ -787,6 +787,30 @@
           card.appendChild(hookRow);
         }
 
+        if (typeof s.claim_specificity === "number") {
+          const claimScore = Number(s.claim_specificity) || 0;
+          const claimRow = document.createElement("div");
+          claimRow.className = "score-row";
+          const claimLabel = document.createElement("span");
+          claimLabel.textContent = "Claim specificity";
+          claimRow.appendChild(claimLabel);
+          const claimMeter = document.createElement("div");
+          claimMeter.className = "meter";
+          const claimMeterFill = document.createElement("span");
+          claimMeterFill.style.width = claimScore + "%";
+          claimMeterFill.style.background = scoreColor(claimScore);
+          claimMeter.appendChild(claimMeterFill);
+          claimRow.appendChild(claimMeter);
+          const claimNum = document.createElement("span");
+          claimNum.textContent = claimScore;
+          claimRow.appendChild(claimNum);
+          card.appendChild(claimRow);
+        }
+
+        if (s.claim_specificity_reason) {
+          appendLabeledText(card, "Claim reason", "reason", s.claim_specificity_reason);
+        }
+
         if (s.description) {
           appendLabeledText(card, "Pitch", "pitch", s.description);
           const descCopyRow = document.createElement("div");
