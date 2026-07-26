@@ -173,7 +173,7 @@ HIGHLIGHT_SCHEMA_VERSION = 5    # bump whenever the highlight dict shape changes
                                 # v4: added format_clarity_score, format_reason.
                                 # v5: added claim_specificity, claim_specificity_reason.
 
-CLAIM_SPECIFICITY_THRESHOLD = 80  # gate used by select_final_highlights (Task 2 of this plan, not yet implemented)
+CLAIM_SPECIFICITY_THRESHOLD = 80  # candidates scoring below this fall to backfill in select_final_highlights
 
 
 def call_muapi_llm(prompt: str) -> str:
