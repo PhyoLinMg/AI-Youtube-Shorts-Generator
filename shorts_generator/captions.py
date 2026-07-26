@@ -139,6 +139,33 @@ def _chunk_segments(
     return chunks
 
 
+def _chunk_cut_segments(
+    transcript_segments: List[Dict], cut_segments: List[Dict], max_words: int = 7,
+) -> List[Dict]:
+    """Chunk each kept `cut_segments` span independently against
+    `transcript_segments` (so no chunk can ever straddle an excised gap by
+    construction), then offset each span's chunks onto the concatenated
+    output timeline by the cumulative duration of the *previously kept*
+    spans (not the excised gaps)."""
+    chunks: List[Dict] = []
+    offset = 0.0
+    for seg in cut_segments:
+        seg_start = float(seg["start_time"])
+        seg_end = float(seg["end_time"])
+        for c in _chunk_segments(transcript_segments, seg_start, seg_end, max_words=max_words):
+            chunks.append({
+                "start": c["start"] + offset,
+                "end": c["end"] + offset,
+                "text": c["text"],
+                "words": [
+                    {"start": w["start"] + offset, "end": w["end"] + offset, "text": w["text"]}
+                    for w in c["words"]
+                ],
+            })
+        offset += seg_end - seg_start
+    return chunks
+
+
 def _format_ass_timestamp(seconds: float) -> str:
     seconds = max(0.0, seconds)
     total_cs = int(round(seconds * 100))
@@ -257,24 +284,9 @@ def _probe_resolution(video_path: str) -> Tuple[int, int]:
         raise CaptionError(f"could not parse ffprobe output for {video_path}: {result.stdout!r}") from e
 
 
-def burn_captions(
-    video_path: str,
-    segments: List[Dict],
-    clip_start: float,
-    clip_end: float,
-    out_path: str,
-    fade_seconds: float = 0.3,
-    word_highlight: bool = True,
+def _burn_chunks(
+    video_path: str, chunks: List[Dict], out_path: str, fade_seconds: float, word_highlight: bool,
 ) -> str:
-    """Burn phrase-chunked, fade-in captions onto a local clip.
-
-    Raises CaptionError on any failure; the caller decides whether to fall
-    back to the uncaptioned clip.
-    """
-    chunks = _chunk_segments(segments, clip_start, clip_end, max_words=7)
-    if not chunks:
-        raise CaptionError(f"no transcript overlaps clip window [{clip_start}, {clip_end}]")
-
     width, height = _probe_resolution(video_path)
 
     ass_path = out_path + ".ass"
@@ -300,3 +312,45 @@ def burn_captions(
         os.remove(ass_path)
 
     return out_path
+
+
+def burn_captions(
+    video_path: str,
+    segments: List[Dict],
+    clip_start: float,
+    clip_end: float,
+    out_path: str,
+    fade_seconds: float = 0.3,
+    word_highlight: bool = True,
+) -> str:
+    """Burn phrase-chunked, fade-in captions onto a local clip.
+
+    Raises CaptionError on any failure; the caller decides whether to fall
+    back to the uncaptioned clip.
+    """
+    chunks = _chunk_segments(segments, clip_start, clip_end, max_words=7)
+    if not chunks:
+        raise CaptionError(f"no transcript overlaps clip window [{clip_start}, {clip_end}]")
+    return _burn_chunks(video_path, chunks, out_path, fade_seconds, word_highlight)
+
+
+def burn_captions_segments(
+    video_path: str,
+    transcript_segments: List[Dict],
+    cut_segments: List[Dict],
+    out_path: str,
+    fade_seconds: float = 0.3,
+    word_highlight: bool = True,
+) -> str:
+    """Like burn_captions, but for a video already excised down to
+    `cut_segments` (see jump_cuts.excise_cut_segments) — captions are
+    chunked per kept span so none straddle a cut, then placed on the
+    concatenated timeline.
+
+    Raises CaptionError on any failure; the caller decides whether to fall
+    back to the uncaptioned clip.
+    """
+    chunks = _chunk_cut_segments(transcript_segments, cut_segments, max_words=7)
+    if not chunks:
+        raise CaptionError(f"no transcript overlaps cut_segments {cut_segments}")
+    return _burn_chunks(video_path, chunks, out_path, fade_seconds, word_highlight)

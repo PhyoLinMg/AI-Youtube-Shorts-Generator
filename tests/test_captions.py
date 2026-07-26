@@ -8,12 +8,14 @@ from shorts_generator.captions import (
     CaptionError,
     FONT_DIR,
     _HIGHLIGHT_OPEN,
+    _chunk_cut_segments,
     _chunk_segments,
     _escape_ffmpeg_path,
     _format_ass_timestamp,
     _probe_resolution,
     _write_ass,
     burn_captions,
+    burn_captions_segments,
 )
 
 
@@ -69,6 +71,52 @@ def test_chunk_segments_clips_and_shifts_straddling_segment():
     assert [w["text"] for w in chunks[0]["words"]] == ["alpha", "beta", "gamma", "delta"]
     assert chunks[0]["words"][0]["start"] == 0.0
     assert chunks[0]["words"][-1]["end"] == 2.0
+
+
+def test_chunk_cut_segments_offsets_second_span_after_first():
+    transcript_segments = [
+        {"start": 0.0, "end": 2.0, "text": "alpha beta"},
+        {"start": 10.0, "end": 12.0, "text": "gamma delta"},
+    ]
+    cut_segments = [
+        {"start_time": 0.0, "end_time": 2.0},
+        {"start_time": 10.0, "end_time": 12.0},
+    ]
+
+    chunks = _chunk_cut_segments(transcript_segments, cut_segments, max_words=7)
+
+    assert len(chunks) == 2
+    assert chunks[0]["text"] == "alpha beta"
+    assert chunks[0]["start"] == 0.0
+    assert chunks[0]["end"] == 2.0
+    # second span starts at output-timeline offset 2.0 (end of first kept span),
+    # not at its own absolute transcript time of 10.0
+    assert chunks[1]["text"] == "gamma delta"
+    assert chunks[1]["start"] == 2.0
+    assert chunks[1]["end"] == 4.0
+
+
+def test_chunk_cut_segments_no_chunk_straddles_the_gap():
+    transcript_segments = [
+        {"start": 0.0, "end": 4.0, "text": "one two three four five six seven eight"},
+    ]
+    # Keep only [0,2] and [2.5,4] of this single 4s transcript segment --
+    # a naive whole-envelope chunk pass could produce a chunk spanning the
+    # dropped [2,2.5] gap; per-segment chunking must not.
+    cut_segments = [
+        {"start_time": 0.0, "end_time": 2.0},
+        {"start_time": 2.5, "end_time": 4.0},
+    ]
+
+    chunks = _chunk_cut_segments(transcript_segments, cut_segments, max_words=7)
+
+    max_span = max(s["end_time"] - s["start_time"] for s in cut_segments)
+    for c in chunks:
+        # every chunk's word set must come entirely from one kept span, so no
+        # chunk can be longer than the longest kept span (here: 2.0s, from
+        # [0.0, 2.0]) -- this still rejects a naive whole-envelope chunk pass
+        # over [0.0, 4.0], which would yield a 3.5s chunk spanning the gap
+        assert (c["end"] - c["start"]) <= max_span + 1e-6
 
 
 def test_write_ass_contains_resolution_and_fade_tag(tmp_path):
@@ -243,6 +291,28 @@ def test_burn_captions_raises_caption_error_when_ffmpeg_missing(tmp_path, synthe
 
     with pytest.raises(CaptionError):
         burn_captions(synthetic_clip, segments, clip_start=0.0, clip_end=3.0, out_path=out_path, fade_seconds=0.3)
+
+
+def test_burn_captions_segments_produces_output_file(tmp_path, synthetic_clip):
+    out_path = str(tmp_path / "burned.mp4")
+    transcript_segments = [{"start": 0.0, "end": 3.0, "text": "hello there this is a caption test"}]
+    cut_segments = [{"start_time": 0.0, "end_time": 3.0}]
+
+    result = burn_captions_segments(
+        synthetic_clip, transcript_segments, cut_segments, out_path, fade_seconds=0.3,
+    )
+
+    assert result == out_path
+    assert os.path.exists(out_path)
+
+
+def test_burn_captions_segments_raises_when_no_transcript_overlaps(tmp_path, synthetic_clip):
+    out_path = str(tmp_path / "burned.mp4")
+    transcript_segments = [{"start": 100.0, "end": 103.0, "text": "way outside"}]
+    cut_segments = [{"start_time": 0.0, "end_time": 3.0}]
+
+    with pytest.raises(CaptionError):
+        burn_captions_segments(synthetic_clip, transcript_segments, cut_segments, out_path)
 
 
 def test_escape_ffmpeg_path_escapes_backslashes_and_colons():
