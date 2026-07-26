@@ -816,6 +816,19 @@
           appendLabeledText(card, "Hook read", "reason", s.hook_reason);
         }
 
+        if (s.reaction_type) {
+          const reactionRow = document.createElement("div");
+          reactionRow.className = "score-row";
+          const reactionLabel = document.createElement("span");
+          reactionLabel.textContent = "Reaction: " + s.reaction_type;
+          reactionRow.appendChild(reactionLabel);
+          card.appendChild(reactionRow);
+        }
+
+        if (s.tightness_reason) {
+          appendLabeledText(card, "Tightness", "reason", s.tightness_reason);
+        }
+
         const videoFrame = document.createElement("div");
         videoFrame.className = "video-frame frame";
         const video = document.createElement("video");
