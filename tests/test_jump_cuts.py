@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from shorts_generator.jump_cuts import excise_cut_segments
+from shorts_generator.jump_cuts import JumpCutError, excise_cut_segments
 
 
 def _probe_duration(path: str) -> float:
@@ -76,3 +76,16 @@ def test_excise_cut_segments_cleans_up_temp_dir(tmp_path, synthetic_envelope):
     excise_cut_segments(synthetic_envelope, cut_segments, envelope_start=100.0, out_path=out_path)
 
     assert not os.path.exists(out_path + ".parts")
+
+
+def test_excise_cut_segments_wraps_ffmpeg_failure_in_jump_cut_error(tmp_path):
+    out_path = str(tmp_path / "excised.mp4")
+    cut_segments = [{"start_time": 0.0, "end_time": 1.0}]
+
+    with pytest.raises(JumpCutError):
+        excise_cut_segments(
+            "/nonexistent/source/does-not-exist.mp4",
+            cut_segments,
+            envelope_start=0.0,
+            out_path=out_path,
+        )

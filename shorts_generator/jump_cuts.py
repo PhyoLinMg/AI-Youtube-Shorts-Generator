@@ -14,6 +14,11 @@ import subprocess
 from typing import Dict, List
 
 
+class JumpCutError(RuntimeError):
+    """Raised when trim/concat excision fails; callers should fall back to
+    the un-excised clip."""
+
+
 def excise_cut_segments(
     source_path: str,
     cut_segments: List[Dict],
@@ -32,17 +37,28 @@ def excise_cut_segments(
             rel_start = float(seg["start_time"]) - envelope_start
             rel_end = float(seg["end_time"]) - envelope_start
             part_path = os.path.join(tmp_dir, f"part{i}.mp4")
-            subprocess.run(
-                [
-                    "ffmpeg", "-y", "-loglevel", "error",
-                    "-i", source_path,
-                    "-ss", f"{rel_start:.3f}", "-to", f"{rel_end:.3f}",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                    "-c:a", "aac", "-b:a", "128k",
-                    part_path,
-                ],
-                check=True, capture_output=True, text=True,
-            )
+            try:
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-loglevel", "error",
+                        # -ss before -i is a fast keyframe-seek on the
+                        # demuxer instead of a full decode-from-start; -t
+                        # (duration, relative) is used instead of -to
+                        # because -to before -i is an ABSOLUTE input
+                        # timestamp, not relative to -ss, when seeking
+                        # occurs before -i.
+                        "-ss", f"{rel_start:.3f}", "-i", source_path,
+                        "-t", f"{rel_end - rel_start:.3f}",
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                        "-c:a", "aac", "-b:a", "128k",
+                        part_path,
+                    ],
+                    check=True, capture_output=True, text=True,
+                )
+            except subprocess.CalledProcessError as e:
+                raise JumpCutError(f"ffmpeg trim of segment {i} failed: {e.stderr}") from e
+            except OSError as e:
+                raise JumpCutError(f"ffmpeg trim of segment {i} failed: {e}") from e
             part_paths.append(part_path)
 
         concat_list_path = os.path.join(tmp_dir, "concat.txt")
@@ -50,15 +66,20 @@ def excise_cut_segments(
             for p in part_paths:
                 f.write(f"file '{p}'\n")
 
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-loglevel", "error",
-                "-f", "concat", "-safe", "0", "-i", concat_list_path,
-                "-c", "copy",
-                out_path,
-            ],
-            check=True, capture_output=True, text=True,
-        )
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-f", "concat", "-safe", "0", "-i", concat_list_path,
+                    "-c", "copy",
+                    out_path,
+                ],
+                check=True, capture_output=True, text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise JumpCutError(f"ffmpeg concat of excised segments failed: {e.stderr}") from e
+        except OSError as e:
+            raise JumpCutError(f"ffmpeg concat of excised segments failed: {e}") from e
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     return out_path
