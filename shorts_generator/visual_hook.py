@@ -73,8 +73,8 @@ def score_visual_hooks(
     out = []
     with tempfile.TemporaryDirectory() as tmp_dir:
         for i, h in enumerate(highlights, 1):
-            entry = dict(h)
             try:
+                entry = dict(h)
                 frame_paths = _extract_hook_frames(source_video_path, float(h["start_time"]), tmp_dir)
                 if not frame_paths:
                     raise RuntimeError("no frames extracted")
@@ -82,5 +82,6 @@ def score_visual_hooks(
                 entry.update(_parse_visual_hook_response(raw))
             except Exception as e:
                 print(f"[visual_hook] {i} skipped: {e}", flush=True)
+                entry = h
             out.append(entry)
     return out
