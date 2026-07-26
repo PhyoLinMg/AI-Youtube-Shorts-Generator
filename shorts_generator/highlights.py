@@ -127,6 +127,7 @@ Rules:
 - Write an "on_screen_hook" — a short punchy fragment, 7 words or fewer, distinct from hook_sentence (it does NOT need to be a verbatim transcript line). This is bold text that gets overlaid on screen for the first 1.5 seconds, so it must work standalone with zero context. It must STATE the complete claim or payoff itself — never tease it. Bad (curiosity-gap teases, do NOT do this): "You won't believe what happened", "The truth about X", "Wait for it...". Good: a full contrarian statement or the punchline itself, e.g. "I'd rather be wrong than boring." Think thumbnail text that gives away the point, not a cliffhanger.
 - Set "reaction_type" to exactly one of: LOL, WOW, OMG, FINALLY, WTF, WHOLESOME — the single reaction this clip is built to trigger
 - Set "cut_segments" to the list of kept spans described above (1-6 entries); write a "tightness_reason" — one sentence on what got cut and why, or why nothing needed cutting
+- Score "format_clarity_score" 0-100 on whether this span reads as ONE self-contained idea a viewer immediately grasps — a single Q&A, a single before/after, a single narrated event — versus a meandering excerpt that needs outside context. Write a "format_reason" — one sentence on what makes the format legible or muddy.
 - Explain in one sentence why this clip is viral ("virality_reason")
 - Score "hook_strength" 0-100 on how completely and immediately the opening line lands within the ~1-second swipe-decision window, per the hook-landing rubric above (this is independent from the overall viral "score")
 - Set "hook_self_contained" (true/false) — true only if the opener needs zero prior context to land
@@ -137,7 +138,7 @@ Rules:
 - Write "yt_hashtags" — a JSON array of exactly 2-3 highly relevant NICHE hashtags (lowercase, leading #, no spaces). Always include "#Shorts" plus 1-2 topic-specific tags. Do NOT use generic spam tags (#fyp, #viral, #trending).
 
 Respond ONLY with valid JSON (no markdown, no explanation):
-{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","hook_strength":int,"hook_self_contained":bool,"hook_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"],"reaction_type":"string","cut_segments":[{{"start_time":float,"end_time":float}}],"tightness_reason":"string"}}]}}"""
+{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","hook_strength":int,"hook_self_contained":bool,"hook_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"],"reaction_type":"string","cut_segments":[{{"start_time":float,"end_time":float}}],"tightness_reason":"string","format_clarity_score":int,"format_reason":"string"}}]}}"""
 
 
 CHUNK_SIZE_SECONDS = 1200       # 20-min chunks for long videos
@@ -145,10 +146,11 @@ LONG_VIDEO_THRESHOLD = 1800     # chunk videos longer than 30 min
 CHUNK_OVERLAP_SECONDS = 60
 GPT_CALL_TIMEOUT_SECONDS = 300  # cap LLM polls at 5 min — a wedged call should fail fast
 MAX_HIGHLIGHT_API_ATTEMPTS = 3
-HIGHLIGHT_SCHEMA_VERSION = 3    # bump whenever the highlight dict shape changes,
+HIGHLIGHT_SCHEMA_VERSION = 4    # bump whenever the highlight dict shape changes,
                                 # so a stale on-disk cache (missing new fields)
                                 # is treated as a miss instead of silently reused.
                                 # v3: added cut_segments, reaction_type, tightness_reason.
+                                # v4: added format_clarity_score, format_reason.
 
 
 def call_muapi_llm(prompt: str) -> str:
@@ -400,7 +402,7 @@ def call_highlight_api(
             prompt = (
                 base_prompt
                 + "\n\nIMPORTANT: Return ONLY valid JSON with a top-level 'highlights' array."
-                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, hook_strength, hook_self_contained, hook_reason, description, yt_title, yt_hashtags, reaction_type, cut_segments, tightness_reason."
+                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, hook_strength, hook_self_contained, hook_reason, description, yt_title, yt_hashtags, reaction_type, cut_segments, tightness_reason, format_clarity_score, format_reason."
                 + " No markdown fences, no commentary."
             )
 
