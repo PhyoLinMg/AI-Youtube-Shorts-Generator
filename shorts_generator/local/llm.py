@@ -1,4 +1,7 @@
 """Local LLM backend — OpenAI, Gemini, or OpenRouter, selected by LLM_PROVIDER."""
+import base64
+from typing import List
+
 from ..config import (
     GEMINI_MODEL,
     LLM_PROVIDER,
@@ -27,6 +30,37 @@ def call_openai_llm(prompt: str) -> str:
         model=OPENAI_MODEL,
         temperature=0.7,
         messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content or ""
+
+
+def call_openai_vision_llm(prompt: str, image_paths: List[str]) -> str:
+    """OpenAI vision backend for visual_hook.score_visual_hooks, used by
+    --mode local regardless of LLM_PROVIDER (Gemini's local text path stays
+    on call_local_llm; this is the one place --mode local always uses
+    OpenAI, since it's the only vision backend implemented so far -- a
+    missing/invalid OPENAI_API_KEY here just means score_visual_hooks
+    degrades that highlight to "no visual hook score," it doesn't fail the
+    run, per score_visual_hooks's per-highlight try/except)."""
+    try:
+        from openai import OpenAI  # type: ignore
+    except ImportError as e:
+        raise RuntimeError(
+            "openai is required for visual-hook scoring. Install it with:\n"
+            "    pip install -r requirements-local.txt"
+        ) from e
+
+    content = [{"type": "text", "text": prompt}]
+    for path in image_paths:
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+
+    client = OpenAI(api_key=require_openai_key(), timeout=LOCAL_LLM_TIMEOUT_SECONDS)
+    response = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        temperature=0.2,
+        messages=[{"role": "user", "content": content}],
     )
     return response.choices[0].message.content or ""
 
