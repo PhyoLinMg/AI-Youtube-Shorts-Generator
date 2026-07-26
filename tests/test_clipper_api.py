@@ -266,6 +266,147 @@ def test_hook_card_failure_falls_back_to_captioned_clip(tmp_path, synthetic_clip
     assert "captions_error" not in results[0]
 
 
+def _probe_duration(path: str) -> float:
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            path,
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return float(result.stdout.strip())
+
+
+def test_multi_cut_segments_excises_the_gap(tmp_path, synthetic_clip, monkeypatch):
+    # synthetic_clip is a 4s clip standing in for the hosted [0,4] envelope download.
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper,
+        "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+
+    highlight = {
+        "title": "Test Clip", "start_time": 0.0, "end_time": 4.0, "score": 90,
+        "cut_segments": [
+            {"start_time": 0.0, "end_time": 1.0},
+            {"start_time": 3.0, "end_time": 4.0},
+        ],
+    }
+
+    out_dir = str(tmp_path / "out")
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [highlight],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        captions=False,
+        hook_card=False,
+        out_dir=out_dir,
+    )
+
+    assert "excision_error" not in results[0]
+    duration = _probe_duration(results[0]["clip_url"])
+    assert abs(duration - 2.0) < 0.3  # kept 1s + 1s, dropped the 2s middle
+
+
+def test_single_cut_segment_skips_excision(tmp_path, synthetic_clip, monkeypatch):
+    # A single-entry cut_segments list must take the exact same path as
+    # today's single-span highlights -- no excision step at all.
+    #
+    # NOTE: duration can't be used as the observable here. synthetic_clip is
+    # a fixed 4s fixture, while this highlight's envelope is only 3s; in
+    # production the downloaded clip already matches the highlight's span
+    # (MuAPI's autocrop trims to start_time/end_time), but the mock download
+    # doesn't simulate that. So we assert the invariant the excision step
+    # was never invoked, rather than inferring it from output size.
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper,
+        "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+    excise_calls = []
+    monkeypatch.setattr(
+        clipper, "excise_cut_segments",
+        lambda *a, **k: excise_calls.append(a) or a[-1],
+    )
+
+    highlight = {
+        **_highlight(),
+        "cut_segments": [{"start_time": 0.0, "end_time": 3.0}],
+    }
+
+    out_dir = str(tmp_path / "out")
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [highlight],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        out_dir=out_dir,
+    )
+
+    assert excise_calls == []
+    assert "excision_error" not in results[0]
+    assert os.path.exists(results[0]["clip_url"])
+    # No excision happened, so the fixture's own duration should survive untouched.
+    duration = _probe_duration(results[0]["clip_url"])
+    assert abs(duration - 4.0) < 0.3
+
+
+def test_multi_cut_segments_uses_segment_aware_captions(tmp_path, synthetic_clip, monkeypatch):
+    # The excised path must burn captions with burn_captions_segments (which
+    # chunks per kept span so nothing straddles a cut), never the plain
+    # burn_captions used by the single-span path.
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper,
+        "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+
+    def _fail_if_called(*a, **k):
+        raise AssertionError("burn_captions (span-based) must not be used on the excised path")
+    monkeypatch.setattr(clipper, "burn_captions", _fail_if_called)
+
+    captured = {}
+
+    def _spy_segments(video_path, transcript_segments, cut_segments, out_path, **kwargs):
+        captured["cut_segments"] = cut_segments
+        captured.update(kwargs)
+        shutil.copyfile(video_path, out_path)
+        return out_path
+
+    monkeypatch.setattr(clipper, "burn_captions_segments", _spy_segments)
+
+    cut_segments = [
+        {"start_time": 0.0, "end_time": 1.0},
+        {"start_time": 3.0, "end_time": 4.0},
+    ]
+    highlight = {
+        "title": "Test Clip", "start_time": 0.0, "end_time": 4.0, "score": 90,
+        "cut_segments": cut_segments,
+    }
+
+    out_dir = str(tmp_path / "out")
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [highlight],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        hook_card=False,
+        out_dir=out_dir,
+        word_highlight=False,
+    )
+
+    assert "excision_error" not in results[0]
+    assert "captions_error" not in results[0]
+    assert captured["cut_segments"] == cut_segments
+    assert captured["word_highlight"] is False
+
+
 def test_caption_failure_preserves_a_successful_hook_card(tmp_path, synthetic_clip, monkeypatch):
     """A caption-burn failure must not discard an already-successful hook
     card -- fall back to the plain (uncaptioned) download and still

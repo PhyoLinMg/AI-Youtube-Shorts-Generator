@@ -14,7 +14,8 @@ from typing import Dict, List, Optional
 import requests
 
 from . import muapi
-from .captions import CaptionError, burn_captions
+from .jump_cuts import excise_cut_segments, JumpCutError
+from .captions import CaptionError, burn_captions, burn_captions_segments
 from .hook_card import HookCardError, render_card_overlay
 from .config import LOCAL_OUTPUT_DIR
 from .downloader import _extract_video_url
@@ -74,8 +75,12 @@ def crop_highlights(
             want_captions = captions and bool(transcript_segments)
             hook_text = str(h.get("on_screen_hook") or "").strip()
             want_hook_card = hook_card and bool(hook_text)
+            cut_segments = h.get("cut_segments") or [
+                {"start_time": h["start_time"], "end_time": h["end_time"]}
+            ]
+            want_excision = len(cut_segments) > 1
 
-            if want_captions or want_hook_card:
+            if want_captions or want_hook_card or want_excision:
                 os.makedirs(out_dir, exist_ok=True)
                 filename = unique_short_filename(h.get("title"), used_names)
                 final_path = os.path.join(out_dir, filename)
@@ -83,17 +88,39 @@ def crop_highlights(
                 try:
                     _download_to(url, downloaded_path)
 
+                    if want_excision:
+                        try:
+                            excised_path = final_path + ".excised.mp4"
+                            excise_cut_segments(
+                                downloaded_path, cut_segments, float(h["start_time"]), excised_path,
+                            )
+                            os.replace(excised_path, downloaded_path)
+                        except JumpCutError as e:
+                            print(f"[clip] {i} jump-cut excision skipped: {e}", flush=True)
+                            entry["excision_error"] = str(e)
+                            want_excision = False
+
                     if want_captions:
                         try:
-                            burn_captions(
-                                downloaded_path,
-                                transcript_segments,
-                                float(h["start_time"]),
-                                float(h["end_time"]),
-                                final_path,
-                                fade_seconds=caption_fade_duration,
-                                word_highlight=word_highlight,
-                            )
+                            if want_excision:
+                                burn_captions_segments(
+                                    downloaded_path,
+                                    transcript_segments,
+                                    cut_segments,
+                                    final_path,
+                                    fade_seconds=caption_fade_duration,
+                                    word_highlight=word_highlight,
+                                )
+                            else:
+                                burn_captions(
+                                    downloaded_path,
+                                    transcript_segments,
+                                    float(h["start_time"]),
+                                    float(h["end_time"]),
+                                    final_path,
+                                    fade_seconds=caption_fade_duration,
+                                    word_highlight=word_highlight,
+                                )
                         except CaptionError as e:
                             # Caption burn-in failed, but the download itself
                             # succeeded (and the hook card may already have
