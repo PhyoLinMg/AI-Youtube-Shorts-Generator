@@ -30,6 +30,8 @@ _GENERIC_SPAM_TAGS = {
     "#youtube", "#fypシ",
 }
 
+_REACTION_TYPES = {"LOL", "WOW", "OMG", "FINALLY", "WTF", "WHOLESOME"}
+
 
 def _transcript_fingerprint(transcript: Dict) -> str:
     """Stable content hash used to invalidate the highlights cache when the
@@ -204,6 +206,35 @@ def _sanitize_hashtags(raw_tags: object) -> List[str]:
     return hashtags[:4]
 
 
+def _sanitize_cut_segments(raw_segments: object, envelope_start: float, envelope_end: float) -> Optional[List[Dict]]:
+    """Validate/clamp a highlight's cut_segments against its envelope.
+    Returns None (caller falls back to the single-span envelope) if the
+    input isn't a non-empty list of well-formed, non-overlapping spans."""
+    if not isinstance(raw_segments, list) or not raw_segments:
+        return None
+
+    cleaned: List[Dict] = []
+    for item in raw_segments:
+        if not isinstance(item, dict):
+            return None
+        s = _coerce_float(item.get("start_time"), default=-1.0)
+        e = _coerce_float(item.get("end_time"), default=-1.0)
+        if s < 0 or e <= s:
+            return None
+        s = max(s, envelope_start)
+        e = min(e, envelope_end)
+        if e <= s:
+            return None
+        cleaned.append({"start_time": s, "end_time": e})
+
+    cleaned.sort(key=lambda c: c["start_time"])
+    for i in range(1, len(cleaned)):
+        if cleaned[i]["start_time"] < cleaned[i - 1]["end_time"]:
+            return None  # overlapping spans -- ambiguous, fall back to envelope
+
+    return cleaned[:6]
+
+
 def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
     """Normalize model output into the expected shape; skip invalid entries."""
     if not isinstance(raw_highlights, list):
@@ -226,6 +257,14 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
             if end <= start:
                 continue
 
+        cut_segments = _sanitize_cut_segments(item.get("cut_segments"), start, end) or [
+            {"start_time": start, "end_time": end}
+        ]
+
+        reaction_type = str(item.get("reaction_type") or "").strip().upper()
+        if reaction_type not in _REACTION_TYPES:
+            reaction_type = "WOW"
+
         cleaned.append(
             {
                 "title": str(item.get("title") or "Untitled Highlight").strip()[:100],
@@ -241,6 +280,9 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
                 "description": str(item.get("description") or "").strip()[:220],
                 "yt_title": str(item.get("yt_title") or "").strip()[:60],
                 "yt_hashtags": _sanitize_hashtags(item.get("yt_hashtags")),
+                "cut_segments": cut_segments,
+                "reaction_type": reaction_type,
+                "tightness_reason": str(item.get("tightness_reason") or "").strip(),
             }
         )
 

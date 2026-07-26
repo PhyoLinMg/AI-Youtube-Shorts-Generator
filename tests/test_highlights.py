@@ -66,6 +66,93 @@ def test_sanitize_highlights_coerces_string_hook_self_contained():
     assert cleaned[0]["hook_self_contained"] is True
 
 
+def test_sanitize_highlights_keeps_valid_cut_segments():
+    raw = _raw_highlight(
+        start_time=1.0, end_time=10.0,
+        cut_segments=[
+            {"start_time": 1.0, "end_time": 3.0},
+            {"start_time": 6.0, "end_time": 10.0},
+        ],
+    )
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["cut_segments"] == [
+        {"start_time": 1.0, "end_time": 3.0},
+        {"start_time": 6.0, "end_time": 10.0},
+    ]
+
+
+def test_sanitize_highlights_falls_back_to_envelope_when_cut_segments_missing():
+    raw = _raw_highlight(start_time=1.0, end_time=5.0)
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["cut_segments"] == [{"start_time": 1.0, "end_time": 5.0}]
+
+
+def test_sanitize_highlights_falls_back_to_envelope_when_cut_segments_overlap():
+    raw = _raw_highlight(
+        start_time=1.0, end_time=10.0,
+        cut_segments=[
+            {"start_time": 1.0, "end_time": 5.0},
+            {"start_time": 4.0, "end_time": 10.0},
+        ],
+    )
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["cut_segments"] == [{"start_time": 1.0, "end_time": 10.0}]
+
+
+def test_sanitize_highlights_clamps_cut_segments_to_envelope():
+    raw = _raw_highlight(
+        start_time=2.0, end_time=8.0,
+        cut_segments=[{"start_time": 0.0, "end_time": 20.0}],
+    )
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["cut_segments"] == [{"start_time": 2.0, "end_time": 8.0}]
+
+
+def test_sanitize_highlights_caps_cut_segments_at_six():
+    raw = _raw_highlight(
+        start_time=0.0, end_time=100.0,
+        cut_segments=[{"start_time": float(i * 10), "end_time": float(i * 10 + 5)} for i in range(8)],
+    )
+    cleaned = _sanitize_highlights([raw], duration=200.0)
+    assert len(cleaned[0]["cut_segments"]) == 6
+
+
+def test_sanitize_highlights_keeps_valid_reaction_type():
+    raw = _raw_highlight(reaction_type="LOL")
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["reaction_type"] == "LOL"
+
+
+def test_sanitize_highlights_reaction_type_case_insensitive():
+    raw = _raw_highlight(reaction_type="lol")
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["reaction_type"] == "LOL"
+
+
+def test_sanitize_highlights_defaults_reaction_type_when_invalid():
+    raw = _raw_highlight(reaction_type="HYPE")
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["reaction_type"] == "WOW"
+
+
+def test_sanitize_highlights_defaults_reaction_type_when_missing():
+    raw = {"start_time": 1.0, "end_time": 5.0}
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["reaction_type"] == "WOW"
+
+
+def test_sanitize_highlights_defaults_tightness_reason_to_empty_string():
+    raw = {"start_time": 1.0, "end_time": 5.0}
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["tightness_reason"] == ""
+
+
+def test_sanitize_highlights_includes_tightness_reason():
+    raw = _raw_highlight(tightness_reason="cut the walk-back-in, kept the punchline")
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["tightness_reason"] == "cut the walk-back-in, kept the punchline"
+
+
 def test_transcript_fingerprint_stable_for_identical_transcripts():
     t1 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi"}]}
     t2 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi"}]}
