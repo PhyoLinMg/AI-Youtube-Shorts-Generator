@@ -20,9 +20,10 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from ..captions import CaptionError, burn_captions
+from ..captions import CaptionError, burn_captions, burn_captions_segments
 from ..config import LOCAL_OUTPUT_DIR
 from ..hook_card import HookCardError, render_card_overlay
+from ..jump_cuts import excise_cut_segments, JumpCutError
 from ..run_output import unique_short_filename
 
 # --- adaptive framing tunables -------------------------------------------------
@@ -563,23 +564,47 @@ def crop_clip_local(
     aspect_ratio: str,
     out_path: str,
     framing: str = "locked",
+    cut_segments: Optional[List[Dict]] = None,
+    errors: Optional[Dict] = None,
 ) -> str:
     """Cut + reframe one highlight, returning the local mp4 path.
 
     framing="locked" (default): static speaker-centered crop for the whole
     clip. framing="adaptive": cursor/person-aware crop for screen-recording
     content that alternates between facecam and screen activity.
+
+    cut_segments (optional): when it has more than one entry, the gaps
+    between kept spans are excised (jump_cuts.excise_cut_segments) before
+    reframing, so a reaction-jail dead-air trim survives the vertical crop.
+    If excision fails, this falls back to the un-excised envelope cut
+    (mirroring api mode's clipper.crop_highlights) rather than failing the
+    whole highlight -- a bug in dead-air excision shouldn't kill an
+    otherwise-fine clip. When `errors` is passed, a failure is recorded at
+    errors["excision_error"] so the caller can both surface it and know to
+    route captions through the un-excised path.
     """
     cut_path = out_path + ".cut.mp4"
+    excised_path = out_path + ".excised.mp4"
     try:
         _cut_subclip(source_path, start_time, end_time, cut_path)
+        working_path = cut_path
+        if cut_segments and len(cut_segments) > 1:
+            try:
+                excise_cut_segments(cut_path, cut_segments, start_time, excised_path)
+                working_path = excised_path
+            except JumpCutError as e:
+                print(f"[clip/local] jump-cut excision skipped: {e}", flush=True)
+                if errors is not None:
+                    errors["excision_error"] = str(e)
         if framing == "adaptive":
-            _reframe_vertical_adaptive(cut_path, out_path, aspect_ratio)
+            _reframe_vertical_adaptive(working_path, out_path, aspect_ratio)
         else:
-            _reframe_vertical(cut_path, out_path, aspect_ratio)
+            _reframe_vertical(working_path, out_path, aspect_ratio)
     finally:
         if os.path.exists(cut_path):
             os.remove(cut_path)
+        if os.path.exists(excised_path):
+            os.remove(excised_path)
     return out_path
 
 
@@ -603,6 +628,10 @@ def crop_highlights_local(
         out_path = os.path.join(out_dir, unique_short_filename(h.get("title"), used_names))
         print(f"[clip/local] {i}/{len(highlights)}: {h.get('title', '(untitled)')}", flush=True)
         try:
+            cut_segments = h.get("cut_segments") or [
+                {"start_time": float(h["start_time"]), "end_time": float(h["end_time"])}
+            ]
+            crop_errors: Dict = {}
             crop_clip_local(
                 source_path,
                 float(h["start_time"]),
@@ -610,8 +639,11 @@ def crop_highlights_local(
                 aspect_ratio,
                 out_path,
                 framing=framing,
+                cut_segments=cut_segments,
+                errors=crop_errors,
             )
-            entry = {**h, "clip_url": out_path}
+            entry = {**h, "clip_url": out_path, **crop_errors}
+            want_excision = len(cut_segments) > 1 and "excision_error" not in crop_errors
 
             hook_text = str(h.get("on_screen_hook") or "").strip()
             want_hook_card = hook_card and bool(hook_text)
@@ -619,15 +651,25 @@ def crop_highlights_local(
             if captions and transcript_segments:
                 captioned_path = out_path + ".captioned.mp4"
                 try:
-                    burn_captions(
-                        out_path,
-                        transcript_segments,
-                        float(h["start_time"]),
-                        float(h["end_time"]),
-                        captioned_path,
-                        fade_seconds=caption_fade_duration,
-                        word_highlight=word_highlight,
-                    )
+                    if want_excision:
+                        burn_captions_segments(
+                            out_path,
+                            transcript_segments,
+                            cut_segments,
+                            captioned_path,
+                            fade_seconds=caption_fade_duration,
+                            word_highlight=word_highlight,
+                        )
+                    else:
+                        burn_captions(
+                            out_path,
+                            transcript_segments,
+                            float(h["start_time"]),
+                            float(h["end_time"]),
+                            captioned_path,
+                            fade_seconds=caption_fade_duration,
+                            word_highlight=word_highlight,
+                        )
                     os.replace(captioned_path, out_path)
                 except CaptionError as e:
                     print(f"[clip/local] {i} captions skipped: {e}", flush=True)

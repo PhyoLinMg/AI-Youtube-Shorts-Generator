@@ -223,6 +223,9 @@ def generate_shorts(
                                       #     it stood before the hook-card pass)
                                       #   captions_error: present if caption burn-in failed
                                       #     for that clip (falls back to the uncaptioned clip)
+                                      #   excision_error: present if jump-cut excision of a
+                                      #     highlight's cut_segments failed (falls back to the
+                                      #     un-excised envelope clip)
         }
     """
     mode = (mode or "api").lower()

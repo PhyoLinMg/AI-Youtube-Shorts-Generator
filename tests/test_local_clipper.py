@@ -426,3 +426,151 @@ def test_hook_card_failure_falls_back_to_captioned_clip(tmp_path, synthetic_sour
     assert os.path.exists(results[0]["clip_url"])
     assert results[0]["hook_card_error"] == "boom"
     assert "captions_error" not in results[0]
+
+
+def _probe_duration(path: str) -> float:
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            path,
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return float(result.stdout.strip())
+
+
+def test_multi_cut_segments_excises_the_gap(tmp_path, synthetic_source):
+    # synthetic_source spans [0,6]; highlight envelope is [1,4] (3s).
+    # Keep [1,2] and [3,4], drop the [2,3] middle -> 2s output.
+    highlight = {
+        "title": "Test Clip", "start_time": 1.0, "end_time": 4.0, "score": 90,
+        "cut_segments": [
+            {"start_time": 1.0, "end_time": 2.0},
+            {"start_time": 3.0, "end_time": 4.0},
+        ],
+    }
+
+    out_dir = str(tmp_path / "out")
+    results = crop_highlights_local(
+        synthetic_source,
+        [highlight],
+        aspect_ratio="9:16",
+        out_dir=out_dir,
+        captions=False,
+        hook_card=False,
+    )
+
+    assert "error" not in results[0]
+    duration = _probe_duration(results[0]["clip_url"])
+    assert abs(duration - 2.0) < 0.3
+
+
+def test_single_cut_segment_skips_excision(tmp_path, synthetic_source):
+    highlight = {**_highlight(), "cut_segments": [{"start_time": 1.0, "end_time": 4.0}]}
+
+    out_dir = str(tmp_path / "out")
+    results = crop_highlights_local(
+        synthetic_source, [highlight], aspect_ratio="9:16", out_dir=out_dir,
+        captions=False, hook_card=False,
+    )
+
+    assert "error" not in results[0]
+    duration = _probe_duration(results[0]["clip_url"])
+    assert abs(duration - 3.0) < 0.3
+
+
+def test_multi_cut_segments_routes_captions_through_segments_burner(tmp_path, synthetic_source, monkeypatch):
+    """Excision succeeds -> captions must go through burn_captions_segments
+    (chunked per kept span on the concatenated timeline), not burn_captions
+    (which would place phrases against the un-excised absolute timeline)."""
+    segments_calls = []
+    plain_calls = []
+
+    def _spy_segments(*args, **kwargs):
+        segments_calls.append((args, kwargs))
+        import shutil
+        shutil.copyfile(args[0], args[3])
+        return args[3]
+
+    def _spy_plain(*args, **kwargs):
+        plain_calls.append((args, kwargs))
+        import shutil
+        shutil.copyfile(args[0], args[4])
+        return args[4]
+
+    monkeypatch.setattr(local_clipper_module, "burn_captions_segments", _spy_segments)
+    monkeypatch.setattr(local_clipper_module, "burn_captions", _spy_plain)
+
+    highlight = {
+        "title": "Test Clip", "start_time": 1.0, "end_time": 4.0, "score": 90,
+        "cut_segments": [
+            {"start_time": 1.0, "end_time": 2.0},
+            {"start_time": 3.0, "end_time": 4.0},
+        ],
+    }
+    results = crop_highlights_local(
+        synthetic_source, [highlight], aspect_ratio="9:16",
+        out_dir=str(tmp_path / "out"), transcript_segments=_segments(),
+        hook_card=False,
+    )
+
+    assert len(segments_calls) == 1
+    assert len(plain_calls) == 0
+    called_cut_segments = segments_calls[0][0][2]
+    assert called_cut_segments == highlight["cut_segments"]
+    assert "captions_error" not in results[0]
+    assert "excision_error" not in results[0]
+
+
+def test_excision_failure_falls_back_to_plain_captions_on_unexcised_clip(tmp_path, synthetic_source, monkeypatch):
+    """If excise_cut_segments blows up, crop_clip_local must fall back to the
+    un-excised envelope cut (not fail the whole highlight), and captions
+    must route through plain burn_captions against that un-excised clip --
+    routing through burn_captions_segments here would place captions against
+    a timeline that was never actually excised."""
+    def _raise(*args, **kwargs):
+        raise local_clipper_module.JumpCutError("boom")
+
+    monkeypatch.setattr(local_clipper_module, "excise_cut_segments", _raise)
+
+    segments_calls = []
+    plain_calls = []
+
+    def _spy_segments(*args, **kwargs):
+        segments_calls.append((args, kwargs))
+        import shutil
+        shutil.copyfile(args[0], args[3])
+        return args[3]
+
+    def _spy_plain(*args, **kwargs):
+        plain_calls.append((args, kwargs))
+        import shutil
+        shutil.copyfile(args[0], args[4])
+        return args[4]
+
+    monkeypatch.setattr(local_clipper_module, "burn_captions_segments", _spy_segments)
+    monkeypatch.setattr(local_clipper_module, "burn_captions", _spy_plain)
+
+    highlight = {
+        "title": "Test Clip", "start_time": 1.0, "end_time": 4.0, "score": 90,
+        "cut_segments": [
+            {"start_time": 1.0, "end_time": 2.0},
+            {"start_time": 3.0, "end_time": 4.0},
+        ],
+    }
+    results = crop_highlights_local(
+        synthetic_source, [highlight], aspect_ratio="9:16",
+        out_dir=str(tmp_path / "out"), transcript_segments=_segments(),
+        hook_card=False,
+    )
+
+    assert results[0]["excision_error"] == "boom"
+    assert "error" not in results[0]
+    assert results[0]["clip_url"] is not None
+    assert os.path.exists(results[0]["clip_url"])
+    duration = _probe_duration(results[0]["clip_url"])
+    assert abs(duration - 3.0) < 0.3  # un-excised envelope duration
+    assert len(plain_calls) == 1
+    assert len(segments_calls) == 0
