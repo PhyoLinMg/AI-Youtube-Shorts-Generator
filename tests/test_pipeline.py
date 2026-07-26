@@ -109,7 +109,7 @@ def test_run_local_crops_num_clips_candidates_via_claim_specificity_gate(tmp_pat
 
     args, _ = crop_mock.call_args
     top = args[1]
-    assert len(top) == 2
+    assert len(top) == 2 + pipeline_module.CROP_FAILURE_BUFFER
 
 
 def test_run_local_skips_download_when_source_already_exists(tmp_path, monkeypatch):
@@ -205,7 +205,7 @@ def test_run_api_crops_num_clips_candidates_via_claim_specificity_gate(tmp_path,
 
     args, _ = crop_mock.call_args
     top = args[1]
-    assert len(top) == 2
+    assert len(top) == 2 + pipeline_module.CROP_FAILURE_BUFFER
 
 
 def _fake_highlights_result_mixed_specificity():
@@ -243,7 +243,7 @@ def test_run_api_gate_prefers_claim_specificity_over_raw_score(tmp_path, monkeyp
 
     args, _ = crop_mock.call_args
     top = args[1]
-    assert len(top) == 1
+    assert len(top) == 1 + pipeline_module.CROP_FAILURE_BUFFER
     assert top[0]["title"] == "Lower score, specific"
 
 
@@ -456,3 +456,148 @@ def test_run_api_recovers_from_corrupted_transcript_cache(tmp_path, monkeypatch)
     )
 
     assert result["transcript"] == _fake_transcript()
+
+
+def test_run_api_trims_extra_successful_crops_to_num_clips(tmp_path, monkeypatch):
+    # Every buffered candidate crops successfully -- the pipeline must trim
+    # back to exactly num_clips rather than over-delivering.
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    def all_succeed_crop(source_url, top, **kwargs):
+        return [{**h, "clip_url": f"https://hosted.example/{h['title']}.mp4"} for h in top]
+
+    monkeypatch.setattr(pipeline_module, "crop_highlights", all_succeed_crop)
+
+    result = pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert len(result["shorts"]) == 2
+    assert all(s.get("clip_url") for s in result["shorts"])
+
+
+def test_run_api_buffer_covers_a_single_crop_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    def flaky_crop(source_url, top, **kwargs):
+        out = []
+        for i, h in enumerate(top):
+            if i == 0:
+                out.append({**h, "clip_url": None, "error": "autocrop failed"})
+            else:
+                out.append({**h, "clip_url": f"https://hosted.example/{h['title']}.mp4"})
+        return out
+
+    monkeypatch.setattr(pipeline_module, "crop_highlights", flaky_crop)
+
+    result = pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert len(result["shorts"]) == 2
+    assert all(s.get("clip_url") for s in result["shorts"])
+
+
+def test_run_api_returns_available_successes_when_buffer_insufficient(tmp_path, monkeypatch):
+    # More failures than the buffer can cover -- the shortfall must stay
+    # visible (as "Failed" cards downstream in the webapp) rather than being
+    # silently hidden.
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    def mostly_failing_crop(source_url, top, **kwargs):
+        out = []
+        for i, h in enumerate(top):
+            if i < len(top) - 1:
+                out.append({**h, "clip_url": None, "error": "autocrop failed"})
+            else:
+                out.append({**h, "clip_url": f"https://hosted.example/{h['title']}.mp4"})
+        return out
+
+    monkeypatch.setattr(pipeline_module, "crop_highlights", mostly_failing_crop)
+
+    result = pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert len(result["shorts"]) == 2 + pipeline_module.CROP_FAILURE_BUFFER
+    assert sum(1 for s in result["shorts"] if s.get("clip_url")) == 1
+
+
+def test_run_local_buffer_covers_a_single_crop_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    def flaky_crop_local(source_path, top, **kwargs):
+        out = []
+        for i, h in enumerate(top):
+            if i == 0:
+                out.append({**h, "clip_url": None, "error": "crop failed"})
+            else:
+                out.append({**h, "clip_url": f"/tmp/out/{h['title']}.mp4"})
+        return out
+
+    monkeypatch.setattr(local_clipper_module, "crop_highlights_local", flaky_crop_local)
+
+    result = pipeline_module._run_local(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=False,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert len(result["shorts"]) == 2
+    assert all(s.get("clip_url") for s in result["shorts"])
