@@ -59,6 +59,13 @@ def test_chunk_segments_drops_segments_outside_window():
 
 
 def test_chunk_segments_clips_and_shifts_straddling_segment():
+    # The word group's estimated (character-weighted) per-word windows place
+    # "alpha" and "beta" entirely before clip_start=10.0, so they must be
+    # dropped rather than kept with mismatched clipped-vs-full text (that
+    # mismatch was the bug: the group's aggregate time window got clipped
+    # but its full text was kept regardless, producing text that didn't
+    # match the displayed time window — and, once chunking happens per
+    # kept-span instead of per-clip, duplicated text across chunks).
     segments = [{"start": 8.0, "end": 12.0, "text": "alpha beta gamma delta"}]
 
     chunks = _chunk_segments(segments, clip_start=10.0, clip_end=20.0, max_words=7)
@@ -66,9 +73,9 @@ def test_chunk_segments_clips_and_shifts_straddling_segment():
     assert len(chunks) == 1
     assert chunks[0]["start"] == 0.0
     assert chunks[0]["end"] == 2.0
-    assert chunks[0]["text"] == "alpha beta gamma delta"
+    assert chunks[0]["text"] == "gamma delta"
     assert "words" in chunks[0]
-    assert [w["text"] for w in chunks[0]["words"]] == ["alpha", "beta", "gamma", "delta"]
+    assert [w["text"] for w in chunks[0]["words"]] == ["gamma", "delta"]
     assert chunks[0]["words"][0]["start"] == 0.0
     assert chunks[0]["words"][-1]["end"] == 2.0
 
@@ -117,6 +124,41 @@ def test_chunk_cut_segments_no_chunk_straddles_the_gap():
         # [0.0, 2.0]) -- this still rejects a naive whole-envelope chunk pass
         # over [0.0, 4.0], which would yield a 3.5s chunk spanning the gap
         assert (c["end"] - c["start"]) <= max_span + 1e-6
+
+
+def test_chunk_cut_segments_does_not_duplicate_word_group_straddling_cut_boundary():
+    # Regression test for a Critical bug: in the estimate path (no real
+    # per-word timestamps -- the only path api mode ever takes), a single
+    # max_words-sized word group whose *aggregate* time window straddled an
+    # internal cut-segment boundary used to be emitted twice: once
+    # (time-clipped, but with its full un-clipped text) in each of the two
+    # neighboring kept spans. Concretely, before the fix this produced
+    # "one two three four five six seven" as the text of BOTH the first
+    # chunk ([0.0, 2.0]) and the second chunk ([2.0, 3.0]), so the caption
+    # visibly repeated itself right after the jump cut.
+    transcript_segments = [
+        {"start": 0.0, "end": 4.0, "text": "one two three four five six seven eight"},
+    ]
+    cut_segments = [
+        {"start_time": 0.0, "end_time": 2.0},
+        {"start_time": 2.5, "end_time": 4.0},
+    ]
+
+    chunks = _chunk_cut_segments(transcript_segments, cut_segments, max_words=7)
+
+    # Every source word must appear in the combined output text at most once
+    # -- no word should be split across two chunks' text.
+    all_words = []
+    for c in chunks:
+        all_words.extend(c["text"].split())
+    assert len(all_words) == len(set(all_words)), (
+        f"a word appears in more than one chunk's text: {all_words}"
+    )
+
+    # In particular, the straddling group's leading words must not show up
+    # verbatim in two different chunks.
+    texts = [c["text"] for c in chunks]
+    assert texts.count("one two three four five six seven") <= 1
 
 
 def test_write_ass_contains_resolution_and_fade_tag(tmp_path):

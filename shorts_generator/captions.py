@@ -121,19 +121,30 @@ def _chunk_segments(
             end = start + duration
             cursor = end
 
-            clipped_start = max(start, clip_start)
-            clipped_end = min(end, clip_end)
-            if clipped_end <= clipped_start:
+            # Per-word estimated windows (character-weighted), in the
+            # segment's original absolute time — computed before clipping so
+            # we can drop/trim individual words rather than the whole group.
+            word_windows = _estimate_word_windows(group, start, end)
+
+            kept = []
+            for w in word_windows:
+                ws = max(w["start"], clip_start)
+                we = min(w["end"], clip_end)
+                if we <= ws:
+                    continue
+                kept.append({
+                    "start": ws - clip_start,
+                    "end": we - clip_start,
+                    "text": w["text"],
+                })
+            if not kept:
                 continue
 
-            chunk_start_rel = clipped_start - clip_start
-            chunk_end_rel = clipped_end - clip_start
-
             chunks.append({
-                "start": chunk_start_rel,
-                "end": chunk_end_rel,
-                "text": " ".join(group),
-                "words": _estimate_word_windows(group, chunk_start_rel, chunk_end_rel),
+                "start": kept[0]["start"],
+                "end": kept[-1]["end"],
+                "text": " ".join(w["text"] for w in kept),
+                "words": kept,
             })
 
     return chunks
