@@ -107,8 +107,11 @@ before `select_final_highlights` is ever called).
 the existing `hook_strength` meter block, add a "Claim specificity" score-row
 (meter + number, same `scoreColor()` styling) and a "Claim reason" labeled
 text block, following the exact pattern the `hook_strength`/`hook_reason`
-pair already uses. No `typeof` guard needed (unlike `visual_hook_score`) since
-`_sanitize_highlights` always populates both fields with a default.
+pair already uses. Guard the meter with `typeof s.claim_specificity ===
+"number"`, matching `format_clarity_score`'s guard — `_sanitize_highlights`
+always populates the field going forward, but a `result.json` written before
+this change (schema v4 or earlier) won't have it, and the guard keeps that
+card rendering cleanly instead of showing a stray "0%" meter.
 
 ## Testing
 

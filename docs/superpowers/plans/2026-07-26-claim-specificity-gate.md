@@ -220,7 +220,13 @@ HIGHLIGHT_SCHEMA_VERSION = 5    # bump whenever the highlight dict shape changes
                                 # v3: added cut_segments, reaction_type, tightness_reason.
                                 # v4: added format_clarity_score, format_reason.
                                 # v5: added claim_specificity, claim_specificity_reason.
+
+CLAIM_SPECIFICITY_THRESHOLD = 80  # gate used by select_final_highlights (Task 2)
 ```
+
+This puts the new threshold constant alongside the module's other constants
+(`CHUNK_SIZE_SECONDS`, `LONG_VIDEO_THRESHOLD`, etc., all defined in this same
+block) rather than scattered later in the file.
 
 - [ ] **Step 11: Run tests to verify they pass**
 
@@ -244,12 +250,39 @@ git commit -m "feat: score claim specificity on each highlight candidate"
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/test_highlights.py`, after the `dedupe_highlights`/`get_highlights` tests (end of file, before any `if __name__` block if present — otherwise just append):
+First, extend the existing import block at the top of `tests/test_highlights.py` (lines 4-12) instead of adding a new import line later in the file. Find:
 
 ```python
-from shorts_generator.highlights import CLAIM_SPECIFICITY_THRESHOLD, select_final_highlights
+from shorts_generator.highlights import (
+    HIGHLIGHT_SCHEMA_VERSION,
+    _sanitize_highlights,
+    _transcript_fingerprint,
+    call_highlight_api,
+    dedupe_highlights,
+    get_highlights,
+    get_highlights_cached,
+)
+```
 
+Replace with:
 
+```python
+from shorts_generator.highlights import (
+    CLAIM_SPECIFICITY_THRESHOLD,
+    HIGHLIGHT_SCHEMA_VERSION,
+    _sanitize_highlights,
+    _transcript_fingerprint,
+    call_highlight_api,
+    dedupe_highlights,
+    get_highlights,
+    get_highlights_cached,
+    select_final_highlights,
+)
+```
+
+Then add the tests themselves to the end of `tests/test_highlights.py`:
+
+```python
 def test_select_final_highlights_keeps_top_passers_by_score():
     highlights = [
         {"title": "A", "score": 90, "claim_specificity": 85},
@@ -306,12 +339,12 @@ Expected: FAIL — `ImportError: cannot import name 'select_final_highlights'`.
 
 - [ ] **Step 3: Implement `select_final_highlights`**
 
-In `shorts_generator/highlights.py`, add after the `dedupe_highlights` function (after its closing `return kept`):
+`CLAIM_SPECIFICITY_THRESHOLD` was already added to the module's constants
+block in Task 1 Step 10. Now add the function itself in
+`shorts_generator/highlights.py`, after the `dedupe_highlights` function
+(after its closing `return kept`):
 
 ```python
-CLAIM_SPECIFICITY_THRESHOLD = 80
-
-
 def select_final_highlights(
     all_highlights: List[Dict], num_clips: int, threshold: int = CLAIM_SPECIFICITY_THRESHOLD,
 ) -> List[Dict]:
@@ -540,7 +573,9 @@ def test_run_api_gate_prefers_claim_specificity_over_raw_score(tmp_path, monkeyp
 - [ ] **Step 3: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_pipeline.py -k "claim_specificity" -v`
-Expected: FAIL — the two renamed tests still see `len(top) == 4` (old behavior), and the new mixed-specificity test picks the high-score-but-vague clip instead. `AttributeError: module 'shorts_generator.pipeline' has no attribute 'select_final_highlights'` is NOT expected here since we only reference it via pipeline's internal call, not import it in the test — confirm failures are assertion mismatches, not import errors.
+Expected: FAIL, all three, on assertion mismatches (pipeline.py hasn't changed yet, so it's still slicing `2 * num_clips`):
+- the two renamed tests fail with `assert 4 == 2` (5 candidates, `num_clips=2` → old code keeps 4)
+- the mixed-specificity test fails with `assert 2 == 1` on `len(top) == 1` (2 candidates, `num_clips=1` → old code keeps both, so `top[0]["title"]` is never reached)
 
 - [ ] **Step 4: Wire `select_final_highlights` into pipeline.py**
 
