@@ -153,6 +153,30 @@ def test_sanitize_highlights_includes_tightness_reason():
     assert cleaned[0]["tightness_reason"] == "cut the walk-back-in, kept the punchline"
 
 
+def test_sanitize_highlights_clamps_format_clarity_score_above_range():
+    cleaned = _sanitize_highlights([_raw_highlight(format_clarity_score=150)], duration=100.0)
+    assert cleaned[0]["format_clarity_score"] == 100
+
+
+def test_sanitize_highlights_clamps_format_clarity_score_below_range():
+    cleaned = _sanitize_highlights([_raw_highlight(format_clarity_score=-20)], duration=100.0)
+    assert cleaned[0]["format_clarity_score"] == 0
+
+
+def test_sanitize_highlights_defaults_format_fields_when_missing():
+    raw = {"start_time": 1.0, "end_time": 5.0}
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["format_clarity_score"] == 0
+    assert cleaned[0]["format_reason"] == ""
+
+
+def test_sanitize_highlights_includes_format_reason():
+    raw = _raw_highlight(format_clarity_score=85, format_reason="single clean before/after beat")
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["format_clarity_score"] == 85
+    assert cleaned[0]["format_reason"] == "single clean before/after beat"
+
+
 def test_transcript_fingerprint_stable_for_identical_transcripts():
     t1 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi"}]}
     t2 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi"}]}

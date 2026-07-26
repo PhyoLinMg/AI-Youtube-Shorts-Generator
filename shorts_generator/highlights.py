@@ -311,6 +311,8 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
                 "cut_segments": cut_segments,
                 "reaction_type": reaction_type,
                 "tightness_reason": str(item.get("tightness_reason") or "").strip(),
+                "format_clarity_score": max(0, min(100, _coerce_int(item.get("format_clarity_score"), default=0))),
+                "format_reason": str(item.get("format_reason") or "").strip(),
             }
         )
 
