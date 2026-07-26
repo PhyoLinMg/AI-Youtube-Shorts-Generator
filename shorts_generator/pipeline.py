@@ -19,8 +19,10 @@ from typing import Dict, List, Optional
 from .clipper import _download_to, crop_highlights
 from .downloader import download_youtube
 from .highlights import call_muapi_llm, get_highlights_cached
+from .local.llm import call_openai_vision_llm
 from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_descriptions
 from .transcriber import transcribe
+from .visual_hook import call_muapi_vision_llm, score_visual_hooks
 
 
 def _run_local(
@@ -62,6 +64,11 @@ def _run_local(
 
     top = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)[:2 * num_clips]
     print(f"[pipeline/local] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
+
+    try:
+        top = score_visual_hooks(source_path, top, llm_fn=call_openai_vision_llm)
+    except Exception as e:
+        print(f"[pipeline/local] visual-hook scoring skipped: {e}", flush=True)
 
     shorts = crop_highlights_local(
         source_path,
@@ -144,6 +151,11 @@ def _run_api(
 
     top = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)[:2 * num_clips]
     print(f"[pipeline] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
+
+    try:
+        top = score_visual_hooks(paths.source_video, top, llm_fn=call_muapi_vision_llm)
+    except Exception as e:
+        print(f"[pipeline] visual-hook scoring skipped: {e}", flush=True)
 
     shorts = crop_highlights(
         source_url,

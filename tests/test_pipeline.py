@@ -203,6 +203,100 @@ def test_run_api_crops_double_num_clips_candidates(tmp_path, monkeypatch):
     assert len(top) == 4
 
 
+def test_run_api_calls_score_visual_hooks_before_crop(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
+
+    calls = []
+
+    def fake_score_visual_hooks(source_video_path, highlights, llm_fn):
+        calls.append((source_video_path, len(highlights)))
+        return highlights
+
+    monkeypatch.setattr(pipeline_module, "score_visual_hooks", fake_score_visual_hooks)
+    monkeypatch.setattr(pipeline_module, "crop_highlights", Mock(return_value=[]))
+
+    paths = _paths(tmp_path)
+    pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=1,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=paths,
+        word_highlight=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0] == (paths.source_video, 1)
+
+
+def test_run_api_visual_hook_failure_does_not_abort_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
+
+    def raising_score_visual_hooks(source_video_path, highlights, llm_fn):
+        raise RuntimeError("vision backend down")
+
+    monkeypatch.setattr(pipeline_module, "score_visual_hooks", raising_score_visual_hooks)
+    crop_mock = Mock(return_value=[{"clip_url": "https://hosted.example/Short-1.mp4"}])
+    monkeypatch.setattr(pipeline_module, "crop_highlights", crop_mock)
+
+    result = pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=1,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert result["mode"] == "api"
+    assert crop_mock.called  # pipeline continued past the failed visual-hook scoring
+
+
+def test_run_local_calls_score_visual_hooks_before_crop(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
+
+    calls = []
+
+    def fake_score_visual_hooks(source_video_path, highlights, llm_fn):
+        calls.append((source_video_path, len(highlights)))
+        return highlights
+
+    monkeypatch.setattr(pipeline_module, "score_visual_hooks", fake_score_visual_hooks)
+    monkeypatch.setattr(local_clipper_module, "crop_highlights_local", Mock(return_value=[]))
+
+    pipeline_module._run_local(
+        "https://youtube.example/x",
+        num_clips=1,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=False,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0] == ("/tmp/source.mp4", 1)
+
+
 def test_run_api_skips_local_copy_and_transcribe_when_cached(tmp_path, monkeypatch):
     paths = _paths(tmp_path)
     with open(paths.source_video, "wb") as f:
