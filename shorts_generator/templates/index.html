@@ -853,6 +853,30 @@
           appendLabeledText(card, "Format read", "reason", s.format_reason);
         }
 
+        if (typeof s.visual_hook_score === "number") {
+          const visualScore = Number(s.visual_hook_score) || 0;
+          const visualRow = document.createElement("div");
+          visualRow.className = "score-row";
+          const visualLabel = document.createElement("span");
+          visualLabel.textContent = "Visual hook";
+          visualRow.appendChild(visualLabel);
+          const visualMeter = document.createElement("div");
+          visualMeter.className = "meter";
+          const visualMeterFill = document.createElement("span");
+          visualMeterFill.style.width = visualScore + "%";
+          visualMeterFill.style.background = scoreColor(visualScore);
+          visualMeter.appendChild(visualMeterFill);
+          visualRow.appendChild(visualMeter);
+          const visualNum = document.createElement("span");
+          visualNum.textContent = visualScore;
+          visualRow.appendChild(visualNum);
+          card.appendChild(visualRow);
+        }
+
+        if (s.visual_hook_reason) {
+          appendLabeledText(card, "Visual read", "reason", s.visual_hook_reason);
+        }
+
         const videoFrame = document.createElement("div");
         videoFrame.className = "video-frame frame";
         const video = document.createElement("video");
