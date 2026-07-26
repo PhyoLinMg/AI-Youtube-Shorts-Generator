@@ -65,13 +65,15 @@ def test_parse_visual_hook_response_clamps_score_below_range():
 
 def test_score_visual_hooks_attaches_score_and_reason(synthetic_video):
     highlights = [{"title": "Clip A", "start_time": 1.0, "end_time": 3.0}]
+    captured = {}
 
     def stub_llm(prompt, image_paths):
-        assert len(image_paths) > 0
+        captured["image_paths"] = image_paths
         return '{"visual_hook_score": 88, "visual_hook_reason": "surprising opener"}'
 
     result = score_visual_hooks(synthetic_video, highlights, llm_fn=stub_llm)
 
+    assert len(captured["image_paths"]) > 0
     assert result[0]["visual_hook_score"] == 88
     assert result[0]["visual_hook_reason"] == "surprising opener"
     assert result[0]["title"] == "Clip A"  # original fields preserved
