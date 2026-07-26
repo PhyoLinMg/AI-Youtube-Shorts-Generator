@@ -66,13 +66,20 @@ def excise_cut_segments(
             for p in part_paths:
                 f.write(f"file '{p}'\n")
 
+        # Write the concat output inside tmp_dir (not directly to out_path)
+        # so that if this subprocess is killed or crashes partway (OOM,
+        # disk-full, hard kill), the partial file lands somewhere the
+        # existing `finally: shutil.rmtree(tmp_dir)` already cleans up,
+        # instead of leaving a truncated/corrupt file sitting at out_path
+        # where callers' crash-recovery scanners could pick it up.
+        tmp_output_path = os.path.join(tmp_dir, "concat_output.mp4")
         try:
             subprocess.run(
                 [
                     "ffmpeg", "-y", "-loglevel", "error",
                     "-f", "concat", "-safe", "0", "-i", concat_list_path,
                     "-c", "copy",
-                    out_path,
+                    tmp_output_path,
                 ],
                 check=True, capture_output=True, text=True,
             )
@@ -80,6 +87,12 @@ def excise_cut_segments(
             raise JumpCutError(f"ffmpeg concat of excised segments failed: {e.stderr}") from e
         except OSError as e:
             raise JumpCutError(f"ffmpeg concat of excised segments failed: {e}") from e
+
+        # Only now that the concat subprocess has fully succeeded do we
+        # atomically publish the result at out_path. os.replace is atomic
+        # on POSIX and Windows, so out_path either ends up with the full
+        # correct file or is untouched — never a partial write.
+        os.replace(tmp_output_path, out_path)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     return out_path

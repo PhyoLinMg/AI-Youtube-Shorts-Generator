@@ -89,3 +89,44 @@ def test_excise_cut_segments_wraps_ffmpeg_failure_in_jump_cut_error(tmp_path):
             envelope_start=0.0,
             out_path=out_path,
         )
+
+
+def test_excise_cut_segments_leaves_no_partial_file_when_concat_step_fails(tmp_path, synthetic_envelope):
+    """If the final concat ffmpeg subprocess is killed/crashes partway (OOM,
+    disk-full, hard kill), out_path must never be left with a
+    truncated/corrupt file — the temp output must be written elsewhere and
+    only published to out_path via an atomic rename after success."""
+    import os
+
+    out_path = str(tmp_path / "excised.mp4")
+    cut_segments = [
+        {"start_time": 100.0, "end_time": 102.0},
+        {"start_time": 105.0, "end_time": 108.0},
+    ]
+
+    real_run = subprocess.run
+
+    def failing_run(cmd, *args, **kwargs):
+        if "-f" in cmd and "concat" in cmd:
+            # Simulate the concat subprocess crashing/getting killed
+            # partway: leave a truncated file at wherever it was writing
+            # to (mimicking a real SIGKILL mid-write), then raise like
+            # subprocess.run(check=True) does on nonzero exit.
+            dest = cmd[-1]
+            with open(dest, "wb") as f:
+                f.write(b"not a real mp4, just a partial write")
+            raise subprocess.CalledProcessError(-9, cmd, output=b"", stderr=b"simulated kill")
+        return real_run(cmd, *args, **kwargs)
+
+    import shorts_generator.jump_cuts as jc
+
+    original = jc.subprocess.run
+    jc.subprocess.run = failing_run
+    try:
+        with pytest.raises(JumpCutError):
+            excise_cut_segments(synthetic_envelope, cut_segments, envelope_start=100.0, out_path=out_path)
+    finally:
+        jc.subprocess.run = original
+
+    assert not os.path.exists(out_path), "out_path must not contain a partial/truncated file after a failed concat step"
+    assert not os.path.exists(out_path + ".parts"), "scratch tmp_dir (and any temp output inside it) must be cleaned up"
