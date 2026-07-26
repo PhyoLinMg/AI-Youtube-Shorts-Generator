@@ -118,7 +118,7 @@ LONG_VIDEO_THRESHOLD = 1800     # chunk videos longer than 30 min
 CHUNK_OVERLAP_SECONDS = 60
 GPT_CALL_TIMEOUT_SECONDS = 300  # cap LLM polls at 5 min — a wedged call should fail fast
 MAX_HIGHLIGHT_API_ATTEMPTS = 3
-HIGHLIGHT_SCHEMA_VERSION = 2    # bump whenever the highlight dict shape changes,
+HIGHLIGHT_SCHEMA_VERSION = 3    # bump whenever the highlight dict shape changes,
                                 # so a stale on-disk cache (missing new fields)
                                 # is treated as a miss instead of silently reused
 
