@@ -90,6 +90,18 @@ def _chunk_segments(
 
     Returns clip-relative chunks with per-word timings:
     [{"start": float, "end": float, "text": str, "words": [...]}, ...]
+
+    The estimate path (no real per-word timestamps on the segment) clips
+    each word's own estimated window to [clip_start, clip_end] and rebuilds
+    text from only the surviving words -- this applies to every caller, not
+    just jump-cut clips, so a highlight's leading/trailing caption line can
+    read slightly differently than before cut_segments existed (words whose
+    estimated window falls entirely outside the window are now dropped
+    rather than shown with a compressed duration). API mode hits this path
+    for essentially all captions (MuAPI transcription never returns
+    per-word timestamps); local mode mostly avoids it via faster-whisper's
+    real word timestamps, except for any segment where that returns an
+    empty word list.
     """
     chunks: List[Dict] = []
     for seg in segments:
@@ -157,7 +169,17 @@ def _chunk_cut_segments(
     `transcript_segments` (so no chunk can ever straddle an excised gap by
     construction), then offset each span's chunks onto the concatenated
     output timeline by the cumulative duration of the *previously kept*
-    spans (not the excised gaps)."""
+    spans (not the excised gaps).
+
+    This offset uses each span's *nominal* requested duration
+    (`end_time - start_time`), while jump_cuts.excise_cut_segments's actual
+    re-encoded parts run up to roughly one video frame longer than nominal
+    each (encoder/keyframe rounding) — never shorter. So captions drift
+    slightly *early* relative to speech as a clip progresses, worst case
+    on the order of one frame per kept span (up to 6 spans). Accepted as a
+    minor, unmeasured-in-practice skew rather than threading measured
+    per-part durations back from jump_cuts through this offset math.
+    """
     chunks: List[Dict] = []
     offset = 0.0
     for seg in cut_segments:

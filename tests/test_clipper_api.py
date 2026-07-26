@@ -407,6 +407,68 @@ def test_multi_cut_segments_uses_segment_aware_captions(tmp_path, synthetic_clip
     assert captured["word_highlight"] is False
 
 
+def test_excision_failure_falls_back_to_plain_captions_on_unexcised_clip(tmp_path, synthetic_clip, monkeypatch):
+    """If excise_cut_segments blows up, crop_highlights must fall back to
+    the un-excised download (not fail the whole highlight), and captions
+    must route through plain burn_captions against that un-excised clip --
+    routing through burn_captions_segments here would place captions
+    against a timeline that was never actually excised. Mirrors local
+    mode's test_excision_failure_falls_back_to_plain_captions_on_unexcised_clip."""
+    def _raise(*args, **kwargs):
+        raise clipper.JumpCutError("boom")
+
+    monkeypatch.setattr(clipper, "excise_cut_segments", _raise)
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short_1.mp4")
+    monkeypatch.setattr(
+        clipper,
+        "_download_to",
+        lambda url, dest_path: shutil.copyfile(synthetic_clip, dest_path) or dest_path,
+    )
+
+    segments_calls = []
+    plain_calls = []
+
+    def _spy_segments(*args, **kwargs):
+        segments_calls.append((args, kwargs))
+        shutil.copyfile(args[0], args[3])
+        return args[3]
+
+    def _spy_plain(*args, **kwargs):
+        plain_calls.append((args, kwargs))
+        shutil.copyfile(args[0], args[4])
+        return args[4]
+
+    monkeypatch.setattr(clipper, "burn_captions_segments", _spy_segments)
+    monkeypatch.setattr(clipper, "burn_captions", _spy_plain)
+
+    highlight = {
+        "title": "Test Clip", "start_time": 0.0, "end_time": 4.0, "score": 90,
+        "cut_segments": [
+            {"start_time": 0.0, "end_time": 1.0},
+            {"start_time": 3.0, "end_time": 4.0},
+        ],
+    }
+
+    out_dir = str(tmp_path / "out")
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        [highlight],
+        aspect_ratio="9:16",
+        transcript_segments=_segments(),
+        hook_card=False,
+        out_dir=out_dir,
+    )
+
+    assert results[0]["excision_error"] == "boom"
+    assert "error" not in results[0]
+    assert results[0]["clip_url"] is not None
+    assert os.path.exists(results[0]["clip_url"])
+    duration = _probe_duration(results[0]["clip_url"])
+    assert abs(duration - 4.0) < 0.3  # un-excised download duration, untouched
+    assert len(plain_calls) == 1
+    assert len(segments_calls) == 0
+
+
 def test_caption_failure_preserves_a_successful_hook_card(tmp_path, synthetic_clip, monkeypatch):
     """A caption-burn failure must not discard an already-successful hook
     card -- fall back to the plain (uncaptioned) download and still
