@@ -7,6 +7,7 @@ from shorts_generator.visual_hook import (
     HOOK_FRAME_OFFSETS,
     _extract_hook_frames,
     _parse_visual_hook_response,
+    call_muapi_vision_llm,
     score_visual_hooks,
 )
 
@@ -108,3 +109,8 @@ def test_score_visual_hooks_one_failure_does_not_block_others(synthetic_video):
 
     assert "visual_hook_score" not in result[0]
     assert result[1]["visual_hook_score"] == 50
+
+
+def test_call_muapi_vision_llm_raises_until_muapi_has_a_vision_endpoint():
+    with pytest.raises(RuntimeError):
+        call_muapi_vision_llm("prompt", ["frame.jpg"])

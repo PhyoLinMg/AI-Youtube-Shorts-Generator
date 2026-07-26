@@ -60,6 +60,19 @@ def _parse_visual_hook_response(raw: str) -> Dict:
     return {"visual_hook_score": score, "visual_hook_reason": reason}
 
 
+def call_muapi_vision_llm(prompt: str, image_paths: List[str]) -> str:
+    """MuAPI vision backend for score_visual_hooks, used by --mode api.
+
+    MuAPI has no usable vision-capable endpoint as of this writing (see the
+    Task 1 spike in docs/superpowers/plans/2026-07-26-jail1-visual-hook.md).
+    This raises unconditionally so score_visual_hooks's per-highlight
+    try/except degrades api mode to "no visual hook score" rather than
+    blocking the pipeline. Replace this body with a real muapi.run(...)
+    call once MuAPI ships a vision-capable endpoint.
+    """
+    raise RuntimeError("no MuAPI vision endpoint available")
+
+
 def score_visual_hooks(
     source_video_path: str, highlights: List[Dict], llm_fn: VisionLLMFn,
 ) -> List[Dict]:
