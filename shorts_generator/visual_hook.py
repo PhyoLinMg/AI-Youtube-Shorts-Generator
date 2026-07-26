@@ -1,0 +1,86 @@
+"""Visual-hook scoring: does the opening frame(s) of a candidate highlight
+stop a scroll on their own, independent of text or audio -- the one gap in
+the already-shipped verbal/textual hook system (see hook_strength/hook_card
+in highlights.py/hook_card.py and
+docs/superpowers/specs/2026-07-26-three-jails-escape-design.md).
+
+Runs as a post-selection pass over the already-chosen `top` candidates in
+pipeline.py, using the local source video both modes already have on disk
+at that point. Results are informational only -- never written back into
+the highlights cache -- so a failed or unavailable vision backend degrades
+one highlight to "no score" rather than blocking the pipeline, exactly like
+highlights.detect_content_type already degrades on LLM failure.
+"""
+import json
+import re
+import subprocess
+from typing import Callable, Dict, List
+
+VisionLLMFn = Callable[[str, List[str]], str]
+
+HOOK_FRAME_OFFSETS = (0.0, 0.6)
+
+VISUAL_HOOK_PROMPT = """You are scoring the VISUAL hook of a short-form video clip -- does the very first frame or two, with NO audio and NO on-screen text, grab attention and make someone stop scrolling?
+
+Score 0-100:
+- High (80+): a striking, unusual, or immediately intriguing image on its own -- unexpected action, a visually surprising scene, strong composition.
+- Low (<30): a static talking-head frame, a blank/neutral background, nothing visually distinct from any other video.
+
+Respond ONLY with valid JSON: {"visual_hook_score": int, "visual_hook_reason": "one sentence"}"""
+
+
+def _extract_hook_frames(video_path: str, start_time: float, out_dir: str) -> List[str]:
+    """ffmpeg-extract one JPEG per HOOK_FRAME_OFFSETS timestamp, relative to
+    start_time. Returns the frames that were successfully extracted --
+    silently skips any offset ffmpeg can't produce (e.g. past the end of
+    the source video), never raises."""
+    paths = []
+    for i, offset in enumerate(HOOK_FRAME_OFFSETS):
+        frame_path = f"{out_dir}/hook_frame_{i}.jpg"
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-ss", f"{start_time + offset:.3f}",
+            "-i", video_path,
+            "-frames:v", "1", "-q:v", "2",
+            frame_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            paths.append(frame_path)
+    return paths
+
+
+def _parse_visual_hook_response(raw: str) -> Dict:
+    text = raw.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    data = json.loads(text)
+    score = max(0, min(100, int(float(data.get("visual_hook_score", 0)))))
+    reason = str(data.get("visual_hook_reason") or "").strip()
+    return {"visual_hook_score": score, "visual_hook_reason": reason}
+
+
+def score_visual_hooks(
+    source_video_path: str, highlights: List[Dict], llm_fn: VisionLLMFn,
+) -> List[Dict]:
+    """Attach visual_hook_score/visual_hook_reason to each highlight.
+
+    Never raises: any per-highlight failure (frame extraction, vision call,
+    bad JSON) is logged and that highlight is returned unmodified -- one bad
+    candidate must never abort the rest of the pipeline."""
+    import tempfile
+
+    out = []
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for i, h in enumerate(highlights, 1):
+            entry = dict(h)
+            try:
+                frame_paths = _extract_hook_frames(source_video_path, float(h["start_time"]), tmp_dir)
+                if not frame_paths:
+                    raise RuntimeError("no frames extracted")
+                raw = llm_fn(VISUAL_HOOK_PROMPT, frame_paths)
+                entry.update(_parse_visual_hook_response(raw))
+            except Exception as e:
+                print(f"[visual_hook] {i} skipped: {e}", flush=True)
+            out.append(entry)
+    return out
