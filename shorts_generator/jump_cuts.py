@@ -92,7 +92,10 @@ def excise_cut_segments(
         # atomically publish the result at out_path. os.replace is atomic
         # on POSIX and Windows, so out_path either ends up with the full
         # correct file or is untouched — never a partial write.
-        os.replace(tmp_output_path, out_path)
+        try:
+            os.replace(tmp_output_path, out_path)
+        except OSError as e:
+            raise JumpCutError(f"publishing excised output to {out_path} failed: {e}") from e
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     return out_path
