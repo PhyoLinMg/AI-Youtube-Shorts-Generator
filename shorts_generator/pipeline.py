@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 
 from .clipper import _download_to, crop_highlights
 from .downloader import download_youtube
-from .highlights import call_muapi_llm, get_highlights_cached
+from .highlights import call_muapi_llm, get_highlights_cached, select_final_highlights
 from .local.llm import call_openai_vision_llm
 from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_descriptions
 from .transcriber import transcribe
@@ -62,7 +62,7 @@ def _run_local(
     if not all_highlights:
         raise RuntimeError("Highlight generator returned zero clips.")
 
-    top = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)[:2 * num_clips]
+    top = select_final_highlights(all_highlights, num_clips)
     print(f"[pipeline/local] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
 
     try:
@@ -149,7 +149,7 @@ def _run_api(
     if not all_highlights:
         raise RuntimeError("Highlight generator returned zero clips.")
 
-    top = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)[:2 * num_clips]
+    top = select_final_highlights(all_highlights, num_clips)
     print(f"[pipeline] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
 
     try:

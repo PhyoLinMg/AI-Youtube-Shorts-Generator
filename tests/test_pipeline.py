@@ -78,7 +78,10 @@ def test_run_local_threads_captions_params(tmp_path, monkeypatch):
     assert kwargs["transcript_segments"] == _fake_transcript()["segments"]
 
 
-def test_run_local_crops_double_num_clips_candidates(tmp_path, monkeypatch):
+def test_run_local_crops_num_clips_candidates_via_claim_specificity_gate(tmp_path, monkeypatch):
+    # _fake_highlights_result_many gives no candidate a claim_specificity
+    # field, so every candidate is a non-passer (defaults to 0) and the
+    # gate falls back to plain top-num_clips-by-score.
     monkeypatch.setattr(
         local_downloader_module, "download_youtube_local",
         lambda url, target_path, fmt: "/tmp/source.mp4",
@@ -106,7 +109,7 @@ def test_run_local_crops_double_num_clips_candidates(tmp_path, monkeypatch):
 
     args, _ = crop_mock.call_args
     top = args[1]
-    assert len(top) == 4
+    assert len(top) == 2
 
 
 def test_run_local_skips_download_when_source_already_exists(tmp_path, monkeypatch):
@@ -174,7 +177,9 @@ def test_run_api_threads_captions_params(tmp_path, monkeypatch):
     assert kwargs["transcript_segments"] == _fake_transcript()["segments"]
 
 
-def test_run_api_crops_double_num_clips_candidates(tmp_path, monkeypatch):
+def test_run_api_crops_num_clips_candidates_via_claim_specificity_gate(tmp_path, monkeypatch):
+    # Same rationale as the local-mode version above: no candidate has a
+    # claim_specificity field, so the gate falls back to top-num_clips-by-score.
     monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
     monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
     monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
@@ -200,7 +205,46 @@ def test_run_api_crops_double_num_clips_candidates(tmp_path, monkeypatch):
 
     args, _ = crop_mock.call_args
     top = args[1]
-    assert len(top) == 4
+    assert len(top) == 2
+
+
+def _fake_highlights_result_mixed_specificity():
+    return {
+        "highlights": [
+            {"start_time": 0.0, "end_time": 3.0, "score": 99, "claim_specificity": 30, "title": "High score, vague"},
+            {"start_time": 10.0, "end_time": 13.0, "score": 70, "claim_specificity": 85, "title": "Lower score, specific"},
+        ]
+    }
+
+
+def test_run_api_gate_prefers_claim_specificity_over_raw_score(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_mixed_specificity(),
+    )
+
+    crop_mock = Mock(return_value=[])
+    monkeypatch.setattr(pipeline_module, "crop_highlights", crop_mock)
+
+    pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=1,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    args, _ = crop_mock.call_args
+    top = args[1]
+    assert len(top) == 1
+    assert top[0]["title"] == "Lower score, specific"
 
 
 def test_run_api_calls_score_visual_hooks_before_crop(tmp_path, monkeypatch):
