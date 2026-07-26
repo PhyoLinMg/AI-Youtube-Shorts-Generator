@@ -732,6 +732,388 @@ git commit -m "feat: show claim-specificity score on short cards"
 
 ---
 
+### Task 5: Crop-failure buffer so one failed crop doesn't under-deliver
+
+**Why:** Task 3 changed the pipeline from cropping `2 * num_clips` candidates (built-in slack against a crop failure) to cropping exactly `min(num_clips, len(all_highlights))`. That was the intended design change, but it has a side effect flagged in final review: a single crop failure (MuAPI `autocrop` erroring, or the local ffmpeg crop raising) now directly reduces the number of successful shorts below what the user asked for, with no spare candidate to fall back to. This task restores a small safety margin without reverting to the old 2x cost.
+
+**Files:**
+- Modify: `shorts_generator/pipeline.py`
+- Test: `tests/test_pipeline.py`
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/test_pipeline.py`, update the three tests Task 3 touched so their `len(top)` assertions account for the new buffer instead of a bare `num_clips`. Find:
+
+```python
+def test_run_local_crops_num_clips_candidates_via_claim_specificity_gate(tmp_path, monkeypatch):
+```
+
+...through its final two lines:
+
+```python
+    args, _ = crop_mock.call_args
+    top = args[1]
+    assert len(top) == 2
+```
+
+Replace only the final assertion with:
+
+```python
+    args, _ = crop_mock.call_args
+    top = args[1]
+    assert len(top) == 2 + pipeline_module.CROP_FAILURE_BUFFER
+```
+
+Do the identical replacement (`== 2` → `== 2 + pipeline_module.CROP_FAILURE_BUFFER`) in `test_run_api_crops_num_clips_candidates_via_claim_specificity_gate`.
+
+In `test_run_api_gate_prefers_claim_specificity_over_raw_score`, find:
+
+```python
+    args, _ = crop_mock.call_args
+    top = args[1]
+    assert len(top) == 1
+    assert top[0]["title"] == "Lower score, specific"
+```
+
+Replace with:
+
+```python
+    args, _ = crop_mock.call_args
+    top = args[1]
+    assert len(top) == 1 + pipeline_module.CROP_FAILURE_BUFFER
+    assert top[0]["title"] == "Lower score, specific"
+```
+
+(The buffer means both candidates in this test's 2-candidate fixture now get cropped — the assertion on `top[0]` still proves the gate ranks the specific-but-lower-score clip first, which is the point of this test.)
+
+Then add four new tests to the end of `tests/test_pipeline.py`:
+
+```python
+def test_run_api_trims_extra_successful_crops_to_num_clips(tmp_path, monkeypatch):
+    # Every buffered candidate crops successfully -- the pipeline must trim
+    # back to exactly num_clips rather than over-delivering.
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    def all_succeed_crop(source_url, top, **kwargs):
+        return [{**h, "clip_url": f"https://hosted.example/{h['title']}.mp4"} for h in top]
+
+    monkeypatch.setattr(pipeline_module, "crop_highlights", all_succeed_crop)
+
+    result = pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert len(result["shorts"]) == 2
+    assert all(s.get("clip_url") for s in result["shorts"])
+
+
+def test_run_api_buffer_covers_a_single_crop_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    def flaky_crop(source_url, top, **kwargs):
+        out = []
+        for i, h in enumerate(top):
+            if i == 0:
+                out.append({**h, "clip_url": None, "error": "autocrop failed"})
+            else:
+                out.append({**h, "clip_url": f"https://hosted.example/{h['title']}.mp4"})
+        return out
+
+    monkeypatch.setattr(pipeline_module, "crop_highlights", flaky_crop)
+
+    result = pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert len(result["shorts"]) == 2
+    assert all(s.get("clip_url") for s in result["shorts"])
+
+
+def test_run_api_returns_available_successes_when_buffer_insufficient(tmp_path, monkeypatch):
+    # More failures than the buffer can cover -- the shortfall must stay
+    # visible (as "Failed" cards downstream in the webapp) rather than being
+    # silently hidden.
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    def mostly_failing_crop(source_url, top, **kwargs):
+        out = []
+        for i, h in enumerate(top):
+            if i < len(top) - 1:
+                out.append({**h, "clip_url": None, "error": "autocrop failed"})
+            else:
+                out.append({**h, "clip_url": f"https://hosted.example/{h['title']}.mp4"})
+        return out
+
+    monkeypatch.setattr(pipeline_module, "crop_highlights", mostly_failing_crop)
+
+    result = pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert len(result["shorts"]) == 2 + pipeline_module.CROP_FAILURE_BUFFER
+    assert sum(1 for s in result["shorts"] if s.get("clip_url")) == 1
+
+
+def test_run_local_buffer_covers_a_single_crop_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    def flaky_crop_local(source_path, top, **kwargs):
+        out = []
+        for i, h in enumerate(top):
+            if i == 0:
+                out.append({**h, "clip_url": None, "error": "crop failed"})
+            else:
+                out.append({**h, "clip_url": f"/tmp/out/{h['title']}.mp4"})
+        return out
+
+    monkeypatch.setattr(local_clipper_module, "crop_highlights_local", flaky_crop_local)
+
+    result = pipeline_module._run_local(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=False,
+        caption_fade_duration=0.3,
+        paths=_paths(tmp_path),
+        word_highlight=True,
+    )
+
+    assert len(result["shorts"]) == 2
+    assert all(s.get("clip_url") for s in result["shorts"])
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_pipeline.py -v`
+Expected: FAIL — the three updated assertions fail with `assert 2 == 3` (or `1 == 2`), since `pipeline_module.CROP_FAILURE_BUFFER` doesn't exist yet (`AttributeError`). The four new tests also fail (either the same `AttributeError`, or — once the constant exists but isn't wired in — wrong `len(result["shorts"])`).
+
+- [ ] **Step 3: Add the buffer constant and a shared trim helper**
+
+In `shorts_generator/pipeline.py`, find:
+
+```python
+from .clipper import _download_to, crop_highlights
+from .downloader import download_youtube
+from .highlights import call_muapi_llm, get_highlights_cached, select_final_highlights
+from .local.llm import call_openai_vision_llm
+from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_descriptions
+from .transcriber import transcribe
+from .visual_hook import call_muapi_vision_llm, score_visual_hooks
+
+
+def _run_local(
+```
+
+Replace with:
+
+```python
+from .clipper import _download_to, crop_highlights
+from .downloader import download_youtube
+from .highlights import call_muapi_llm, get_highlights_cached, select_final_highlights
+from .local.llm import call_openai_vision_llm
+from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_descriptions
+from .transcriber import transcribe
+from .visual_hook import call_muapi_vision_llm, score_visual_hooks
+
+CROP_FAILURE_BUFFER = 1  # extra candidates cropped beyond num_clips so a
+                         # single crop failure (MuAPI autocrop erroring, or
+                         # the local ffmpeg crop raising) doesn't silently
+                         # under-deliver fewer than num_clips shorts.
+
+
+def _trim_to_num_clips(shorts: List[Dict], num_clips: int) -> List[Dict]:
+    """If enough crops succeeded, drop the extra buffer successes so output
+    matches num_clips exactly. If not enough succeeded even with the
+    buffer, return every entry as-is (including failures) so the shortfall
+    stays visible as "Failed" cards downstream, instead of being hidden."""
+    successes = [s for s in shorts if s.get("clip_url")]
+    if len(successes) >= num_clips:
+        return successes[:num_clips]
+    return shorts
+
+
+def _run_local(
+```
+
+- [ ] **Step 4: Use the buffer when selecting candidates, and trim after cropping**
+
+In `_run_local`, find:
+
+```python
+    top = select_final_highlights(all_highlights, num_clips)
+    print(f"[pipeline/local] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
+```
+
+Replace with:
+
+```python
+    top = select_final_highlights(all_highlights, num_clips + CROP_FAILURE_BUFFER)
+    print(f"[pipeline/local] cropping {len(top)} of {len(all_highlights)} candidates ({num_clips} requested + {CROP_FAILURE_BUFFER} failure buffer)", flush=True)
+```
+
+Then find, in the same function:
+
+```python
+    shorts = crop_highlights_local(
+        source_path,
+        top,
+        aspect_ratio=aspect_ratio,
+        out_dir=paths.shorts_dir,
+        transcript_segments=transcript["segments"],
+        captions=captions,
+        caption_fade_duration=caption_fade_duration,
+        word_highlight=word_highlight,
+        framing=framing,
+        hook_card=hook_card,
+    )
+
+    return {
+        "mode": "local",
+```
+
+Replace with:
+
+```python
+    shorts = crop_highlights_local(
+        source_path,
+        top,
+        aspect_ratio=aspect_ratio,
+        out_dir=paths.shorts_dir,
+        transcript_segments=transcript["segments"],
+        captions=captions,
+        caption_fade_duration=caption_fade_duration,
+        word_highlight=word_highlight,
+        framing=framing,
+        hook_card=hook_card,
+    )
+    shorts = _trim_to_num_clips(shorts, num_clips)
+
+    return {
+        "mode": "local",
+```
+
+In `_run_api`, find:
+
+```python
+    top = select_final_highlights(all_highlights, num_clips)
+    print(f"[pipeline] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
+```
+
+Replace with:
+
+```python
+    top = select_final_highlights(all_highlights, num_clips + CROP_FAILURE_BUFFER)
+    print(f"[pipeline] cropping {len(top)} of {len(all_highlights)} candidates ({num_clips} requested + {CROP_FAILURE_BUFFER} failure buffer)", flush=True)
+```
+
+Then find, in the same function:
+
+```python
+    shorts = crop_highlights(
+        source_url,
+        top,
+        aspect_ratio=aspect_ratio,
+        transcript_segments=transcript["segments"],
+        captions=captions,
+        caption_fade_duration=caption_fade_duration,
+        word_highlight=word_highlight,
+        hook_card=hook_card,
+        out_dir=paths.shorts_dir,
+    )
+
+    return {
+        "mode": "api",
+```
+
+Replace with:
+
+```python
+    shorts = crop_highlights(
+        source_url,
+        top,
+        aspect_ratio=aspect_ratio,
+        transcript_segments=transcript["segments"],
+        captions=captions,
+        caption_fade_duration=caption_fade_duration,
+        word_highlight=word_highlight,
+        hook_card=hook_card,
+        out_dir=paths.shorts_dir,
+    )
+    shorts = _trim_to_num_clips(shorts, num_clips)
+
+    return {
+        "mode": "api",
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `python -m pytest tests/test_pipeline.py -v`
+Expected: PASS — all tests including the 3 updated and 4 new ones, zero regressions.
+
+Run: `python -m pytest tests/ -q`
+Expected: PASS, full suite, zero regressions.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add shorts_generator/pipeline.py tests/test_pipeline.py
+git commit -m "fix: crop a small buffer beyond num_clips so one failure doesn't under-deliver"
+```
+
+---
+
 ## Definition of done
 
 - [ ] `python -m pytest tests/ -q` passes with zero regressions.

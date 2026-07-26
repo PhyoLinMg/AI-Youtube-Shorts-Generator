@@ -2,6 +2,7 @@ import json
 import os
 
 from shorts_generator.highlights import (
+    CLAIM_SPECIFICITY_THRESHOLD,
     HIGHLIGHT_SCHEMA_VERSION,
     _sanitize_highlights,
     _transcript_fingerprint,
@@ -9,6 +10,7 @@ from shorts_generator.highlights import (
     dedupe_highlights,
     get_highlights,
     get_highlights_cached,
+    select_final_highlights,
 )
 
 
@@ -175,6 +177,30 @@ def test_sanitize_highlights_includes_format_reason():
     cleaned = _sanitize_highlights([raw], duration=100.0)
     assert cleaned[0]["format_clarity_score"] == 85
     assert cleaned[0]["format_reason"] == "single clean before/after beat"
+
+
+def test_sanitize_highlights_clamps_claim_specificity_above_range():
+    cleaned = _sanitize_highlights([_raw_highlight(claim_specificity=150)], duration=100.0)
+    assert cleaned[0]["claim_specificity"] == 100
+
+
+def test_sanitize_highlights_clamps_claim_specificity_below_range():
+    cleaned = _sanitize_highlights([_raw_highlight(claim_specificity=-20)], duration=100.0)
+    assert cleaned[0]["claim_specificity"] == 0
+
+
+def test_sanitize_highlights_defaults_claim_specificity_fields_when_missing():
+    raw = {"start_time": 1.0, "end_time": 5.0}
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["claim_specificity"] == 0
+    assert cleaned[0]["claim_specificity_reason"] == ""
+
+
+def test_sanitize_highlights_includes_claim_specificity_reason():
+    raw = _raw_highlight(claim_specificity=88, claim_specificity_reason="names a specific dollar figure")
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["claim_specificity"] == 88
+    assert cleaned[0]["claim_specificity_reason"] == "names a specific dollar figure"
 
 
 def test_transcript_fingerprint_stable_for_identical_transcripts():
@@ -406,3 +432,52 @@ def test_call_highlight_api_retry_log_surfaces_real_error(capsys):
     out = capsys.readouterr().out
     assert "request timed out after 180s" in out
     assert "invalid model output on attempt" not in out
+
+
+def test_select_final_highlights_keeps_top_passers_by_score():
+    highlights = [
+        {"title": "A", "score": 90, "claim_specificity": 85},
+        {"title": "B", "score": 95, "claim_specificity": 82},
+        {"title": "C", "score": 99, "claim_specificity": 50},  # highest score, fails the gate
+    ]
+    result = select_final_highlights(highlights, num_clips=2)
+    assert [h["title"] for h in result] == ["B", "A"]
+
+
+def test_select_final_highlights_backfills_when_too_few_passers():
+    highlights = [
+        {"title": "A", "score": 90, "claim_specificity": 85},  # passes
+        {"title": "B", "score": 80, "claim_specificity": 40},  # fails
+        {"title": "C", "score": 70, "claim_specificity": 30},  # fails
+    ]
+    result = select_final_highlights(highlights, num_clips=2)
+    assert [h["title"] for h in result] == ["A", "B"]
+
+
+def test_select_final_highlights_zero_passers_matches_score_only_ranking():
+    highlights = [
+        {"title": "A", "score": 90, "claim_specificity": 10},
+        {"title": "B", "score": 95, "claim_specificity": 20},
+        {"title": "C", "score": 70, "claim_specificity": 5},
+    ]
+    result = select_final_highlights(highlights, num_clips=2)
+    assert [h["title"] for h in result] == ["B", "A"]
+
+
+def test_select_final_highlights_returns_all_when_fewer_than_num_clips():
+    highlights = [{"title": "A", "score": 90, "claim_specificity": 85}]
+    result = select_final_highlights(highlights, num_clips=3)
+    assert [h["title"] for h in result] == ["A"]
+
+
+def test_select_final_highlights_missing_claim_specificity_defaults_to_non_passer():
+    highlights = [
+        {"title": "A", "score": 90},  # no claim_specificity key at all
+        {"title": "B", "score": 80, "claim_specificity": 85},
+    ]
+    result = select_final_highlights(highlights, num_clips=2)
+    assert [h["title"] for h in result] == ["B", "A"]
+
+
+def test_claim_specificity_threshold_is_80():
+    assert CLAIM_SPECIFICITY_THRESHOLD == 80

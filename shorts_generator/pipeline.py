@@ -18,11 +18,39 @@ from typing import Dict, List, Optional
 
 from .clipper import _download_to, crop_highlights
 from .downloader import download_youtube
-from .highlights import call_muapi_llm, get_highlights_cached
+from .highlights import call_muapi_llm, get_highlights_cached, select_final_highlights
 from .local.llm import call_openai_vision_llm
 from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_descriptions
 from .transcriber import transcribe
 from .visual_hook import call_muapi_vision_llm, score_visual_hooks
+
+CROP_FAILURE_BUFFER = 1  # extra candidates cropped beyond num_clips so a
+                         # single crop failure (MuAPI autocrop erroring, or
+                         # the local ffmpeg crop raising) doesn't silently
+                         # under-deliver fewer than num_clips shorts.
+
+
+def _trim_to_num_clips(shorts: List[Dict], num_clips: int) -> List[Dict]:
+    """If enough crops succeeded, drop the extra buffer successes -- deleting
+    their rendered local files so a trimmed-away buffer clip doesn't linger
+    on disk indefinitely -- so output matches num_clips exactly. If not
+    enough succeeded even with the buffer, return every entry as-is
+    (including failures) so the shortfall stays visible as "Failed" cards
+    downstream, instead of being hidden."""
+    successes = [s for s in shorts if s.get("clip_url")]
+    if len(successes) < num_clips:
+        return shorts
+
+    kept = successes[:num_clips]
+    dropped = successes[num_clips:]
+    for s in dropped:
+        clip_path = s.get("clip_url")
+        if clip_path and os.path.isfile(clip_path):
+            try:
+                os.remove(clip_path)
+            except OSError as e:
+                print(f"[pipeline] could not remove trimmed buffer clip {clip_path}: {e}", flush=True)
+    return kept
 
 
 def _run_local(
@@ -62,8 +90,8 @@ def _run_local(
     if not all_highlights:
         raise RuntimeError("Highlight generator returned zero clips.")
 
-    top = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)[:2 * num_clips]
-    print(f"[pipeline/local] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
+    top = select_final_highlights(all_highlights, num_clips + CROP_FAILURE_BUFFER)
+    print(f"[pipeline/local] cropping {len(top)} of {len(all_highlights)} candidates ({num_clips} requested + {CROP_FAILURE_BUFFER} failure buffer)", flush=True)
 
     try:
         top = score_visual_hooks(source_path, top, llm_fn=call_openai_vision_llm)
@@ -82,6 +110,7 @@ def _run_local(
         framing=framing,
         hook_card=hook_card,
     )
+    shorts = _trim_to_num_clips(shorts, num_clips)
 
     return {
         "mode": "local",
@@ -149,8 +178,8 @@ def _run_api(
     if not all_highlights:
         raise RuntimeError("Highlight generator returned zero clips.")
 
-    top = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)[:2 * num_clips]
-    print(f"[pipeline] cropping {len(top)} of {len(all_highlights)} candidates", flush=True)
+    top = select_final_highlights(all_highlights, num_clips + CROP_FAILURE_BUFFER)
+    print(f"[pipeline] cropping {len(top)} of {len(all_highlights)} candidates ({num_clips} requested + {CROP_FAILURE_BUFFER} failure buffer)", flush=True)
 
     try:
         top = score_visual_hooks(paths.source_video, top, llm_fn=call_muapi_vision_llm)
@@ -168,6 +197,7 @@ def _run_api(
         hook_card=hook_card,
         out_dir=paths.shorts_dir,
     )
+    shorts = _trim_to_num_clips(shorts, num_clips)
 
     return {
         "mode": "api",
