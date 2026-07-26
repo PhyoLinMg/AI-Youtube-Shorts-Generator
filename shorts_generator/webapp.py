@@ -89,15 +89,52 @@ def _clip_display_url(shorts_dir: Optional[str], clip_url: Optional[str]) -> Opt
     return f"/download/{os.path.basename(clip_url)}"
 
 
+def _clip_filename_for_delete(clip_url: Optional[str]) -> Optional[str]:
+    """The bare filename a delete-clip request should target, or None when
+    there's no local file to delete (no clip, or a remote-hosted URL)."""
+    if not clip_url or clip_url.startswith("http://") or clip_url.startswith("https://"):
+        return None
+    return os.path.basename(clip_url)
+
+
+def _clip_file_exists(shorts_dir: Optional[str], clip_url: Optional[str]) -> bool:
+    """Whether a local clip_url still has a backing file. Remote URLs are
+    always treated as existing — we have no way to check them here, and the
+    pre-delete-clip behavior never checked them either."""
+    if not clip_url:
+        return False
+    if clip_url.startswith("http://") or clip_url.startswith("https://"):
+        return True
+    if not shorts_dir:
+        return False
+    target = _safe_join(shorts_dir, os.path.basename(clip_url))
+    return bool(target and os.path.isfile(target))
+
+
 def _serialize_result(result: dict, shorts_dir: Optional[str]) -> dict:
     # Only "shorts" is ever rendered by the dashboard — the full pipeline
     # result also carries the whole transcript and every highlight candidate,
     # which /status would otherwise re-serialize and re-send on every poll.
-    shorts = [
-        {**s, "download_url": _clip_display_url(shorts_dir, s.get("clip_url"))}
-        for s in result.get("shorts", [])
-    ]
+    shorts = []
+    for s in result.get("shorts", []):
+        clip_url = s.get("clip_url")
+        if clip_url and not _clip_file_exists(shorts_dir, clip_url):
+            # Clip was generated but its file has since been deleted (e.g.
+            # via the per-clip delete button) — drop it instead of
+            # re-rendering it as a "Failed" card, which it isn't.
+            continue
+        shorts.append({
+            **s,
+            "download_url": _clip_display_url(shorts_dir, clip_url),
+            "clip_filename": _clip_filename_for_delete(clip_url),
+        })
     return {"shorts": shorts}
+
+
+def _run_name_from_shorts_dir(shorts_dir: Optional[str]) -> Optional[str]:
+    if not shorts_dir:
+        return None
+    return os.path.basename(os.path.dirname(shorts_dir))
 
 
 def _safe_join(base_dir: str, name: str) -> Optional[str]:
@@ -177,6 +214,7 @@ def status():
         "log": log_text,
         "offset": new_offset,
         "result": _serialize_result(result, shorts_dir) if result else None,
+        "run_name": _run_name_from_shorts_dir(shorts_dir) if result else None,
         "error": error,
     })
 
@@ -246,10 +284,18 @@ def history_shorts(name):
         except (OSError, json.JSONDecodeError):
             return jsonify({"error": "could not read result.json"}), 500
         shorts_source = result.get("shorts", [])
-    shorts = [
-        {**s, "download_url": _history_clip_display_url(name, shorts_dir, s.get("clip_url"))}
-        for s in shorts_source
-    ]
+    shorts = []
+    for s in shorts_source:
+        clip_url = s.get("clip_url")
+        if clip_url and not _clip_file_exists(shorts_dir, clip_url):
+            # Clip was generated but its file has since been deleted — drop
+            # it instead of re-rendering it as a "Failed" card, which it isn't.
+            continue
+        shorts.append({
+            **s,
+            "download_url": _history_clip_display_url(name, shorts_dir, clip_url),
+            "clip_filename": _clip_filename_for_delete(clip_url),
+        })
     return jsonify({"shorts": shorts})
 
 
@@ -323,4 +369,28 @@ def delete_history_shorts(name):
     except OSError:
         # `root` itself vanished between the isdir() check above and here —
         # treat it the same as "not found" rather than 500ing.
+        return jsonify({"error": "run not found"}), 404
+
+
+@app.route("/history/<name>/shorts/<filename>/delete", methods=["POST"])
+def delete_history_clip(name, filename):
+    """Delete a single clip file. Shared by both the History tab and the
+    just-finished results grid — a live run's shorts_dir is `LOCAL_OUTPUT_DIR
+    /<name>/Shorts`, the same tree addressed by every /history/<name>/...
+    route, so one endpoint covers both views."""
+    root, error = _resolve_history_run(name)
+    if error:
+        return error
+    shorts_dir = os.path.join(root, "Shorts")
+    target = _safe_join(shorts_dir, filename)
+    if not target:
+        return jsonify({"error": "invalid filename"}), 400
+    try:
+        os.remove(target)
+    except FileNotFoundError:
+        pass  # already gone — deleting is idempotent
+    try:
+        return jsonify(asdict(summarize_run(name, root)))
+    except OSError:
+        # `root` itself vanished between the isdir() check above and here.
         return jsonify({"error": "run not found"}), 404

@@ -128,6 +128,7 @@ def test_status_tails_the_progress_log_from_an_offset(client, tmp_path):
 
 
 def test_status_serializes_local_clip_as_download_link(client, tmp_path):
+    (tmp_path / "Short-01.mp4").write_bytes(b"clip-bytes")
     webapp.job.status = "done"
     webapp.job.shorts_dir = str(tmp_path)
     webapp.job.result = {
@@ -140,6 +141,7 @@ def test_status_serializes_local_clip_as_download_link(client, tmp_path):
     resp = client.get("/status?offset=0")
     shorts = resp.get_json()["result"]["shorts"]
     assert shorts[0]["download_url"] == "/download/Short-01.mp4"
+    assert shorts[0]["clip_filename"] == "Short-01.mp4"
     assert shorts[1]["download_url"] is None
     assert shorts[1]["error"] == "boom"
 
@@ -156,6 +158,7 @@ def test_status_serializes_hosted_clip_url_unchanged(client, tmp_path):
     resp = client.get("/status?offset=0")
     shorts = resp.get_json()["result"]["shorts"]
     assert shorts[0]["download_url"] == "https://hosted.example/Short-1.mp4"
+    assert shorts[0]["clip_filename"] is None
 
 
 def test_status_passes_through_hook_strength_fields_unmodified(client, tmp_path):
@@ -163,6 +166,7 @@ def test_status_passes_through_hook_strength_fields_unmodified(client, tmp_path)
     signal added to every highlight dict — /status must not filter them out,
     since it builds each entry via a full `{**s, ...}` spread. This guards
     against a future refactor accidentally introducing a field whitelist."""
+    (tmp_path / "Short-01.mp4").write_bytes(b"clip-bytes")
     webapp.job.status = "done"
     webapp.job.shorts_dir = str(tmp_path)
     webapp.job.result = {
@@ -183,6 +187,41 @@ def test_status_passes_through_hook_strength_fields_unmodified(client, tmp_path)
     assert shorts[0]["hook_strength"] == 73
     assert shorts[0]["hook_self_contained"] is True
     assert shorts[0]["hook_reason"] == "Opens mid-sentence, needs the prior beat to land."
+
+
+def test_status_includes_run_name_derived_from_shorts_dir(client, tmp_path):
+    (tmp_path / "Video_A" / "Shorts").mkdir(parents=True)
+    (tmp_path / "Video_A" / "Shorts" / "Short-01.mp4").write_bytes(b"clip-bytes")
+    webapp.job.status = "done"
+    webapp.job.shorts_dir = str(tmp_path / "Video_A" / "Shorts")
+    webapp.job.result = {"shorts": []}
+
+    resp = client.get("/status?offset=0")
+    assert resp.get_json()["run_name"] == "Video_A"
+
+
+def test_status_run_name_is_none_without_a_result(client):
+    resp = client.get("/status?offset=0")
+    assert resp.get_json()["run_name"] is None
+
+
+def test_status_drops_a_clip_whose_file_was_deleted_since_generation(client, tmp_path):
+    """A clip that existed at generation time but whose file is gone now
+    (e.g. deleted via the per-clip delete button) should disappear from the
+    list, not be re-rendered as a "Failed" card."""
+    webapp.job.status = "done"
+    webapp.job.shorts_dir = str(tmp_path)
+    webapp.job.result = {
+        "shorts": [
+            {"title": "Deleted", "score": 50, "clip_url": str(tmp_path / "Gone.mp4")},
+            {"title": "Never made it", "score": 10, "clip_url": None, "error": "boom"},
+        ]
+    }
+
+    resp = client.get("/status?offset=0")
+    shorts = resp.get_json()["result"]["shorts"]
+    assert len(shorts) == 1
+    assert shorts[0]["title"] == "Never made it"
 
 
 def test_safe_join_allows_files_inside_shorts_dir(tmp_path):
@@ -528,3 +567,111 @@ def test_history_shorts_404s_for_unknown_run(client, monkeypatch, tmp_path):
     monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
     resp = client.get("/history/does-not-exist/shorts")
     assert resp.status_code == 404
+
+
+def test_history_shorts_includes_clip_filename_for_local_clips(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "My_Clip.mp4").write_bytes(b"clip-bytes")
+    (root / "result.json").write_text(
+        '{"shorts": [{"clip_url": "My_Clip.mp4", "title": "My Clip"}]}'
+    )
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.get("/history/Video_A/shorts")
+    shorts = resp.get_json()["shorts"]
+    assert shorts[0]["clip_filename"] == "My_Clip.mp4"
+
+
+def test_history_shorts_drops_a_clip_whose_file_was_deleted_since_generation(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (root / "result.json").write_text(json.dumps({
+        "shorts": [
+            {"clip_url": "Gone.mp4", "title": "Deleted"},
+            {"clip_url": None, "title": "Never made it", "error": "boom"},
+        ]
+    }))
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.get("/history/Video_A/shorts")
+    shorts = resp.get_json()["shorts"]
+    assert len(shorts) == 1
+    assert shorts[0]["title"] == "Never made it"
+
+
+def test_delete_clip_removes_the_file_and_returns_updated_summary(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "Short-01.mp4").write_bytes(b"clip-one")
+    (shorts_dir / "Short-02.mp4").write_bytes(b"clip-two")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.post("/history/Video_A/shorts/Short-01.mp4/delete")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["shorts_count"] == 1
+    assert not (shorts_dir / "Short-01.mp4").exists()
+    assert (shorts_dir / "Short-02.mp4").exists()
+
+
+def test_delete_clip_is_idempotent_when_already_gone(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.post("/history/Video_A/shorts/does-not-exist.mp4/delete")
+    assert resp.status_code == 200
+    assert resp.get_json()["shorts_count"] == 0
+
+
+def test_delete_clip_404s_for_unknown_run(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+    resp = client.post("/history/does-not-exist/shorts/Short-01.mp4/delete")
+    assert resp.status_code == 404
+
+
+def test_delete_clip_rejects_while_a_run_is_in_progress(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "Short-01.mp4").write_bytes(b"clip-one")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+    webapp.job.status = "running"
+
+    resp = client.post("/history/Video_A/shorts/Short-01.mp4/delete")
+    assert resp.status_code == 409
+    assert (shorts_dir / "Short-01.mp4").exists()
+
+
+def test_delete_clip_blocks_path_traversal(client, monkeypatch, tmp_path):
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    secret = tmp_path / "secret.txt"
+    secret.write_bytes(b"secret")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+
+    resp = client.post("/history/Video_A/shorts/..%2F..%2Fsecret.txt/delete")
+    assert resp.status_code in (400, 404)
+    assert secret.exists()
+
+
+def test_delete_clip_works_for_a_just_finished_live_run(client, monkeypatch, tmp_path):
+    """The just-generated results grid reuses this same route (via run_name
+    from /status) rather than a separate current-run-only endpoint."""
+    root = tmp_path / "Video_A"
+    shorts_dir = root / "Shorts"
+    shorts_dir.mkdir(parents=True)
+    (shorts_dir / "Short-01.mp4").write_bytes(b"clip-one")
+    monkeypatch.setattr(webapp, "LOCAL_OUTPUT_DIR", str(tmp_path))
+    webapp.job.status = "done"
+    webapp.job.shorts_dir = str(shorts_dir)
+
+    resp = client.post("/history/Video_A/shorts/Short-01.mp4/delete")
+    assert resp.status_code == 200
+    assert not (shorts_dir / "Short-01.mp4").exists()

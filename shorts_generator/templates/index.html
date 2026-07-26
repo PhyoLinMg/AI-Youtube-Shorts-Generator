@@ -705,7 +705,27 @@
       card.appendChild(wrap);
     }
 
-    function buildShortCard(s, idx) {
+    async function deleteClip(runName, filename, card, onDeleted) {
+      if (!confirm("Delete this clip? This can't be undone.")) return;
+      try {
+        const resp = await fetch(
+          "/history/" + encodeURIComponent(runName) + "/shorts/" + encodeURIComponent(filename) + "/delete",
+          { method: "POST" }
+        );
+        const data = await resp.json();
+        if (!resp.ok) {
+          showError(data.error || "delete failed");
+          return;
+        }
+        showError("");
+        card.remove();
+        if (onDeleted) onDeleted(data);
+      } catch (e) {
+        showError("lost connection to server");
+      }
+    }
+
+    function buildShortCard(s, idx, runName, onDeleted) {
       const card = document.createElement("div");
       card.className = "card frame" + (s.download_url ? "" : " failed");
 
@@ -817,6 +837,15 @@
         link.setAttribute("download", "");
         link.textContent = "Download";
         card.appendChild(link);
+
+        if (runName && s.clip_filename) {
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.className = "history-delete-btn";
+          deleteBtn.textContent = "Delete";
+          deleteBtn.addEventListener("click", () => deleteClip(runName, s.clip_filename, card, onDeleted));
+          card.appendChild(deleteBtn);
+        }
       } else {
         const statusEl = document.createElement("div");
         statusEl.className = "card-status";
@@ -831,7 +860,7 @@
       return card;
     }
 
-    function renderShortsGrid(container, shorts) {
+    function renderShortsGrid(container, shorts, runName, onDeleted) {
       container.innerHTML = "";
       if (!shorts || shorts.length === 0) {
         const empty = document.createElement("div");
@@ -840,16 +869,16 @@
         container.appendChild(empty);
         return;
       }
-      shorts.forEach((s, idx) => container.appendChild(buildShortCard(s, idx)));
+      shorts.forEach((s, idx) => container.appendChild(buildShortCard(s, idx, runName, onDeleted)));
     }
 
-    function renderResults(result) {
+    function renderResults(result, runName) {
       resultsPanel.hidden = !result || !result.shorts || result.shorts.length === 0;
       if (!result || !result.shorts) {
         resultsEl.innerHTML = "";
         return;
       }
-      renderShortsGrid(resultsEl, result.shorts);
+      renderShortsGrid(resultsEl, result.shorts, runName);
     }
 
     let pollTimer = null;
@@ -878,7 +907,7 @@
 
         if (data.status === "done") {
           setBusy(false);
-          renderResults(data.result);
+          renderResults(data.result, data.run_name);
           // Job finished — stop polling until a new run starts.
         } else if (data.status === "failed") {
           setBusy(false);
@@ -986,7 +1015,7 @@
       }
     }
 
-    async function loadShortsForRun(name, detailEl) {
+    async function loadShortsForRun(name, detailEl, shortsLabel, shortsBtn, reviewBtn) {
       if (detailEl.dataset.loaded === "true") return;
       detailEl.innerHTML = '<div class="history-empty">Loading…</div>';
       try {
@@ -1000,7 +1029,10 @@
           detailEl.appendChild(err);
           return;
         }
-        renderShortsGrid(detailEl, data.shorts);
+        renderShortsGrid(detailEl, data.shorts, name, (summary) => {
+          updateHistoryItem(shortsLabel, shortsBtn, "shorts", summary);
+          reviewBtn.disabled = summary.shorts_count === 0;
+        });
         detailEl.className = "history-detail results-grid";
         detailEl.dataset.loaded = "true";
       } catch (e) {
@@ -1067,7 +1099,7 @@
       reviewBtn.addEventListener("click", () => {
         detailEl.hidden = !detailEl.hidden;
         reviewBtn.textContent = detailEl.hidden ? "Review" : "Hide";
-        if (!detailEl.hidden) loadShortsForRun(run.name, detailEl);
+        if (!detailEl.hidden) loadShortsForRun(run.name, detailEl, shortsLabel, shortsBtn, reviewBtn);
       });
       reviewItem.appendChild(reviewBtn);
       row.appendChild(reviewItem);
