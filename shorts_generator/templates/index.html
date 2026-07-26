@@ -829,6 +829,30 @@
           appendLabeledText(card, "Tightness", "reason", s.tightness_reason);
         }
 
+        if (typeof s.format_clarity_score === "number") {
+          const formatScore = Number(s.format_clarity_score) || 0;
+          const formatRow = document.createElement("div");
+          formatRow.className = "score-row";
+          const formatLabel = document.createElement("span");
+          formatLabel.textContent = "Format clarity";
+          formatRow.appendChild(formatLabel);
+          const formatMeter = document.createElement("div");
+          formatMeter.className = "meter";
+          const formatMeterFill = document.createElement("span");
+          formatMeterFill.style.width = formatScore + "%";
+          formatMeterFill.style.background = scoreColor(formatScore);
+          formatMeter.appendChild(formatMeterFill);
+          formatRow.appendChild(formatMeter);
+          const formatNum = document.createElement("span");
+          formatNum.textContent = formatScore;
+          formatRow.appendChild(formatNum);
+          card.appendChild(formatRow);
+        }
+
+        if (s.format_reason) {
+          appendLabeledText(card, "Format read", "reason", s.format_reason);
+        }
+
         const videoFrame = document.createElement("div");
         videoFrame.className = "video-frame frame";
         const video = document.createElement("video");
