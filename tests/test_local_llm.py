@@ -67,7 +67,12 @@ class _FakeVisionChat:
 
 
 class _FakeVisionOpenAI:
+    """Captures the kwargs it's constructed with, like the real OpenAI client."""
+
+    last_kwargs = None
+
     def __init__(self, **kwargs):
+        type(self).last_kwargs = kwargs
         self.chat = _FakeVisionChat()
 
 
@@ -81,8 +86,11 @@ def test_call_openai_vision_llm_sends_text_and_image_content(tmp_path, monkeypat
     result = local_llm.call_openai_vision_llm("describe this", [str(image_path)])
 
     assert result == "ok"
+    assert _FakeVisionOpenAI.last_kwargs["timeout"] == config.LOCAL_LLM_TIMEOUT_SECONDS
+    assert _FakeVisionOpenAI.last_kwargs["api_key"] == "test-key"
     kwargs = _FakeVisionCompletions.last_kwargs
     assert kwargs["model"] == config.OPENAI_MODEL
+    assert kwargs["temperature"] == 0.2
     content = kwargs["messages"][0]["content"]
     assert content[0] == {"type": "text", "text": "describe this"}
     assert content[1]["type"] == "image_url"
