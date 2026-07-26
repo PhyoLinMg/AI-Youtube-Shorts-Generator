@@ -104,6 +104,23 @@ Hook-landing speed (the ~1-second swipe-decision window):
 """
 
 
+CLAIM_SPECIFICITY_RUBRIC = """
+Claim specificity (does the hook state something concrete, or just gesture at a topic):
+- High (80+): a specific, surprising fact, number, or claim a viewer could
+  repeat verbatim -- e.g. "95% of the universe is dark matter and dark energy,"
+  "I lost $40,000 in one trade before I turned 20." Names a number, a named
+  mechanism, or a falsifiable claim.
+- Low (<40): a vague topic gesture or a generic opinion with no concrete
+  payload -- e.g. "He had a good point about success," "We talked about
+  what really matters in life." Sounds insightful but says nothing a viewer
+  could repeat.
+- Reward: a stat, a dollar figure, a named fact, a concrete contrarian
+  assertion.
+- Penalize: abstractions ("mindset," "success," "the truth about X") with
+  no concrete instantiation attached.
+"""
+
+
 HIGHLIGHT_SYSTEM_PROMPT = """You are an elite short-form video editor who has studied thousands of viral clips on TikTok, Instagram Reels, and YouTube Shorts. You know exactly what makes viewers stop scrolling, watch to the end, and share.
 
 {virality_criteria}
@@ -115,6 +132,8 @@ Content type: {content_type} | Density: {density}
 Your task: identify the most viral-worthy highlights from the transcript.
 
 {hook_strength_rubric}
+
+{claim_specificity_rubric}
 
 Rules:
 - Every highlight must open with a strong HOOK — a line that grabs attention within the first 3 seconds. start_time must land ON that hook line itself, never on preamble, silence, or filler before it — the clip opens cold, mid-energy, not with a slow windup
@@ -128,6 +147,7 @@ Rules:
 - Set "reaction_type" to exactly one of: LOL, WOW, OMG, FINALLY, WTF, WHOLESOME — the single reaction this clip is built to trigger
 - Set "cut_segments" to the list of kept spans described above (1-6 entries); write a "tightness_reason" — one sentence on what got cut and why, or why nothing needed cutting
 - Score "format_clarity_score" 0-100 on whether this span reads as ONE self-contained idea a viewer immediately grasps — a single Q&A, a single before/after, a single narrated event — versus a meandering excerpt that needs outside context. Write a "format_reason" — one sentence on what makes the format legible or muddy.
+- Score "claim_specificity" 0-100 on whether this highlight states a concrete, specific fact, number, or claim a viewer could repeat verbatim — versus a vague topic gesture or generic opinion — per the claim-specificity rubric above. Write a "claim_specificity_reason" — one sentence on what makes the claim concrete or vague.
 - Explain in one sentence why this clip is viral ("virality_reason")
 - Score "hook_strength" 0-100 on how completely and immediately the opening line lands within the ~1-second swipe-decision window, per the hook-landing rubric above (this is independent from the overall viral "score")
 - Set "hook_self_contained" (true/false) — true only if the opener needs zero prior context to land
@@ -138,7 +158,7 @@ Rules:
 - Write "yt_hashtags" — a JSON array of exactly 2-3 highly relevant NICHE hashtags (lowercase, leading #, no spaces). Always include "#Shorts" plus 1-2 topic-specific tags. Do NOT use generic spam tags (#fyp, #viral, #trending).
 
 Respond ONLY with valid JSON (no markdown, no explanation):
-{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","hook_strength":int,"hook_self_contained":bool,"hook_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"],"reaction_type":"string","cut_segments":[{{"start_time":float,"end_time":float}}],"tightness_reason":"string","format_clarity_score":int,"format_reason":"string"}}]}}"""
+{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","hook_strength":int,"hook_self_contained":bool,"hook_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"],"reaction_type":"string","cut_segments":[{{"start_time":float,"end_time":float}}],"tightness_reason":"string","format_clarity_score":int,"format_reason":"string","claim_specificity":int,"claim_specificity_reason":"string"}}]}}"""
 
 
 CHUNK_SIZE_SECONDS = 1200       # 20-min chunks for long videos
@@ -146,11 +166,14 @@ LONG_VIDEO_THRESHOLD = 1800     # chunk videos longer than 30 min
 CHUNK_OVERLAP_SECONDS = 60
 GPT_CALL_TIMEOUT_SECONDS = 300  # cap LLM polls at 5 min — a wedged call should fail fast
 MAX_HIGHLIGHT_API_ATTEMPTS = 3
-HIGHLIGHT_SCHEMA_VERSION = 4    # bump whenever the highlight dict shape changes,
+HIGHLIGHT_SCHEMA_VERSION = 5    # bump whenever the highlight dict shape changes,
                                 # so a stale on-disk cache (missing new fields)
                                 # is treated as a miss instead of silently reused.
                                 # v3: added cut_segments, reaction_type, tightness_reason.
                                 # v4: added format_clarity_score, format_reason.
+                                # v5: added claim_specificity, claim_specificity_reason.
+
+CLAIM_SPECIFICITY_THRESHOLD = 80  # gate used by select_final_highlights (Task 2 of this plan, not yet implemented)
 
 
 def call_muapi_llm(prompt: str) -> str:
@@ -315,6 +338,8 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
                 "tightness_reason": str(item.get("tightness_reason") or "").strip(),
                 "format_clarity_score": max(0, min(100, _coerce_int(item.get("format_clarity_score"), default=0))),
                 "format_reason": str(item.get("format_reason") or "").strip(),
+                "claim_specificity": max(0, min(100, _coerce_int(item.get("claim_specificity"), default=0))),
+                "claim_specificity_reason": str(item.get("claim_specificity_reason") or "").strip(),
             }
         )
 
@@ -375,6 +400,7 @@ def call_highlight_api(
         virality_criteria=VIRALITY_CRITERIA,
         reaction_jail_criteria=REACTION_JAIL_CRITERIA,
         hook_strength_rubric=HOOK_STRENGTH_RUBRIC,
+        claim_specificity_rubric=CLAIM_SPECIFICITY_RUBRIC,
         content_type=content_info.get("content_type", "other"),
         density=content_info.get("density", "medium"),
         num_clips_instruction=f"Generate at least {min_clips} highlights",
@@ -402,7 +428,7 @@ def call_highlight_api(
             prompt = (
                 base_prompt
                 + "\n\nIMPORTANT: Return ONLY valid JSON with a top-level 'highlights' array."
-                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, hook_strength, hook_self_contained, hook_reason, description, yt_title, yt_hashtags, reaction_type, cut_segments, tightness_reason, format_clarity_score, format_reason."
+                + " Each item must include: title, start_time, end_time, score, hook_sentence, on_screen_hook, virality_reason, hook_strength, hook_self_contained, hook_reason, description, yt_title, yt_hashtags, reaction_type, cut_segments, tightness_reason, format_clarity_score, format_reason, claim_specificity, claim_specificity_reason."
                 + " No markdown fences, no commentary."
             )
 

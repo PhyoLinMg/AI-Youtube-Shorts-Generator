@@ -177,6 +177,30 @@ def test_sanitize_highlights_includes_format_reason():
     assert cleaned[0]["format_reason"] == "single clean before/after beat"
 
 
+def test_sanitize_highlights_clamps_claim_specificity_above_range():
+    cleaned = _sanitize_highlights([_raw_highlight(claim_specificity=150)], duration=100.0)
+    assert cleaned[0]["claim_specificity"] == 100
+
+
+def test_sanitize_highlights_clamps_claim_specificity_below_range():
+    cleaned = _sanitize_highlights([_raw_highlight(claim_specificity=-20)], duration=100.0)
+    assert cleaned[0]["claim_specificity"] == 0
+
+
+def test_sanitize_highlights_defaults_claim_specificity_fields_when_missing():
+    raw = {"start_time": 1.0, "end_time": 5.0}
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["claim_specificity"] == 0
+    assert cleaned[0]["claim_specificity_reason"] == ""
+
+
+def test_sanitize_highlights_includes_claim_specificity_reason():
+    raw = _raw_highlight(claim_specificity=88, claim_specificity_reason="names a specific dollar figure")
+    cleaned = _sanitize_highlights([raw], duration=100.0)
+    assert cleaned[0]["claim_specificity"] == 88
+    assert cleaned[0]["claim_specificity_reason"] == "names a specific dollar figure"
+
+
 def test_transcript_fingerprint_stable_for_identical_transcripts():
     t1 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi"}]}
     t2 = {"duration": 10.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi"}]}
