@@ -458,6 +458,28 @@ def dedupe_highlights(highlights: List[Dict]) -> List[Dict]:
     return kept
 
 
+def select_final_highlights(
+    all_highlights: List[Dict], num_clips: int, threshold: int = CLAIM_SPECIFICITY_THRESHOLD,
+) -> List[Dict]:
+    """Select up to num_clips highlights, preferring ones whose claim is
+    concrete enough to survive the swipe test (claim_specificity >= threshold).
+    Backfills from the best-scoring remaining candidates when too few clear
+    the bar, so a strict gate never shrinks output below what score-only
+    ranking would have produced -- zero passers degrades to plain
+    top-N-by-score, never raises."""
+    ranked = sorted(all_highlights, key=lambda h: int(h.get("score", 0)), reverse=True)
+    passers: List[Dict] = []
+    rest: List[Dict] = []
+    for h in ranked:
+        target = passers if int(h.get("claim_specificity", 0)) >= threshold else rest
+        target.append(h)
+
+    final = passers[:num_clips]
+    if len(final) < num_clips:
+        final += rest[: num_clips - len(final)]
+    return final
+
+
 def get_highlights(
     transcript: Dict,
     num_clips: int = 3,
