@@ -565,6 +565,55 @@ def test_run_api_returns_available_successes_when_buffer_insufficient(tmp_path, 
     assert sum(1 for s in result["shorts"] if s.get("clip_url")) == 1
 
 
+def test_run_api_deletes_orphaned_buffer_clip_after_trim(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "_download_to", _fake_download_to)
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_highlights_cached",
+        lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result_many(5),
+    )
+
+    paths = _paths(tmp_path)
+    # num_clips=2 + CROP_FAILURE_BUFFER=1 -> 3 candidates get cropped, each
+    # backed by a real file on disk (matching what crop_highlights actually
+    # does -- writes a file for every candidate it's given, before any
+    # trimming happens).
+    clip_paths = {}
+    for i in range(3):
+        p = os.path.join(paths.shorts_dir, f"clip_{i}.mp4")
+        with open(p, "wb") as f:
+            f.write(b"fake mp4 bytes")
+        clip_paths[f"Clip {i}"] = p
+
+    def all_succeed_crop(source_url, top, **kwargs):
+        return [{**h, "clip_url": clip_paths[h["title"]]} for h in top]
+
+    monkeypatch.setattr(pipeline_module, "crop_highlights", all_succeed_crop)
+
+    pipeline_module._run_api(
+        "https://youtube.example/x",
+        num_clips=2,
+        aspect_ratio="9:16",
+        download_format="720",
+        language=None,
+        captions=True,
+        caption_fade_duration=0.3,
+        paths=paths,
+        word_highlight=True,
+    )
+
+    # _fake_highlights_result_many gives "Clip 0".."Clip 4" scores 100..96
+    # (descending), none with claim_specificity, so select_final_highlights
+    # falls back to plain top-3-by-score: Clip 0, Clip 1, Clip 2 (in that
+    # order). The two highest-scored (Clip 0, Clip 1) are kept.
+    assert os.path.exists(clip_paths["Clip 0"])
+    assert os.path.exists(clip_paths["Clip 1"])
+    # Clip 2 is the trimmed-away buffer candidate -- its file must be
+    # deleted, not left orphaned on disk indefinitely.
+    assert not os.path.exists(clip_paths["Clip 2"])
+
+
 def test_run_local_buffer_covers_a_single_crop_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(
         local_downloader_module, "download_youtube_local",

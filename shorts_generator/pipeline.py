@@ -31,14 +31,26 @@ CROP_FAILURE_BUFFER = 1  # extra candidates cropped beyond num_clips so a
 
 
 def _trim_to_num_clips(shorts: List[Dict], num_clips: int) -> List[Dict]:
-    """If enough crops succeeded, drop the extra buffer successes so output
-    matches num_clips exactly. If not enough succeeded even with the
-    buffer, return every entry as-is (including failures) so the shortfall
-    stays visible as "Failed" cards downstream, instead of being hidden."""
+    """If enough crops succeeded, drop the extra buffer successes -- deleting
+    their rendered local files so a trimmed-away buffer clip doesn't linger
+    on disk indefinitely -- so output matches num_clips exactly. If not
+    enough succeeded even with the buffer, return every entry as-is
+    (including failures) so the shortfall stays visible as "Failed" cards
+    downstream, instead of being hidden."""
     successes = [s for s in shorts if s.get("clip_url")]
-    if len(successes) >= num_clips:
-        return successes[:num_clips]
-    return shorts
+    if len(successes) < num_clips:
+        return shorts
+
+    kept = successes[:num_clips]
+    dropped = successes[num_clips:]
+    for s in dropped:
+        clip_path = s.get("clip_url")
+        if clip_path and os.path.isfile(clip_path):
+            try:
+                os.remove(clip_path)
+            except OSError as e:
+                print(f"[pipeline] could not remove trimmed buffer clip {clip_path}: {e}", flush=True)
+    return kept
 
 
 def _run_local(
