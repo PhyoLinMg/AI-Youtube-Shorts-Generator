@@ -50,6 +50,11 @@ MAX_SEGMENTS_PER_CLIP = 6        # degrade-gracefully cap; beyond this the cut
                                   # detector is probably a poor fit for this
                                   # footage (e.g. fast handheld motion) and we
                                   # fall back to single-global-anchor behavior
+SCENE_CUT_SAMPLE_SIZE = (160, 90)  # downscale target for frames retained in
+                                    # sample_grays across the whole clip's Pass
+                                    # 1 -- keeps memory bounded on long/high-res
+                                    # clips; a hard cut's mean-abs-diff spike
+                                    # survives thumbnail-scale just fine
 
 OUTPUT_CANVAS_H = 1920          # final render height regardless of source resolution
 
@@ -282,11 +287,20 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
     # Pass 1 -- sample the clip (~5 frames/sec), collecting per-sample face
-    # detections AND the grayscale sampled frame itself (for scene-cut
-    # detection). A slot is appended for every sample, even with no face
-    # detected, so sample index stays aligned with sample_grays for later
-    # segment slicing. Sample i always lands at frame i * sample_stride,
+    # detections AND a downscaled copy of the grayscale sampled frame (for
+    # scene-cut detection). A slot is appended for every sample, even with no
+    # face detected, so sample index stays aligned with sample_grays for
+    # later segment slicing. Sample i always lands at frame i * sample_stride,
     # since sampling is a fixed stride from frame 0.
+    #
+    # sample_grays stores a downscaled (SCENE_CUT_SAMPLE_SIZE) copy rather
+    # than the full-resolution frame: retaining full-res grayscale frames for
+    # every sample across a whole clip (up to 180s at up to 1080p/4K source)
+    # is a real memory cost -- ~1.87GB+ per clip at 1080p/5fps sampling for a
+    # 180s clip. _detect_scene_cuts only needs a mean-abs-diff spike between
+    # consecutive samples to catch a hard cut, and a real cut (e.g. a solid
+    # color or composition change) doesn't get subtler at thumbnail
+    # resolution, so downscaling here doesn't affect detection quality.
     sample_stride = max(1, int(fps // 5))
     sample_grays: List[np.ndarray] = []
     sample_largest: List[Optional[Tuple[int, int]]] = []
@@ -299,7 +313,7 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
         if frame_idx % sample_stride == 0:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
-            sample_grays.append(gray)
+            sample_grays.append(cv2.resize(gray, SCENE_CUT_SAMPLE_SIZE, interpolation=cv2.INTER_AREA))
             if len(faces) > 0:
                 dets = [(fx + fw / 2, fy + fh / 2, float(fw), float(fh)) for (fx, fy, fw, fh) in faces]
                 sample_detections.append(dets)
