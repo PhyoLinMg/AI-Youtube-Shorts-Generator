@@ -357,10 +357,29 @@ def test_reframe_vertical_scene_cut_computes_independent_anchor_per_segment(
 
     monkeypatch.setattr(local_clipper_module, "_clamp_crop_origin", _spy_clamp)
 
+    # Spy on _two_speaker_positions too: the two face positions in this
+    # fixture (x~105 and x~505) are far enough apart that _cluster_face_centers
+    # would treat them as two distinct people if pooled globally -- which is
+    # exactly the pre-segmentation bug this task fixes (confirmed empirically:
+    # today's code takes the two-speaker branch on this fixture and happens to
+    # land on the same two x-positions by coincidence, so a bare `len(centers)
+    # == 2` check does not by itself prove segmentation ran). Asserting zero
+    # calls here proves each segment took the single-anchor path independently
+    # instead of one global two-cluster split.
+    real_two_speaker_positions = local_clipper_module._two_speaker_positions
+    two_speaker_calls = {"n": 0}
+
+    def _spy_two_speaker_positions(*args, **kwargs):
+        two_speaker_calls["n"] += 1
+        return real_two_speaker_positions(*args, **kwargs)
+
+    monkeypatch.setattr(local_clipper_module, "_two_speaker_positions", _spy_two_speaker_positions)
+
     out_path = str(tmp_path / "out_scene_cut.mp4")
     local_clipper_module._reframe_vertical(synthetic_source_with_cut, out_path, "9:16")
 
     assert os.path.exists(out_path)
+    assert two_speaker_calls["n"] == 0
     # one hard cut (white -> black) -> two independent anchor computations,
     # not one global anchor blended from both segments' face positions
     assert len(centers) == 2
