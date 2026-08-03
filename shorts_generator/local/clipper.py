@@ -241,10 +241,17 @@ def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> s
 def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
     """Crop the cut clip to the target aspect ratio, centered on the speaker.
 
-    Uses a single locked crop position for the whole clip instead of
-    per-frame tracking — any tracker (even heavily smoothed) still reads as
-    camera shake on a talking head, since the subject is always drifting a
-    little (nodding, gesturing). A static, well-centered shot doesn't.
+    Segments the clip at detected camera cuts (see `_detect_scene_cuts`) and
+    computes an independent locked anchor per segment -- a mid-clip cut to a
+    different camera layout (e.g. close-up -> split-screen) no longer drags
+    a single whole-clip anchor to a position that's wrong for part of the
+    clip. Within a segment, framing is still one locked position (or a
+    hard-cut two-speaker pair) for that segment's whole span -- per-frame
+    tracking still reads as camera shake on a talking head, same reasoning
+    as before this change; only segment *boundaries* are now detected
+    instead of assumed not to exist. A clip with zero detected cuts is one
+    segment spanning the whole clip -- byte-identical to the
+    pre-segmentation code.
     """
     try:
         import cv2  # type: ignore
@@ -263,7 +270,6 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
     src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    # Compute the largest crop that fits inside the frame at the target ratio.
     if target_ratio < src_w / src_h:
         crop_h = src_h
         crop_w = int(crop_h * target_ratio)
@@ -275,14 +281,16 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
 
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-    # Pass 1 — sample the clip (~5 frames/sec is plenty). Collect both:
-    #   - largest_per_frame: today's exact single-largest-face-per-frame series,
-    #     used unchanged for the single-person fallback median.
-    #   - all_detections: every detected face across every sampled frame, used
-    #     only to decide whether this clip actually has two distinct people.
+    # Pass 1 -- sample the clip (~5 frames/sec), collecting per-sample face
+    # detections AND the grayscale sampled frame itself (for scene-cut
+    # detection). A slot is appended for every sample, even with no face
+    # detected, so sample index stays aligned with sample_grays for later
+    # segment slicing. Sample i always lands at frame i * sample_stride,
+    # since sampling is a fixed stride from frame 0.
     sample_stride = max(1, int(fps // 5))
-    largest_per_frame: List[Tuple[int, int]] = []
-    all_detections: List[Tuple[float, float, float, float]] = []
+    sample_grays: List[np.ndarray] = []
+    sample_largest: List[Optional[Tuple[int, int]]] = []
+    sample_detections: List[List[Tuple[float, float, float, float]]] = []
     frame_idx = 0
     while True:
         ret, frame = cap.read()
@@ -291,67 +299,88 @@ def _reframe_vertical(in_path: str, out_path: str, aspect_ratio: str) -> str:
         if frame_idx % sample_stride == 0:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
+            sample_grays.append(gray)
             if len(faces) > 0:
-                for (fx, fy, fw, fh) in faces:
-                    all_detections.append((fx + fw / 2, fy + fh / 2, float(fw), float(fh)))
+                dets = [(fx + fw / 2, fy + fh / 2, float(fw), float(fh)) for (fx, fy, fw, fh) in faces]
+                sample_detections.append(dets)
                 x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-                largest_per_frame.append((x + w // 2, y + h // 2))
+                sample_largest.append((x + w // 2, y + h // 2))
+            else:
+                sample_detections.append([])
+                sample_largest.append(None)
         frame_idx += 1
+    total_frames = frame_idx
 
-    clusters = _cluster_face_centers(all_detections, src_w)
     out_w, out_h = _output_size(target_ratio)
 
-    if len(clusters) < 2:
-        # Single-person (or no-face) path -- byte-identical to before this change.
-        if largest_per_frame:
-            xs = sorted(c[0] for c in largest_per_frame)
-            ys = sorted(c[1] for c in largest_per_frame)
-            cx, cy = xs[len(xs) // 2], ys[len(ys) // 2]
-        else:
-            cx, cy = src_w // 2, src_h // 2
-        x0, y0 = _clamp_crop_origin((cx, cy), (crop_w, crop_h), (src_w, src_h))
+    # Segment the clip at detected scene cuts.
+    sample_seconds = sample_stride / fps
+    raw_cuts = _detect_scene_cuts(sample_grays)
+    cuts = _merge_short_segments(raw_cuts, total_samples=len(sample_grays), sample_seconds=sample_seconds)
+    segment_bounds = [0] + [c * sample_stride for c in cuts] + [total_frames]
 
-    else:
-        anchor_a, anchor_b = clusters
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        raw_labels: List[str] = []
-        prev_gray = None
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            if prev_gray is None:
-                raw_labels.append("A")
-            else:
-                energy_a = _mouth_region_energy(gray, prev_gray, anchor_a)
-                energy_b = _mouth_region_energy(gray, prev_gray, anchor_b)
-                raw_labels.append("A" if energy_a >= energy_b else "B")
-            prev_gray = gray
-        positions = _two_speaker_positions(
-            anchor_a, anchor_b, raw_labels, fps, (crop_w, crop_h), (src_w, src_h),
-        )
-
-    # Pass 2 (or 3, for two-speaker clips) — write the crop. Single-person
-    # clips use one fixed x0/y0 for the whole clip; two-speaker clips hard-cut
-    # per frame between each speaker's own fixed position (`positions`).
-    two_speaker = len(clusters) >= 2
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     silent_path = out_path + ".silent.mp4"
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(silent_path, fourcc, fps, (out_w, out_h))
-    idx = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        if two_speaker:
-            fx0, fy0 = positions[idx] if idx < len(positions) else positions[-1]
+
+    prev_anchor_center: Tuple[float, float] = (src_w / 2, src_h / 2)
+    for seg_i in range(len(segment_bounds) - 1):
+        seg_start, seg_end = segment_bounds[seg_i], segment_bounds[seg_i + 1]
+        seg_sample_start = seg_start // sample_stride
+        seg_sample_end = -(-seg_end // sample_stride)  # ceil division, exclusive
+        seg_detections = [d for dets in sample_detections[seg_sample_start:seg_sample_end] for d in dets]
+        seg_largest = [c for c in sample_largest[seg_sample_start:seg_sample_end] if c is not None]
+
+        clusters = _cluster_face_centers(seg_detections, src_w)
+
+        if len(clusters) < 2:
+            two_speaker = False
+            if seg_largest:
+                xs = sorted(c[0] for c in seg_largest)
+                ys = sorted(c[1] for c in seg_largest)
+                cx, cy = xs[len(xs) // 2], ys[len(ys) // 2]
+            elif seg_i > 0:
+                # thin/no-detection segment: carry forward the previous
+                # segment's anchor rather than snapping to frame-center
+                cx, cy = prev_anchor_center
+            else:
+                cx, cy = src_w // 2, src_h // 2
+            x0, y0 = _clamp_crop_origin((cx, cy), (crop_w, crop_h), (src_w, src_h))
+            prev_anchor_center = (cx, cy)
         else:
-            fx0, fy0 = x0, y0
-        cropped = frame[fy0:fy0 + crop_h, fx0:fx0 + crop_w]
-        writer.write(cv2.resize(cropped, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4))
-        idx += 1
+            two_speaker = True
+            anchor_a, anchor_b = clusters
+            cap.set(cv2.CAP_PROP_POS_FRAMES, seg_start)
+            raw_labels: List[str] = []
+            prev_gray = None
+            for _ in range(seg_end - seg_start):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                if prev_gray is None:
+                    raw_labels.append("A")
+                else:
+                    energy_a = _mouth_region_energy(gray, prev_gray, anchor_a)
+                    energy_b = _mouth_region_energy(gray, prev_gray, anchor_b)
+                    raw_labels.append("A" if energy_a >= energy_b else "B")
+                prev_gray = gray
+            positions = _two_speaker_positions(
+                anchor_a, anchor_b, raw_labels, fps, (crop_w, crop_h), (src_w, src_h),
+            )
+            prev_anchor_center = (anchor_a[0], anchor_a[1])
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, seg_start)
+        for i in range(seg_end - seg_start):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if two_speaker:
+                fx0, fy0 = positions[i] if i < len(positions) else positions[-1]
+            else:
+                fx0, fy0 = x0, y0
+            cropped = frame[fy0:fy0 + crop_h, fx0:fx0 + crop_w]
+            writer.write(cv2.resize(cropped, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4))
 
     cap.release()
     writer.release()

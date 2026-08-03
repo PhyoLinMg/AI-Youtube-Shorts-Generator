@@ -30,6 +30,31 @@ def synthetic_source(tmp_path_factory):
     return path
 
 
+@pytest.fixture(scope="module")
+def synthetic_source_with_cut(tmp_path_factory):
+    """An 8s clip with a hard cut at the midpoint: 4s solid white, then 4s
+    solid black -- a large frame-to-frame pixel diff at the boundary, used
+    to exercise scene-cut segmentation in _reframe_vertical."""
+    tmp_dir = tmp_path_factory.mktemp("source_cut")
+    path = str(tmp_dir / "source_cut.mp4")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=c=white:size=640x360:rate=24:duration=4",
+            "-f", "lavfi", "-i", "color=c=black:size=640x360:rate=24:duration=4",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=8",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map", "[v]", "-map", "2:a",
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-c:a", "aac",
+            "-shortest",
+            path,
+        ],
+        check=True,
+    )
+    return path
+
+
 def _highlight():
     return {"title": "Test Clip", "start_time": 1.0, "end_time": 4.0, "score": 90}
 
@@ -309,6 +334,39 @@ def test_reframe_vertical_two_speakers_completes_and_outputs_correct_size(tmp_pa
     )
     width, height = (int(v) for v in probe.stdout.strip().split(","))
     assert (width, height) == local_clipper_module._output_size(9 / 16)
+
+
+def test_reframe_vertical_scene_cut_computes_independent_anchor_per_segment(
+    tmp_path, synthetic_source_with_cut, monkeypatch,
+):
+    def _fake_detect(self, gray, *args, **kwargs):
+        # white segment (mean ~255) -> face centered near x=105
+        # black segment (mean ~0)   -> face centered near x=505
+        if gray.mean() > 127:
+            return [(60, 80, 90, 110)]
+        return [(460, 80, 90, 110)]
+
+    monkeypatch.setattr(cv2.CascadeClassifier, "detectMultiScale", _fake_detect)
+
+    real_clamp = local_clipper_module._clamp_crop_origin
+    centers = []
+
+    def _spy_clamp(center, crop_size, src_size):
+        centers.append(center)
+        return real_clamp(center, crop_size, src_size)
+
+    monkeypatch.setattr(local_clipper_module, "_clamp_crop_origin", _spy_clamp)
+
+    out_path = str(tmp_path / "out_scene_cut.mp4")
+    local_clipper_module._reframe_vertical(synthetic_source_with_cut, out_path, "9:16")
+
+    assert os.path.exists(out_path)
+    # one hard cut (white -> black) -> two independent anchor computations,
+    # not one global anchor blended from both segments' face positions
+    assert len(centers) == 2
+    assert centers[0][0] < 300   # segment 1 anchored near its own face (x~105)
+    assert centers[1][0] > 300   # segment 2 anchored near ITS face (x~505),
+                                  # not dragged toward segment 1's position
 
 
 def test_captions_burned_in_by_default(tmp_path, synthetic_source):
