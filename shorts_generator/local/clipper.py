@@ -43,6 +43,13 @@ CENTER_MAX_STEP = 10.0          # px/frame velocity clamp for the center
 # --- scene-cut segmentation tunables (locked framing) --------------------------
 SCENE_CUT_DIFF_THRESHOLD = 40.0  # mean abs pixel diff (0-255) between consecutive
                                   # sampled frames to call it a hard camera cut
+MIN_SEGMENT_SECONDS = 2.0        # a segment shorter than this gets folded into
+                                  # its neighbor rather than getting its own
+                                  # (statistically unreliable) anchor
+MAX_SEGMENTS_PER_CLIP = 6        # degrade-gracefully cap; beyond this the cut
+                                  # detector is probably a poor fit for this
+                                  # footage (e.g. fast handheld motion) and we
+                                  # fall back to single-global-anchor behavior
 
 OUTPUT_CANVAS_H = 1920          # final render height regardless of source resolution
 
@@ -183,6 +190,37 @@ def _detect_scene_cuts(
         if float(diff.mean()) >= threshold:
             cuts.append(i)
     return cuts
+
+
+def _merge_short_segments(
+    cut_sample_indices: List[int],
+    total_samples: int,
+    sample_seconds: float,
+    min_segment_seconds: float = MIN_SEGMENT_SECONDS,
+) -> List[int]:
+    """Drop cuts that would create a segment shorter than
+    `min_segment_seconds`, folding it into the preceding segment (including
+    a short trailing segment after the last accepted cut). If more than
+    `MAX_SEGMENTS_PER_CLIP` segments remain even after merging, drop all
+    cuts -- the cut detector is probably a poor fit for this footage, and
+    falling back to one whole-clip segment is never worse than today's
+    baseline."""
+    if not cut_sample_indices or sample_seconds <= 0:
+        return list(cut_sample_indices)
+
+    accepted: List[int] = []
+    prev = 0
+    for c in cut_sample_indices:
+        if (c - prev) * sample_seconds >= min_segment_seconds:
+            accepted.append(c)
+            prev = c
+
+    if accepted and (total_samples - accepted[-1]) * sample_seconds < min_segment_seconds:
+        accepted.pop()
+
+    if len(accepted) + 1 > MAX_SEGMENTS_PER_CLIP:
+        return []
+    return accepted
 
 
 def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> str:

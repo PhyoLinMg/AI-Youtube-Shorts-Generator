@@ -132,6 +132,36 @@ def test_detect_scene_cuts_empty_input_returns_empty():
     assert local_clipper_module._detect_scene_cuts([]) == []
 
 
+def test_merge_short_segments_keeps_well_separated_cuts():
+    # sample_seconds=0.2, min_segment_seconds=2.0 -> need >=10 samples between cuts
+    cuts = [15, 40]
+    result = local_clipper_module._merge_short_segments(cuts, total_samples=80, sample_seconds=0.2)
+    assert result == [15, 40]
+
+
+def test_merge_short_segments_drops_cut_too_close_to_previous():
+    cuts = [15, 17, 40]  # 17 is only 0.4s after 15 -> merged away
+    result = local_clipper_module._merge_short_segments(cuts, total_samples=80, sample_seconds=0.2)
+    assert result == [15, 40]
+
+
+def test_merge_short_segments_drops_cut_leaving_short_tail():
+    cuts = [15, 78]  # tail from sample 78 to 80 = 0.4s -> too short, drop 78
+    result = local_clipper_module._merge_short_segments(cuts, total_samples=80, sample_seconds=0.2)
+    assert result == [15]
+
+
+def test_merge_short_segments_falls_back_to_empty_when_too_many_segments():
+    # 6 cuts spaced 10 samples (2.0s) apart -> 7 segments, exceeds MAX_SEGMENTS_PER_CLIP=6
+    cuts = [10, 20, 30, 40, 50, 60]
+    result = local_clipper_module._merge_short_segments(cuts, total_samples=100, sample_seconds=0.2)
+    assert result == []
+
+
+def test_merge_short_segments_empty_input_returns_empty():
+    assert local_clipper_module._merge_short_segments([], total_samples=50, sample_seconds=0.2) == []
+
+
 def test_mouth_region_energy_zero_when_region_unchanged():
     gray = np.full((200, 200), 100, dtype=np.uint8)
     prev_gray = gray.copy()
