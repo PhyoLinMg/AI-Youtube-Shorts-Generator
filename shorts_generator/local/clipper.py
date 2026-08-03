@@ -40,6 +40,10 @@ CENTER_EMA_ALPHA = 0.12         # smoothing for the cursor-follow center
 CENTER_MA_WINDOW = 7            # moving-average window (frames) for extra center stability
 CENTER_MAX_STEP = 10.0          # px/frame velocity clamp for the center
 
+# --- scene-cut segmentation tunables (locked framing) --------------------------
+SCENE_CUT_DIFF_THRESHOLD = 40.0  # mean abs pixel diff (0-255) between consecutive
+                                  # sampled frames to call it a hard camera cut
+
 OUTPUT_CANVAS_H = 1920          # final render height regardless of source resolution
 
 
@@ -163,6 +167,22 @@ def _two_speaker_positions(
     pos_a = _clamp_crop_origin((anchor_a[0], anchor_a[1]), crop_size, src_size)
     pos_b = _clamp_crop_origin((anchor_b[0], anchor_b[1]), crop_size, src_size)
     return [pos_a if label == "A" else pos_b for label in smoothed]
+
+
+def _detect_scene_cuts(
+    sampled_grays: List[np.ndarray], threshold: float = SCENE_CUT_DIFF_THRESHOLD,
+) -> List[int]:
+    """Indices into `sampled_grays` where frame i differs sharply from frame
+    i - 1 (mean abs pixel diff over `threshold`) -- a hard camera cut. Pure
+    numpy, no cv2 dependency, testable without a real video decode (same
+    pattern as `_mouth_region_energy`). The first frame can never be a cut
+    (nothing to diff against)."""
+    cuts: List[int] = []
+    for i in range(1, len(sampled_grays)):
+        diff = np.abs(sampled_grays[i].astype(np.int16) - sampled_grays[i - 1].astype(np.int16))
+        if float(diff.mean()) >= threshold:
+            cuts.append(i)
+    return cuts
 
 
 def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> str:

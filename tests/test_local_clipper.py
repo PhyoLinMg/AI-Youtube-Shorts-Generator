@@ -104,6 +104,34 @@ def test_cluster_face_centers_empty_input():
     assert local_clipper_module._cluster_face_centers([], src_w=1000.0) == []
 
 
+def test_detect_scene_cuts_no_cuts_on_static_frames():
+    grays = [np.full((50, 50), 100, dtype=np.uint8) for _ in range(5)]
+    assert local_clipper_module._detect_scene_cuts(grays) == []
+
+
+def test_detect_scene_cuts_detects_single_sharp_change():
+    grays = [np.full((50, 50), 100, dtype=np.uint8) for _ in range(3)]
+    grays += [np.full((50, 50), 220, dtype=np.uint8) for _ in range(3)]
+    assert local_clipper_module._detect_scene_cuts(grays) == [3]
+
+
+def test_detect_scene_cuts_ignores_diff_below_threshold():
+    grays = [np.full((50, 50), 100, dtype=np.uint8) for _ in range(3)]
+    grays += [np.full((50, 50), 110, dtype=np.uint8) for _ in range(3)]  # diff=10 < default 40
+    assert local_clipper_module._detect_scene_cuts(grays) == []
+
+
+def test_detect_scene_cuts_first_frame_never_flagged():
+    grays = [np.full((50, 50), 255, dtype=np.uint8)] + [np.full((50, 50), 0, dtype=np.uint8) for _ in range(2)]
+    cuts = local_clipper_module._detect_scene_cuts(grays)
+    assert 0 not in cuts
+    assert cuts == [1]
+
+
+def test_detect_scene_cuts_empty_input_returns_empty():
+    assert local_clipper_module._detect_scene_cuts([]) == []
+
+
 def test_mouth_region_energy_zero_when_region_unchanged():
     gray = np.full((200, 200), 100, dtype=np.uint8)
     prev_gray = gray.copy()
