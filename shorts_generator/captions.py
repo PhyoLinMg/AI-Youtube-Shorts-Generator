@@ -234,6 +234,7 @@ def _write_ass(
     height: int,
     fade_seconds: float,
     word_highlight: bool = True,
+    bottom_margin_frac: float = 0.30,
 ) -> None:
     """Write an ASS subtitle file: one bottom-center style.
 
@@ -243,9 +244,14 @@ def _write_ass(
     fade-in \\fad tag. Chunks without `"words"` (or when `word_highlight` is
     False) fall back to one plain Dialogue line per chunk with a fade-in-only
     \\fad override tag.
+
+    `bottom_margin_frac` controls how far up from the bottom edge the
+    caption sits, as a fraction of frame height. Default 0.30 is tuned for
+    9:16 Shorts to clear the platform's reply/like UI column; landscape
+    content with no such UI to dodge should pass a much smaller value.
     """
     fontsize = max(12, round(height * 0.045))
-    margin_v = max(10, round(height * 0.30))
+    margin_v = max(10, round(height * bottom_margin_frac))
     margin_h = max(10, round(width * 0.06))
     fade_ms = max(0, round(fade_seconds * 1000))
 

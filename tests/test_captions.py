@@ -228,6 +228,30 @@ def test_write_ass_uses_montserrat_black_font(tmp_path):
     assert "Style: Caption,Montserrat Black," in content
 
 
+def test_write_ass_default_margin_v_is_30_percent_of_height(tmp_path):
+    chunks = [{"start": 0.0, "end": 1.0, "text": "hello world"}]
+    ass_path = str(tmp_path / "c.ass")
+
+    _write_ass(chunks, ass_path, width=608, height=1080, fade_seconds=0.3)
+
+    content = open(ass_path, encoding="utf-8").read()
+    style_line = next(l for l in content.splitlines() if l.startswith("Style:"))
+    margin_v = int(style_line.split(",")[-2])
+    assert margin_v == round(1080 * 0.30)
+
+
+def test_write_ass_custom_bottom_margin_frac_changes_margin_v(tmp_path):
+    chunks = [{"start": 0.0, "end": 1.0, "text": "hello world"}]
+    ass_path = str(tmp_path / "c.ass")
+
+    _write_ass(chunks, ass_path, width=608, height=1080, fade_seconds=0.3, bottom_margin_frac=0.06)
+
+    content = open(ass_path, encoding="utf-8").read()
+    style_line = next(l for l in content.splitlines() if l.startswith("Style:"))
+    margin_v = int(style_line.split(",")[-2])
+    assert margin_v == round(1080 * 0.06)
+
+
 def test_write_ass_word_lines_fill_gaps_between_words(tmp_path):
     """Real whisper word timestamps can have small gaps between consecutive
     words (silences, plosives). Each word's Dialogue line should extend to
