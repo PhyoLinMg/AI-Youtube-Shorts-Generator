@@ -76,6 +76,22 @@ def unique_short_filename(
     return name
 
 
+def unique_chapter_filename(title: str, index: int, used_names: set) -> str:
+    """Build a `.mp4` filename for a chapter: always a zero-padded numeric
+    prefix + the chapter's own slugified title, so files sort into episode
+    order in a plain file browser regardless of SHORT_FILENAME_STYLE (that
+    style knob exists to anonymize clickbait Shorts titles, not to order
+    them -- chapters have the opposite need)."""
+    base = f"{index:02d}_{sanitize_title(title)}"
+    name = f"{base}.mp4"
+    n = 2
+    while name in used_names:
+        name = f"{base}_{n}.mp4"
+        n += 1
+    used_names.add(name)
+    return name
+
+
 def _title_via_oembed(url: str) -> Optional[str]:
     try:
         resp = requests.get(

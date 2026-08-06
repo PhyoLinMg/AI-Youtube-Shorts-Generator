@@ -51,6 +51,24 @@ def test_unique_short_filename_generic_style_requires_index():
         pass
 
 
+def test_unique_chapter_filename_numbers_and_slugifies():
+    used = set()
+    assert run_output.unique_chapter_filename("The Big Reveal", 1, used) == "01_The_Big_Reveal.mp4"
+    assert run_output.unique_chapter_filename("A Second Topic", 2, used) == "02_A_Second_Topic.mp4"
+
+
+def test_unique_chapter_filename_pads_double_digit_index():
+    used = set()
+    assert run_output.unique_chapter_filename("Topic Ten", 10, used) == "10_Topic_Ten.mp4"
+
+
+def test_unique_chapter_filename_dedupes_collisions():
+    used = set()
+    first = run_output.unique_chapter_filename("Same Title", 1, used)
+    second = run_output.unique_chapter_filename("Same Title", 1, used)
+    assert [first, second] == ["01_Same_Title.mp4", "01_Same_Title_2.mp4"]
+
+
 class _FakeResponse:
     def __init__(self, status_code=200, json_data=None):
         self.status_code = status_code
