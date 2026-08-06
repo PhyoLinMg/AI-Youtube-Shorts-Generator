@@ -574,7 +574,21 @@ def test_dedupe_chapters_drops_any_overlap_with_previously_kept():
     chapters = [
         {"title": "A", "start_time": 0.0, "end_time": 300.0},
         {"title": "B", "start_time": 250.0, "end_time": 600.0},  # overlaps A by 50s -> dropped
-        {"title": "C", "start_time": 600.0, "end_time": 900.0},  # starts exactly where A ended (via B's end) -- no overlap with A
+        {"title": "C", "start_time": 600.0, "end_time": 900.0},  # starts exactly where B ended -- no overlap with A or (dropped) B
+    ]
+    result = dedupe_chapters(chapters)
+    assert [c["title"] for c in result] == ["A", "C"]
+
+
+def test_dedupe_chapters_compares_against_last_kept_not_last_dropped():
+    # B overlaps A and gets dropped. C starts after A's end but *before*
+    # B's (longer) end -- C must be compared against kept A, not dropped
+    # B, so it should be KEPT rather than wrongly rejected for "overlapping"
+    # a candidate that was never actually kept.
+    chapters = [
+        {"title": "A", "start_time": 0.0, "end_time": 300.0},
+        {"title": "B", "start_time": 250.0, "end_time": 600.0},  # overlaps A -> dropped
+        {"title": "C", "start_time": 400.0, "end_time": 500.0},  # after A's end, before B's end
     ]
     result = dedupe_chapters(chapters)
     assert [c["title"] for c in result] == ["A", "C"]
