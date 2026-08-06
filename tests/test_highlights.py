@@ -2,8 +2,12 @@ import json
 import os
 
 from shorts_generator.highlights import (
+    CHAPTER_SCHEMA_VERSION,
     CLAIM_SPECIFICITY_THRESHOLD,
     HIGHLIGHT_SCHEMA_VERSION,
+    MAX_CHAPTER_DURATION_SECONDS,
+    MIN_CHAPTER_DURATION_SECONDS,
+    _sanitize_chapters,
     _sanitize_highlights,
     _transcript_fingerprint,
     call_highlight_api,
@@ -481,14 +485,6 @@ def test_select_final_highlights_missing_claim_specificity_defaults_to_non_passe
 
 def test_claim_specificity_threshold_is_80():
     assert CLAIM_SPECIFICITY_THRESHOLD == 80
-
-
-from shorts_generator.highlights import (
-    CHAPTER_SCHEMA_VERSION,
-    MAX_CHAPTER_DURATION_SECONDS,
-    MIN_CHAPTER_DURATION_SECONDS,
-    _sanitize_chapters,
-)
 
 
 def _raw_chapter(**overrides):

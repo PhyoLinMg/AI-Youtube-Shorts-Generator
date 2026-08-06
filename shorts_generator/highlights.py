@@ -365,9 +365,10 @@ def _sanitize_chapters(raw_chapters: object, duration: float) -> List[Dict]:
     """Normalize model output into the chapter shape; skip invalid entries.
 
     Unlike _sanitize_highlights, there's no score/hook/reaction/cut_segments
-    handling here -- chapters don't carry viral-packaging fields, and the
-    whole selected span is kept intact by design (no reaction-jail dead-air
-    trimming for a "full context" chapter).
+    handling here -- chapters don't carry viral-packaging fields, and there's
+    no interior dead-air trimming (only the boundary clamps below): a
+    chapter's span is kept intact end-to-end by design, for a "full context"
+    chapter.
     """
     if not isinstance(raw_chapters, list):
         return []
