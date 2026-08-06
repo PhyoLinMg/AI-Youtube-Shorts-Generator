@@ -333,6 +333,27 @@ def test_burn_captions_produces_output_file(tmp_path, synthetic_clip):
     assert not os.path.exists(out_path + ".ass")
 
 
+def test_burn_captions_forwards_bottom_margin_frac(tmp_path, synthetic_clip, monkeypatch):
+    captured = {}
+    real_write_ass = _write_ass
+
+    def _spy_write_ass(*args, **kwargs):
+        captured.update(kwargs)
+        return real_write_ass(*args, **kwargs)
+
+    monkeypatch.setattr("shorts_generator.captions._write_ass", _spy_write_ass)
+
+    out_path = str(tmp_path / "burned.mp4")
+    segments = [{"start": 0.0, "end": 3.0, "text": "hello there this is a caption test"}]
+
+    burn_captions(
+        synthetic_clip, segments, clip_start=0.0, clip_end=3.0, out_path=out_path,
+        fade_seconds=0.3, bottom_margin_frac=0.06,
+    )
+
+    assert captured["bottom_margin_frac"] == 0.06
+
+
 def test_burn_captions_raises_when_no_transcript_overlaps(tmp_path, synthetic_clip):
     out_path = str(tmp_path / "burned.mp4")
     segments = [{"start": 100.0, "end": 103.0, "text": "way outside the clip"}]

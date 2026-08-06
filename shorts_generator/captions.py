@@ -343,11 +343,12 @@ def _probe_duration(video_path: str) -> float:
 
 def _burn_chunks(
     video_path: str, chunks: List[Dict], out_path: str, fade_seconds: float, word_highlight: bool,
+    bottom_margin_frac: float = 0.30,
 ) -> str:
     width, height = _probe_resolution(video_path)
 
     ass_path = out_path + ".ass"
-    _write_ass(chunks, ass_path, width, height, fade_seconds, word_highlight=word_highlight)
+    _write_ass(chunks, ass_path, width, height, fade_seconds, word_highlight=word_highlight, bottom_margin_frac=bottom_margin_frac)
 
     try:
         escaped_ass_path = _escape_ffmpeg_path(ass_path)
@@ -379,8 +380,12 @@ def burn_captions(
     out_path: str,
     fade_seconds: float = 0.3,
     word_highlight: bool = True,
+    bottom_margin_frac: float = 0.30,
 ) -> str:
     """Burn phrase-chunked, fade-in captions onto a local clip.
+
+    `bottom_margin_frac` (default 0.30, tuned for 9:16 Shorts) is forwarded
+    to `_write_ass` -- see its docstring.
 
     Raises CaptionError on any failure; the caller decides whether to fall
     back to the uncaptioned clip.
@@ -388,7 +393,7 @@ def burn_captions(
     chunks = _chunk_segments(segments, clip_start, clip_end, max_words=7)
     if not chunks:
         raise CaptionError(f"no transcript overlaps clip window [{clip_start}, {clip_end}]")
-    return _burn_chunks(video_path, chunks, out_path, fade_seconds, word_highlight)
+    return _burn_chunks(video_path, chunks, out_path, fade_seconds, word_highlight, bottom_margin_frac=bottom_margin_frac)
 
 
 def burn_captions_segments(
@@ -398,6 +403,7 @@ def burn_captions_segments(
     out_path: str,
     fade_seconds: float = 0.3,
     word_highlight: bool = True,
+    bottom_margin_frac: float = 0.30,
 ) -> str:
     """Like burn_captions, but for a video already excised down to
     `cut_segments` (see jump_cuts.excise_cut_segments) — captions are
@@ -410,4 +416,4 @@ def burn_captions_segments(
     chunks = _chunk_cut_segments(transcript_segments, cut_segments, max_words=7)
     if not chunks:
         raise CaptionError(f"no transcript overlaps cut_segments {cut_segments}")
-    return _burn_chunks(video_path, chunks, out_path, fade_seconds, word_highlight)
+    return _burn_chunks(video_path, chunks, out_path, fade_seconds, word_highlight, bottom_margin_frac=bottom_margin_frac)
