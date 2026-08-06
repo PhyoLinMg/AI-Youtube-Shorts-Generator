@@ -183,6 +183,10 @@ MAX_HIGHLIGHT_DURATION_SECONDS = 180  # hard ceiling matching the prompt's outer
                                        # and the model doesn't always follow it, so this
                                        # backstops runaway durations at sanitize time.
 
+MIN_CHAPTER_DURATION_SECONDS = 60    # shorter than this isn't "full context," it's a fragment
+MAX_CHAPTER_DURATION_SECONDS = 900   # 15min hard ceiling
+CHAPTER_SCHEMA_VERSION = 1           # bump whenever the chapter dict shape changes
+
 
 def call_muapi_llm(prompt: str) -> str:
     """Default LLM backend: MuAPI gpt-5-mini."""
@@ -351,6 +355,51 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
                 "format_reason": str(item.get("format_reason") or "").strip(),
                 "claim_specificity": max(0, min(100, _coerce_int(item.get("claim_specificity"), default=0))),
                 "claim_specificity_reason": str(item.get("claim_specificity_reason") or "").strip(),
+            }
+        )
+
+    return cleaned
+
+
+def _sanitize_chapters(raw_chapters: object, duration: float) -> List[Dict]:
+    """Normalize model output into the chapter shape; skip invalid entries.
+
+    Unlike _sanitize_highlights, there's no score/hook/reaction/cut_segments
+    handling here -- chapters don't carry viral-packaging fields, and the
+    whole selected span is kept intact by design (no reaction-jail dead-air
+    trimming for a "full context" chapter).
+    """
+    if not isinstance(raw_chapters, list):
+        return []
+
+    max_end = duration if duration > 0 else float("inf")
+    cleaned: List[Dict] = []
+    for item in raw_chapters:
+        if not isinstance(item, dict):
+            continue
+
+        start = _coerce_float(item.get("start_time"), default=-1.0)
+        end = _coerce_float(item.get("end_time"), default=-1.0)
+        if start < 0 or end <= start:
+            continue
+
+        if max_end != float("inf"):
+            start = min(start, max_end)
+            end = min(end, max_end)
+            if end <= start:
+                continue
+
+        end = min(end, start + MAX_CHAPTER_DURATION_SECONDS)
+        if end - start < MIN_CHAPTER_DURATION_SECONDS:
+            continue
+
+        cleaned.append(
+            {
+                "title": str(item.get("title") or "Untitled Chapter").strip()[:100],
+                "start_time": start,
+                "end_time": end,
+                "summary": str(item.get("summary") or "").strip(),
+                "interest_reason": str(item.get("interest_reason") or "").strip(),
             }
         )
 

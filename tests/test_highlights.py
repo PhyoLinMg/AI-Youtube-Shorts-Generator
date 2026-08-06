@@ -481,3 +481,84 @@ def test_select_final_highlights_missing_claim_specificity_defaults_to_non_passe
 
 def test_claim_specificity_threshold_is_80():
     assert CLAIM_SPECIFICITY_THRESHOLD == 80
+
+
+from shorts_generator.highlights import (
+    CHAPTER_SCHEMA_VERSION,
+    MAX_CHAPTER_DURATION_SECONDS,
+    MIN_CHAPTER_DURATION_SECONDS,
+    _sanitize_chapters,
+)
+
+
+def _raw_chapter(**overrides):
+    base = {
+        "title": "The Origin Story",
+        "start_time": 10.0,
+        "end_time": 400.0,
+        "summary": "They trace the idea back to a late-night argument and explain how it evolved.",
+        "interest_reason": "a complete, self-contained origin story with a clear arc",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_sanitize_chapters_keeps_valid_chapter():
+    cleaned = _sanitize_chapters([_raw_chapter()], duration=1000.0)
+    assert len(cleaned) == 1
+    assert cleaned[0]["title"] == "The Origin Story"
+    assert cleaned[0]["start_time"] == 10.0
+    assert cleaned[0]["end_time"] == 400.0
+    assert cleaned[0]["summary"] == _raw_chapter()["summary"]
+    assert cleaned[0]["interest_reason"] == _raw_chapter()["interest_reason"]
+
+
+def test_sanitize_chapters_drops_shorter_than_min_duration():
+    raw = _raw_chapter(start_time=0.0, end_time=30.0)  # 30s < MIN_CHAPTER_DURATION_SECONDS (60)
+    cleaned = _sanitize_chapters([raw], duration=1000.0)
+    assert cleaned == []
+
+
+def test_sanitize_chapters_clamps_end_time_to_max_duration():
+    raw = _raw_chapter(start_time=0.0, end_time=2000.0)  # way over MAX_CHAPTER_DURATION_SECONDS (900)
+    cleaned = _sanitize_chapters([raw], duration=5000.0)
+    assert cleaned[0]["end_time"] == 900.0
+
+
+def test_sanitize_chapters_clamps_to_video_duration():
+    raw = _raw_chapter(start_time=90.0, end_time=200.0)
+    cleaned = _sanitize_chapters([raw], duration=150.0)
+    assert cleaned[0]["end_time"] == 150.0
+
+
+def test_sanitize_chapters_drops_invalid_start_end():
+    raw = _raw_chapter(start_time=100.0, end_time=50.0)  # end before start
+    cleaned = _sanitize_chapters([raw], duration=1000.0)
+    assert cleaned == []
+
+
+def test_sanitize_chapters_defaults_missing_fields():
+    raw = {"start_time": 0.0, "end_time": 200.0}
+    cleaned = _sanitize_chapters([raw], duration=1000.0)
+    assert cleaned[0]["title"] == "Untitled Chapter"
+    assert cleaned[0]["summary"] == ""
+    assert cleaned[0]["interest_reason"] == ""
+
+
+def test_sanitize_chapters_ignores_non_list_input():
+    assert _sanitize_chapters(None, duration=1000.0) == []
+    assert _sanitize_chapters("not a list", duration=1000.0) == []
+
+
+def test_sanitize_chapters_skips_non_dict_entries():
+    cleaned = _sanitize_chapters(["not a dict", _raw_chapter()], duration=1000.0)
+    assert len(cleaned) == 1
+
+
+def test_chapter_duration_bounds_are_60_and_900():
+    assert MIN_CHAPTER_DURATION_SECONDS == 60
+    assert MAX_CHAPTER_DURATION_SECONDS == 900
+
+
+def test_chapter_schema_version_is_1():
+    assert CHAPTER_SCHEMA_VERSION == 1
