@@ -28,13 +28,17 @@ def client():
 def _fake_run_paths(tmp_path):
     root = str(tmp_path / "Video_Title")
     shorts_dir = os.path.join(root, "Shorts")
+    chapters_dir = os.path.join(root, "Chapters")
     os.makedirs(shorts_dir, exist_ok=True)
+    os.makedirs(chapters_dir, exist_ok=True)
     return RunPaths(
         root=root,
         shorts_dir=shorts_dir,
+        chapters_dir=chapters_dir,
         source_video=os.path.join(root, "full_source.mp4"),
         source_json=os.path.join(root, "full_source.json"),
         highlights_json=os.path.join(root, "highlights.json"),
+        chapters_json=os.path.join(root, "chapters.json"),
         result_json=os.path.join(root, "result.json"),
         progress_log=os.path.join(root, "progress.log"),
     )

@@ -30,9 +30,11 @@ _UNDERSCORE_RUNS = re.compile(r"_+")
 class RunPaths:
     root: str
     shorts_dir: str
+    chapters_dir: str
     source_video: str
     source_json: str
     highlights_json: str
+    chapters_json: str
     result_json: str
     progress_log: str
 
@@ -152,13 +154,17 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
     title = sanitize_title(resolve_title(url_or_path))
     root = os.path.join(base_dir, title)
     shorts_dir = os.path.join(root, "Shorts")
+    chapters_dir = os.path.join(root, "Chapters")
     os.makedirs(shorts_dir, exist_ok=True)
+    os.makedirs(chapters_dir, exist_ok=True)
     return RunPaths(
         root=root,
         shorts_dir=shorts_dir,
+        chapters_dir=chapters_dir,
         source_video=os.path.join(root, "full_source.mp4"),
         source_json=os.path.join(root, "full_source.json"),
         highlights_json=os.path.join(root, "highlights.json"),
+        chapters_json=os.path.join(root, "chapters.json"),
         result_json=os.path.join(root, "result.json"),
         progress_log=os.path.join(root, "progress.log"),
     )

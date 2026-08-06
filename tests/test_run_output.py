@@ -125,6 +125,21 @@ def test_resolve_output_dir_builds_expected_tree(tmp_path, monkeypatch):
     assert os.path.isdir(paths.shorts_dir)
 
 
+def test_resolve_output_dir_builds_chapters_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        run_output.requests, "get",
+        lambda *a, **k: _FakeResponse(200, {"title": "How To Build A Startup"}),
+    )
+
+    paths = run_output.resolve_output_dir(
+        "https://www.youtube.com/watch?v=abc123", base_dir=str(tmp_path)
+    )
+
+    assert paths.chapters_dir == os.path.join(paths.root, "Chapters")
+    assert paths.chapters_json == os.path.join(paths.root, "chapters.json")
+    assert os.path.isdir(paths.chapters_dir)
+
+
 from pathlib import Path
 
 import pytest
