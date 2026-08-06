@@ -292,6 +292,35 @@ def write_descriptions(shorts_dir: str, shorts: List[Dict]) -> str:
     return path
 
 
+def write_chapter_descriptions(chapters_dir: str, chapters: List[Dict]) -> str:
+    """Write a copy-paste-ready chapters_description.txt next to the chapter
+    clip files. One block per chapter that actually has a clip_url, numbered
+    by position in `chapters` regardless of the clip's own filename. Each
+    block carries the ORIGINAL video's timestamp range as a reference (each
+    chapter is its own file, not a marker in one long video, but the range
+    is still useful context) plus the full `summary` -- unlike Shorts'
+    write_descriptions, there's no yt_title/hashtags/hook_strength here,
+    those fields don't exist on the chapter shape.
+    """
+    path = os.path.join(chapters_dir, "chapters_description.txt")
+    blocks = []
+    for i, c in enumerate(chapters, 1):
+        if not c.get("clip_url"):
+            continue
+        title = (c.get("title") or "Untitled Chapter").strip()
+        start = float(c.get("start_time") or 0.0)
+        end = float(c.get("end_time") or 0.0)
+        summary = (c.get("summary") or "").strip()
+        blocks.append(f"chapter {i:02d} - {title} ({start:.1f}s - {end:.1f}s)\n{summary}")
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n\n".join(blocks))
+        if blocks:
+            f.write("\n")
+
+    return path
+
+
 class _Tee:
     def __init__(self, *streams):
         self._streams = streams

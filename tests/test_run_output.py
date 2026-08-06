@@ -281,6 +281,54 @@ def test_write_descriptions_does_not_duplicate_hashtags_already_in_description(t
     assert content.count("#Shorts") == 1
 
 
+def test_write_chapter_descriptions_formats_one_block_per_chapter(tmp_path):
+    chapters = [
+        {
+            "clip_url": "01_Topic_One.mp4", "title": "Topic One",
+            "start_time": 12.5, "end_time": 340.0,
+            "summary": "They discuss the origin of the idea and where it went wrong.",
+        },
+        {
+            "clip_url": "02_Topic_Two.mp4", "title": "Topic Two",
+            "start_time": 340.0, "end_time": 610.25,
+            "summary": "A concrete example of the technique in practice.",
+        },
+    ]
+    path = run_output.write_chapter_descriptions(str(tmp_path), chapters)
+    content = Path(path).read_text()
+    assert content == (
+        "chapter 01 - Topic One (12.5s - 340.0s)\n"
+        "They discuss the origin of the idea and where it went wrong.\n\n"
+        "chapter 02 - Topic Two (340.0s - 610.2s)\n"
+        "A concrete example of the technique in practice.\n"
+    )
+
+
+def test_write_chapter_descriptions_skips_failed_clips_without_renumbering(tmp_path):
+    chapters = [
+        {"clip_url": None, "title": "Failed", "error": "boom"},
+        {
+            "clip_url": "02_Survivor.mp4", "title": "Survivor",
+            "start_time": 0.0, "end_time": 60.0, "summary": "It made it through.",
+        },
+    ]
+    path = run_output.write_chapter_descriptions(str(tmp_path), chapters)
+    content = Path(path).read_text()
+    assert content == "chapter 02 - Survivor (0.0s - 60.0s)\nIt made it through.\n"
+
+
+def test_write_chapter_descriptions_empty_list_writes_empty_file(tmp_path):
+    path = run_output.write_chapter_descriptions(str(tmp_path), [])
+    assert Path(path).read_text() == ""
+
+
+def test_write_chapter_descriptions_falls_back_on_missing_fields(tmp_path):
+    chapters = [{"clip_url": "01_X.mp4"}]
+    path = run_output.write_chapter_descriptions(str(tmp_path), chapters)
+    content = Path(path).read_text()
+    assert content == "chapter 01 - Untitled Chapter (0.0s - 0.0s)\n\n"
+
+
 def _touch(path, mtime):
     with open(path, "w") as f:
         f.write("x")
