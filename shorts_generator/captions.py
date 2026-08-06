@@ -317,6 +317,24 @@ def _probe_resolution(video_path: str) -> Tuple[int, int]:
         raise CaptionError(f"could not parse ffprobe output for {video_path}: {result.stdout!r}") from e
 
 
+def _probe_duration(video_path: str) -> float:
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "csv=p=0",
+        video_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        raise CaptionError(f"ffprobe failed on {video_path}: {e}") from e
+
+    try:
+        return float(result.stdout.strip())
+    except ValueError as e:
+        raise CaptionError(f"could not parse ffprobe duration for {video_path}: {result.stdout!r}") from e
+
+
 def _burn_chunks(
     video_path: str, chunks: List[Dict], out_path: str, fade_seconds: float, word_highlight: bool,
 ) -> str:

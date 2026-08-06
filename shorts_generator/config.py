@@ -30,6 +30,9 @@ LOCAL_LLM_TIMEOUT_SECONDS = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "180"))
 LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "base")
 LOCAL_WHISPER_DEVICE = os.getenv("LOCAL_WHISPER_DEVICE", "auto")  # auto / cpu / cuda
 LOCAL_OUTPUT_DIR = os.getenv("LOCAL_OUTPUT_DIR", "output")
+# "specific" -> slugified highlight title (e.g. my_big_moment.mp4)
+# "generic"  -> positional (video1.mp4, video2.mp4, ...)
+SHORT_FILENAME_STYLE = os.getenv("SHORT_FILENAME_STYLE", "specific").strip().lower()
 
 # VAD (Voice Activity Detection) settings for faster-whisper
 # Default threshold is 0.5; lower = more sensitive, higher = less sensitive

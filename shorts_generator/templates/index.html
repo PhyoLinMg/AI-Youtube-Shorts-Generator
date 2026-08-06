@@ -574,6 +574,16 @@
           </div>
 
           <div class="row">
+            <div>
+              <label for="filename_style">Clip filenames</label>
+              <select id="filename_style" name="filename_style">
+                <option value="specific" selected>specific (title1.mp4)</option>
+                <option value="generic">generic (video1.mp4)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
             <div class="checkbox-row">
               <label><input type="checkbox" id="captions" name="captions" checked> Burn captions</label>
             </div>
@@ -582,6 +592,9 @@
             </div>
             <div class="checkbox-row">
               <label><input type="checkbox" id="hook_card" name="hook_card" checked> Hook card</label>
+            </div>
+            <div class="checkbox-row">
+              <label><input type="checkbox" id="end_card" name="end_card"> End card</label>
             </div>
           </div>
           <label for="caption_fade_duration">Caption fade (s)</label>
@@ -1019,6 +1032,7 @@
       formData.set("captions", document.getElementById("captions").checked ? "true" : "false");
       formData.set("word_highlight", document.getElementById("word_highlight").checked ? "true" : "false");
       formData.set("hook_card", document.getElementById("hook_card").checked ? "true" : "false");
+      formData.set("end_card", document.getElementById("end_card").checked ? "true" : "false");
 
       try {
         const resp = await fetch("/run", { method: "POST", body: formData });

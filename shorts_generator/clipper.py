@@ -16,7 +16,7 @@ import requests
 from . import muapi
 from .jump_cuts import excise_cut_segments, JumpCutError
 from .captions import CaptionError, burn_captions, burn_captions_segments
-from .hook_card import HookCardError, render_card_overlay
+from .hook_card import HookCardError, render_card_overlay, render_end_card_overlay
 from .config import LOCAL_OUTPUT_DIR
 from .downloader import _extract_video_url
 from .run_output import unique_short_filename
@@ -55,7 +55,9 @@ def crop_highlights(
     caption_fade_duration: float = 0.3,
     word_highlight: bool = True,
     hook_card: bool = True,
+    end_card: bool = False,
     out_dir: Optional[str] = None,
+    filename_style: Optional[str] = None,
 ) -> list:
     """Crop every highlight, attaching the resulting URL back onto the dict."""
     out_dir = out_dir or LOCAL_OUTPUT_DIR
@@ -75,14 +77,16 @@ def crop_highlights(
             want_captions = captions and bool(transcript_segments)
             hook_text = str(h.get("on_screen_hook") or "").strip()
             want_hook_card = hook_card and bool(hook_text)
+            end_card_text = str(h.get("end_card_text") or "").strip()
+            want_end_card = end_card and bool(end_card_text)
             cut_segments = h.get("cut_segments") or [
                 {"start_time": h["start_time"], "end_time": h["end_time"]}
             ]
             want_excision = len(cut_segments) > 1
 
-            if want_captions or want_hook_card or want_excision:
+            if want_captions or want_hook_card or want_end_card or want_excision:
                 os.makedirs(out_dir, exist_ok=True)
-                filename = unique_short_filename(h.get("title"), used_names)
+                filename = unique_short_filename(h.get("title"), used_names, index=i, style=filename_style)
                 final_path = os.path.join(out_dir, filename)
                 downloaded_path = final_path + ".download.mp4"
                 try:
@@ -141,6 +145,15 @@ def crop_highlights(
                         except HookCardError as e:
                             print(f"[clip] {i} hook-card overlay skipped: {e}", flush=True)
                             entry["hook_card_error"] = str(e)
+
+                    if want_end_card:
+                        try:
+                            end_card_path = final_path + ".endcard.mp4"
+                            render_end_card_overlay(final_path, end_card_text, end_card_path)
+                            os.replace(end_card_path, final_path)
+                        except HookCardError as e:
+                            print(f"[clip] {i} end-card overlay skipped: {e}", flush=True)
+                            entry["end_card_error"] = str(e)
 
                     entry["clip_url"] = final_path
                     entry["hosted_clip_url"] = url

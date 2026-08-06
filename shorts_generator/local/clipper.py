@@ -22,7 +22,7 @@ import numpy as np
 
 from ..captions import CaptionError, burn_captions, burn_captions_segments
 from ..config import LOCAL_OUTPUT_DIR
-from ..hook_card import HookCardError, render_card_overlay
+from ..hook_card import HookCardError, render_card_overlay, render_end_card_overlay
 from ..jump_cuts import excise_cut_segments, JumpCutError
 from ..run_output import unique_short_filename
 
@@ -720,13 +720,17 @@ def crop_highlights_local(
     word_highlight: bool = True,
     framing: str = "locked",
     hook_card: bool = True,
+    end_card: bool = False,
+    filename_style: Optional[str] = None,
 ) -> List[Dict]:
     out_dir = out_dir or LOCAL_OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     results: List[Dict] = []
     used_names: set = set()
     for i, h in enumerate(highlights, 1):
-        out_path = os.path.join(out_dir, unique_short_filename(h.get("title"), used_names))
+        out_path = os.path.join(
+            out_dir, unique_short_filename(h.get("title"), used_names, index=i, style=filename_style)
+        )
         print(f"[clip/local] {i}/{len(highlights)}: {h.get('title', '(untitled)')}", flush=True)
         try:
             cut_segments = h.get("cut_segments") or [
@@ -748,6 +752,8 @@ def crop_highlights_local(
 
             hook_text = str(h.get("on_screen_hook") or "").strip()
             want_hook_card = hook_card and bool(hook_text)
+            end_card_text = str(h.get("end_card_text") or "").strip()
+            want_end_card = end_card and bool(end_card_text)
 
             if captions and transcript_segments:
                 captioned_path = out_path + ".captioned.mp4"
@@ -786,6 +792,15 @@ def crop_highlights_local(
                 except HookCardError as e:
                     print(f"[clip/local] {i} hook-card overlay skipped: {e}", flush=True)
                     entry["hook_card_error"] = str(e)
+
+            if want_end_card:
+                try:
+                    end_card_path = out_path + ".endcard.mp4"
+                    render_end_card_overlay(out_path, end_card_text, end_card_path)
+                    os.replace(end_card_path, out_path)
+                except HookCardError as e:
+                    print(f"[clip/local] {i} end-card overlay skipped: {e}", flush=True)
+                    entry["end_card_error"] = str(e)
 
             results.append(entry)
         except Exception as e:

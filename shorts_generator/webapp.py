@@ -50,6 +50,8 @@ def _run_job(
     word_highlight: bool,
     framing: str,
     hook_card: bool,
+    end_card: bool,
+    filename_style: str,
 ) -> None:
     try:
         paths = resolve_output_dir(url)
@@ -69,6 +71,8 @@ def _run_job(
             word_highlight=word_highlight,
             framing=framing,
             hook_card=hook_card,
+            end_card=end_card,
+            filename_style=filename_style,
             paths=paths,
         )
         with _job_lock:
@@ -171,7 +175,9 @@ def start_run():
             caption_fade_duration=float(request.form.get("caption_fade_duration", 0.3)),
             word_highlight=request.form.get("word_highlight", "true") == "true",
             hook_card=request.form.get("hook_card", "true") == "true",
+            end_card=request.form.get("end_card", "false") == "true",
             framing=request.form.get("framing", "locked"),
+            filename_style=request.form.get("filename_style", "specific"),
         )
     except (TypeError, ValueError) as e:
         return jsonify({"error": f"invalid input: {e}"}), 400

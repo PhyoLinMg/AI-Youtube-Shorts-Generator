@@ -61,12 +61,28 @@ def build_parser() -> argparse.ArgumentParser:
              "live footage for the first 1.5s; on by default).",
     )
     parser.add_argument(
+        "--end-card",
+        dest="end_card",
+        action="store_true",
+        default=False,
+        help="Enable the closing end-card overlay (bold on-screen follow-up CTA text over the "
+             "live footage for the last ~2s; off by default).",
+    )
+    parser.add_argument(
         "--framing",
         choices=["locked", "adaptive"],
         default="locked",
         help="locked (default): static speaker-centered crop. adaptive: cursor/person-aware crop "
              "for screen-recording content that alternates between facecam and screen activity "
              "(--mode local only).",
+    )
+    parser.add_argument(
+        "--filename-style",
+        choices=["specific", "generic"],
+        default=None,
+        help="specific (default): slugified highlight title, e.g. My_Big_Moment.mp4. "
+             "generic: positional, video1.mp4, video2.mp4, ... "
+             "Falls back to the SHORT_FILENAME_STYLE env var when unset.",
     )
     return parser
 
@@ -87,6 +103,8 @@ def main() -> int:
             word_highlight=args.word_highlight,
             framing=args.framing,
             hook_card=args.hook_card,
+            end_card=args.end_card,
+            filename_style=args.filename_style,
         )
     except Exception as e:
         print(f"\nFAILED: {e}", file=sys.stderr)

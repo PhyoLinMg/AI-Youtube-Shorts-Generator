@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
-from .config import LOCAL_OUTPUT_DIR
+from .config import LOCAL_OUTPUT_DIR, SHORT_FILENAME_STYLE
 
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9 _-]")
 _WHITESPACE = re.compile(r"\s+")
@@ -47,11 +47,24 @@ def sanitize_title(title: str, max_length: int = 100) -> str:
     return cleaned or "untitled"
 
 
-def unique_short_filename(title: str, used_names: set) -> str:
-    """Slugify a highlight's own title into a `.mp4` filename, deduping
-    against `used_names` (mutated in place) when two highlights share a
-    title within the same run."""
-    base = sanitize_title(title)
+def unique_short_filename(
+    title: str, used_names: set, index: Optional[int] = None, style: Optional[str] = None
+) -> str:
+    """Build a `.mp4` filename for a highlight, deduping against `used_names`
+    (mutated in place) when two highlights collide within the same run.
+
+    style="specific" (default, SHORT_FILENAME_STYLE env var) slugifies the
+    highlight's own title (e.g. my_big_moment.mp4). style="generic" ignores
+    the title and numbers clips positionally (video1.mp4, video2.mp4, ...)
+    using `index`, which callers must pass for generic style.
+    """
+    style = (style or SHORT_FILENAME_STYLE).strip().lower()
+    if style == "generic":
+        if index is None:
+            raise ValueError("index is required when style='generic'")
+        base = f"video{index}"
+    else:
+        base = sanitize_title(title)
     name = f"{base}.mp4"
     n = 2
     while name in used_names:

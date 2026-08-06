@@ -156,9 +156,10 @@ Rules:
 - Write a "description" — SHORTS-optimized, max 220 characters, original copy (NOT a transcript line) built to maximize views from BOTH the Shorts feed and YouTube search: line 1 is a hook line (<=150 chars, the only line most viewers see before "more"); line 2 works your primary keyword + 1-2 related terms in naturally (no keyword lists); line 3 is a short punchy CTA that drives session watch time — prefer a specific next-action tied to this content ("watch part 2" / "full video on my channel" / a pointed comment prompt) over a generic "follow/subscribe" ask. Do NOT include any emojis.
 - Write a "yt_title" — max 60 characters, a sharp Shorts title: Result/Hook + specific topic + for [audience]. Accurate to the clip, no emojis.
 - Write "yt_hashtags" — a JSON array of exactly 2-3 highly relevant NICHE hashtags (lowercase, leading #, no spaces). Always include "#Shorts" plus 1-2 topic-specific tags. Do NOT use generic spam tags (#fyp, #viral, #trending).
+- Write an "end_card_text" — a short punchy fragment, 7 words or fewer, distinct from on_screen_hook and description. This is bold text overlaid on screen for the LAST ~2 seconds of the clip, after the payoff has landed, so it must read as a follow-up action, not a teaser: a specific next-step tied to this content ("Follow for part 2", "Full story on my channel", "More like this →") over a generic "like/subscribe" ask. Do NOT include any emojis.
 
 Respond ONLY with valid JSON (no markdown, no explanation):
-{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","hook_strength":int,"hook_self_contained":bool,"hook_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"],"reaction_type":"string","cut_segments":[{{"start_time":float,"end_time":float}}],"tightness_reason":"string","format_clarity_score":int,"format_reason":"string","claim_specificity":int,"claim_specificity_reason":"string"}}]}}"""
+{{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","hook_strength":int,"hook_self_contained":bool,"hook_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"],"reaction_type":"string","cut_segments":[{{"start_time":float,"end_time":float}}],"tightness_reason":"string","format_clarity_score":int,"format_reason":"string","claim_specificity":int,"claim_specificity_reason":"string","end_card_text":"string"}}]}}"""
 
 
 CHUNK_SIZE_SECONDS = 1200       # 20-min chunks for long videos
@@ -166,12 +167,13 @@ LONG_VIDEO_THRESHOLD = 1800     # chunk videos longer than 30 min
 CHUNK_OVERLAP_SECONDS = 60
 GPT_CALL_TIMEOUT_SECONDS = 300  # cap LLM polls at 5 min — a wedged call should fail fast
 MAX_HIGHLIGHT_API_ATTEMPTS = 3
-HIGHLIGHT_SCHEMA_VERSION = 5    # bump whenever the highlight dict shape changes,
+HIGHLIGHT_SCHEMA_VERSION = 6    # bump whenever the highlight dict shape changes,
                                 # so a stale on-disk cache (missing new fields)
                                 # is treated as a miss instead of silently reused.
                                 # v3: added cut_segments, reaction_type, tightness_reason.
                                 # v4: added format_clarity_score, format_reason.
                                 # v5: added claim_specificity, claim_specificity_reason.
+                                # v6: added end_card_text.
 
 CLAIM_SPECIFICITY_THRESHOLD = 80  # candidates scoring below this fall to backfill in select_final_highlights
 
@@ -326,6 +328,7 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
                 "score": max(0, min(100, _coerce_int(item.get("score"), default=0))),
                 "hook_sentence": str(item.get("hook_sentence") or "").strip(),
                 "on_screen_hook": str(item.get("on_screen_hook") or "").strip()[:60],
+                "end_card_text": str(item.get("end_card_text") or "").strip()[:60],
                 "virality_reason": str(item.get("virality_reason") or "").strip(),
                 "hook_strength": max(0, min(100, _coerce_int(item.get("hook_strength"), default=0))),
                 "hook_self_contained": _coerce_bool(item.get("hook_self_contained"), default=False),

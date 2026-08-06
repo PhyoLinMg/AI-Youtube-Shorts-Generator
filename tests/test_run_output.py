@@ -35,6 +35,22 @@ def test_unique_short_filename_dedupes_repeated_titles():
     assert [first, second, third] == ["Same_Title.mp4", "Same_Title_2.mp4", "Same_Title_3.mp4"]
 
 
+def test_unique_short_filename_generic_style_ignores_title():
+    used = set()
+    first = run_output.unique_short_filename("Anything", used, index=1, style="generic")
+    second = run_output.unique_short_filename("Anything Else", used, index=2, style="generic")
+    assert [first, second] == ["video1.mp4", "video2.mp4"]
+
+
+def test_unique_short_filename_generic_style_requires_index():
+    used = set()
+    try:
+        run_output.unique_short_filename("Anything", used, style="generic")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
 class _FakeResponse:
     def __init__(self, status_code=200, json_data=None):
         self.status_code = status_code

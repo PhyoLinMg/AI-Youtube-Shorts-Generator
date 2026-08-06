@@ -65,6 +65,8 @@ def _run_local(
     word_highlight: bool = True,
     framing: str = "locked",
     hook_card: bool = True,
+    end_card: bool = False,
+    filename_style: Optional[str] = None,
 ) -> Dict:
     from .local.clipper import crop_highlights_local
     from .local.downloader import download_youtube_local
@@ -109,6 +111,8 @@ def _run_local(
         word_highlight=word_highlight,
         framing=framing,
         hook_card=hook_card,
+        end_card=end_card,
+        filename_style=filename_style,
     )
     shorts = _trim_to_num_clips(shorts, num_clips)
 
@@ -133,6 +137,8 @@ def _run_api(
     paths: RunPaths,
     word_highlight: bool = True,
     hook_card: bool = True,
+    end_card: bool = False,
+    filename_style: Optional[str] = None,
 ) -> Dict:
     # MuAPI /autocrop needs a fresh hosted URL for every crop, and that URL
     # only comes from /youtube-download — so this call can't be skipped on
@@ -195,7 +201,9 @@ def _run_api(
         caption_fade_duration=caption_fade_duration,
         word_highlight=word_highlight,
         hook_card=hook_card,
+        end_card=end_card,
         out_dir=paths.shorts_dir,
+        filename_style=filename_style,
     )
     shorts = _trim_to_num_clips(shorts, num_clips)
 
@@ -221,6 +229,8 @@ def generate_shorts(
     word_highlight: bool = True,
     framing: str = "locked",
     hook_card: bool = True,
+    end_card: bool = False,
+    filename_style: Optional[str] = None,
     paths: Optional[RunPaths] = None,
 ) -> Dict:
     """Run the full pipeline and return a structured result.
@@ -243,6 +253,13 @@ def generate_shorts(
         hook_card: composite a bold on-screen hook (from each highlight's
             "on_screen_hook") over the clip's live footage for its first
             1.5 seconds (default True).
+        end_card: composite a bold on-screen closing line (from each
+            highlight's "end_card_text") over the clip's last ~2 seconds
+            (default False).
+        filename_style: "specific" (default, slugified highlight title,
+            e.g. My_Big_Moment.mp4) or "generic" (positional, video1.mp4,
+            video2.mp4, ...). Falls back to the SHORT_FILENAME_STYLE env
+            var (config.py) when None.
         paths: pre-resolved RunPaths to use instead of resolving them from
             youtube_url. Callers that need to know progress_log's path before
             the pipeline starts (e.g. a background job) should resolve it
@@ -279,12 +296,14 @@ def generate_shorts(
         if mode == "local":
             result = _run_local(
                 youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
-                paths, word_highlight=word_highlight, framing=framing, hook_card=hook_card,
+                paths, word_highlight=word_highlight, framing=framing, hook_card=hook_card, end_card=end_card,
+                filename_style=filename_style,
             )
         else:
             result = _run_api(
                 youtube_url, num_clips, aspect_ratio, download_format, language, captions, caption_fade_duration,
-                paths, word_highlight=word_highlight, hook_card=hook_card,
+                paths, word_highlight=word_highlight, hook_card=hook_card, end_card=end_card,
+                filename_style=filename_style,
             )
 
         write_descriptions(paths.shorts_dir, result["shorts"])
