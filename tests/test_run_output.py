@@ -295,6 +295,7 @@ def test_write_chapter_descriptions_formats_one_block_per_chapter(tmp_path):
         },
     ]
     path = run_output.write_chapter_descriptions(str(tmp_path), chapters)
+    assert Path(path).name == "chapters_description.txt"
     content = Path(path).read_text()
     assert content == (
         "chapter 01 - Topic One (12.5s - 340.0s)\n"

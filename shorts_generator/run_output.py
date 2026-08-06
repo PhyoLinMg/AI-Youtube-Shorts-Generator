@@ -295,8 +295,10 @@ def write_descriptions(shorts_dir: str, shorts: List[Dict]) -> str:
 def write_chapter_descriptions(chapters_dir: str, chapters: List[Dict]) -> str:
     """Write a copy-paste-ready chapters_description.txt next to the chapter
     clip files. One block per chapter that actually has a clip_url, numbered
-    by position in `chapters` regardless of the clip's own filename. Each
-    block carries the ORIGINAL video's timestamp range as a reference (each
+    by position in `chapters` -- the same index unique_chapter_filename used
+    for that chapter's own filename, so "chapter 02" here lines up with
+    "02_..." on disk (unlike Shorts' write_descriptions, whose block number
+    has no relation to the short's own slugified-title filename). Each
     chapter is its own file, not a marker in one long video, but the range
     is still useful context) plus the full `summary` -- unlike Shorts'
     write_descriptions, there's no yt_title/hashtags/hook_strength here,
