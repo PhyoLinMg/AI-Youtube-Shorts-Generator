@@ -1,6 +1,8 @@
 import json
 import os
 
+import pytest
+
 from shorts_generator.highlights import (
     CHAPTER_SCHEMA_VERSION,
     CLAIM_SPECIFICITY_THRESHOLD,
@@ -10,6 +12,7 @@ from shorts_generator.highlights import (
     _sanitize_chapters,
     _sanitize_highlights,
     _transcript_fingerprint,
+    call_chapter_api,
     call_highlight_api,
     dedupe_chapters,
     dedupe_highlights,
@@ -606,3 +609,55 @@ def test_dedupe_chapters_adjacent_chapters_both_kept():
 
 def test_dedupe_chapters_empty_input_returns_empty():
     assert dedupe_chapters([]) == []
+
+
+def test_call_chapter_api_returns_sanitized_chapters():
+    def fake_llm_fn(prompt):
+        return json.dumps({
+            "chapters": [
+                {
+                    "title": "The Origin Story",
+                    "start_time": 0.0,
+                    "end_time": 300.0,
+                    "summary": "Full context on how the idea started.",
+                    "interest_reason": "complete arc",
+                }
+            ]
+        })
+
+    result = call_chapter_api(
+        "transcript text", {"content_type": "podcast", "density": "high"},
+        duration=1000.0, num_chapters=5, llm_fn=fake_llm_fn,
+    )
+    assert result["chapters"][0]["title"] == "The Origin Story"
+
+
+def test_call_chapter_api_retries_on_invalid_json_then_succeeds():
+    calls = {"n": 0}
+
+    def flaky_llm_fn(prompt):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "not json at all"
+        return json.dumps({
+            "chapters": [{"title": "Recovered", "start_time": 0.0, "end_time": 200.0}]
+        })
+
+    result = call_chapter_api(
+        "transcript text", {"content_type": "podcast", "density": "high"},
+        duration=1000.0, num_chapters=5, llm_fn=flaky_llm_fn,
+    )
+    assert result["chapters"][0]["title"] == "Recovered"
+    assert calls["n"] == 2
+
+
+def test_call_chapter_api_raises_after_max_attempts_with_real_error():
+    def always_fails(prompt):
+        raise TimeoutError("request timed out after 180s")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        call_chapter_api(
+            "transcript text", {"content_type": "podcast", "density": "high"},
+            duration=1000.0, num_chapters=5, llm_fn=always_fails,
+        )
+    assert "request timed out after 180s" in str(exc_info.value)

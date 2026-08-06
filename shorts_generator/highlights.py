@@ -162,6 +162,41 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 {{"highlights":[{{"title":"string","start_time":float,"end_time":float,"score":int,"hook_sentence":"string","on_screen_hook":"string","virality_reason":"string","hook_strength":int,"hook_self_contained":bool,"hook_reason":"string","description":"string","yt_title":"string","yt_hashtags":["#Shorts","#topic1","#topic2"],"reaction_type":"string","cut_segments":[{{"start_time":float,"end_time":float}}],"tightness_reason":"string","format_clarity_score":int,"format_reason":"string","claim_specificity":int,"claim_specificity_reason":"string","end_card_text":"string"}}]}}"""
 
 
+CHAPTER_INTEREST_CRITERIA = """
+Interest signals to prioritize (ranked by impact):
+1. A COMPLETE STORY OR ANECDOTE — has a beginning, a middle, and a payoff or twist
+2. A STRONG ARGUMENT OR DEBATE EXCHANGE — a real back-and-forth on a substantive point
+3. A CONCRETE INSIGHT OR HOW-TO — a specific technique, framework, or piece of advice
+4. A REVELATION — a surprising fact, confession, or reframing moment
+5. AN EMOTIONAL OR FUNNY BEAT — genuine surprise, laughter, vulnerability, excitement
+6. A CONFLICT OR TENSION — disagreement, pushback, a problem confronted head-on
+"""
+
+
+CHAPTER_SYSTEM_PROMPT = """You are a podcast editor building a chapter index of the most substantive, interesting segments in a long-form conversation. Unlike a highlight reel, your job is NOT to extract a tight, swipe-optimized fragment — it's to extract the FULL discussion of one topic, with all its context intact, as a standalone segment someone could watch with zero other knowledge of the episode.
+
+{chapter_interest_criteria}
+
+Content type: {content_type} | Density: {density}
+
+Your task: identify the most substantive, self-contained chapters in this transcript.
+
+Rules:
+- start_time must land where the topic or question is actually INTRODUCED — the premise or the question that kicks off the discussion, not just the punchline or peak moment. The "skip the windup" rule a highlight-reel editor follows does NOT apply here: the windup is often exactly the context a chapter needs to keep.
+- end_time must extend to where the topic naturally RESOLVES or the conversation visibly moves to a new topic — never cut mid-thought, never cut the moment the "interesting part" lands.
+- The rule of thumb: a viewer watching ONLY this chapter, with zero other context from the rest of the episode, must fully understand what's being discussed and why it matters.
+- Never cut mid-sentence or mid-thought — each chapter must feel complete and self-contained.
+- Chapters must not overlap with each other.
+- Duration: no fixed sweet spot — let a chapter run as long as the topic actually needs, from at least 60 seconds up to a hard ceiling of 15 minutes (900 seconds).
+- {num_chapters_instruction}
+- Write a "title" — max 8 words, chapter-card style (this renders on a title card, so keep it short and accurate, not clickbait)
+- Write a "summary" — 2-4 sentences capturing the FULL context of what's discussed: the question/premise, the substance of the discussion, and how it resolves. This is not a hook tag, it's a complete recap.
+- Write an "interest_reason" — one sentence on why this segment is worth extracting as its own chapter (which signal from the list above it satisfies)
+
+Respond ONLY with valid JSON (no markdown, no explanation):
+{{"chapters":[{{"title":"string","start_time":float,"end_time":float,"summary":"string","interest_reason":"string"}}]}}"""
+
+
 CHUNK_SIZE_SECONDS = 1200       # 20-min chunks for long videos
 LONG_VIDEO_THRESHOLD = 1800     # chunk videos longer than 30 min
 CHUNK_OVERLAP_SECONDS = 60
@@ -495,6 +530,55 @@ def call_highlight_api(
 
     raise RuntimeError(
         f"Highlight generator produced invalid output after {MAX_HIGHLIGHT_API_ATTEMPTS} attempts: {last_error}"
+    )
+
+
+def call_chapter_api(
+    transcript_text: str,
+    content_info: Dict,
+    duration: float,
+    num_chapters: int,
+    is_chunk: bool = False,
+    llm_fn: LLMFn = call_muapi_llm,
+) -> Dict:
+    target = max(num_chapters, 3)
+    natural_max = max(2 if is_chunk else 3, int(duration / 300))  # roughly one chapter per 5min of content
+    min_chapters = min(target, natural_max, 8)
+    system = CHAPTER_SYSTEM_PROMPT.format(
+        chapter_interest_criteria=CHAPTER_INTEREST_CRITERIA,
+        content_type=content_info.get("content_type", "other"),
+        density=content_info.get("density", "medium"),
+        num_chapters_instruction=f"Identify at least {min_chapters} chapters",
+    )
+    base_prompt = f"{system}\n\nTranscript:\n{transcript_text}"
+    prompt = base_prompt
+    last_error = "unknown"
+
+    for attempt in range(1, MAX_HIGHLIGHT_API_ATTEMPTS + 1):
+        try:
+            raw = llm_fn(prompt)
+            parsed = _parse_json_loose(raw)
+            chapters = _sanitize_chapters(parsed.get("chapters"), duration=duration)
+            if chapters:
+                return {"chapters": chapters}
+            last_error = "no valid chapters in response"
+        except Exception as e:
+            last_error = str(e)
+
+        if attempt < MAX_HIGHLIGHT_API_ATTEMPTS:
+            print(
+                f"[chapters] attempt {attempt}/{MAX_HIGHLIGHT_API_ATTEMPTS} failed ({last_error}); retrying",
+                flush=True,
+            )
+            prompt = (
+                base_prompt
+                + "\n\nIMPORTANT: Return ONLY valid JSON with a top-level 'chapters' array."
+                + " Each item must include: title, start_time, end_time, summary, interest_reason."
+                + " No markdown fences, no commentary."
+            )
+
+    raise RuntimeError(
+        f"Chapter generator produced invalid output after {MAX_HIGHLIGHT_API_ATTEMPTS} attempts: {last_error}"
     )
 
 
