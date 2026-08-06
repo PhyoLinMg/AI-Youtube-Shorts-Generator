@@ -17,6 +17,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+# Separate from OPENROUTER_MODEL: text ranking can run on a cheap non-vision
+# model (e.g. deepseek), but visual-hook scoring needs a vision-capable one.
+OPENROUTER_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", "openai/gpt-4o-mini")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
 # OpenAI/OpenRouter SDK default (600s read x up to 3 tries) lets a single
