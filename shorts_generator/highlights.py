@@ -137,7 +137,7 @@ Your task: identify the most viral-worthy highlights from the transcript.
 
 Rules:
 - Every highlight must open with a strong HOOK — a line that grabs attention within the first 3 seconds. start_time must land ON that hook line itself, never on preamble, silence, or filler before it — the clip opens cold, mid-energy, not with a slow windup
-- Duration sweet spot: 45-90 seconds. Go shorter (20-44s) only for a perfect standalone one-liner. Go longer (91-180s) only when a story arc needs full context to land
+- Duration sweet spot: 20-45 seconds. Go longer (46-90s) only when a story arc needs full context to land. Go longer still (91-180s) only for an exceptional multi-beat narrative
 - Never cut mid-sentence or mid-thought — each clip must feel complete and self-contained
 - Clips must not overlap significantly with each other
 - Score 0-100 on viral potential (not general quality)
@@ -176,6 +176,12 @@ HIGHLIGHT_SCHEMA_VERSION = 6    # bump whenever the highlight dict shape changes
                                 # v6: added end_card_text.
 
 CLAIM_SPECIFICITY_THRESHOLD = 80  # candidates scoring below this fall to backfill in select_final_highlights
+
+MAX_HIGHLIGHT_DURATION_SECONDS = 180  # hard ceiling matching the prompt's outer
+                                       # "exceptional multi-beat narrative" bound --
+                                       # the 20-45s sweet spot is prompt guidance only
+                                       # and the model doesn't always follow it, so this
+                                       # backstops runaway durations at sanitize time.
 
 
 def call_muapi_llm(prompt: str) -> str:
@@ -311,6 +317,8 @@ def _sanitize_highlights(raw_highlights: object, duration: float) -> List[Dict]:
             end = min(end, max_end)
             if end <= start:
                 continue
+
+        end = min(end, start + MAX_HIGHLIGHT_DURATION_SECONDS)
 
         cut_segments = _sanitize_cut_segments(item.get("cut_segments"), start, end) or [
             {"start_time": start, "end_time": end}
