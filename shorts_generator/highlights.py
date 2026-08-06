@@ -519,6 +519,21 @@ def dedupe_highlights(highlights: List[Dict]) -> List[Dict]:
     return kept
 
 
+def dedupe_chapters(chapters: List[Dict]) -> List[Dict]:
+    """Sort chapters chronologically and drop any chapter that overlaps the
+    previously-kept one at all (unlike dedupe_highlights' >50%-overlap
+    tolerance for ranked Shorts candidates -- chapters have no score to rank
+    by, and the goal is a clean sequential set that tiles the episode's
+    interesting parts, not competing candidates for the same moment)."""
+    ordered = sorted(chapters, key=lambda c: float(c["start_time"]))
+    kept: List[Dict] = []
+    for c in ordered:
+        if kept and float(c["start_time"]) < float(kept[-1]["end_time"]):
+            continue
+        kept.append(c)
+    return kept
+
+
 def select_final_highlights(
     all_highlights: List[Dict], num_clips: int, threshold: int = CLAIM_SPECIFICITY_THRESHOLD,
 ) -> List[Dict]:

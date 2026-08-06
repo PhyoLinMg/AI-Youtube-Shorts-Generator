@@ -11,6 +11,7 @@ from shorts_generator.highlights import (
     _sanitize_highlights,
     _transcript_fingerprint,
     call_highlight_api,
+    dedupe_chapters,
     dedupe_highlights,
     get_highlights,
     get_highlights_cached,
@@ -558,3 +559,36 @@ def test_chapter_duration_bounds_are_60_and_900():
 
 def test_chapter_schema_version_is_1():
     assert CHAPTER_SCHEMA_VERSION == 1
+
+
+def test_dedupe_chapters_keeps_non_overlapping_chapters_in_chronological_order():
+    chapters = [
+        {"title": "B", "start_time": 500.0, "end_time": 800.0},
+        {"title": "A", "start_time": 0.0, "end_time": 300.0},
+    ]
+    result = dedupe_chapters(chapters)
+    assert [c["title"] for c in result] == ["A", "B"]
+
+
+def test_dedupe_chapters_drops_any_overlap_with_previously_kept():
+    chapters = [
+        {"title": "A", "start_time": 0.0, "end_time": 300.0},
+        {"title": "B", "start_time": 250.0, "end_time": 600.0},  # overlaps A by 50s -> dropped
+        {"title": "C", "start_time": 600.0, "end_time": 900.0},  # starts exactly where A ended (via B's end) -- no overlap with A
+    ]
+    result = dedupe_chapters(chapters)
+    assert [c["title"] for c in result] == ["A", "C"]
+
+
+def test_dedupe_chapters_adjacent_chapters_both_kept():
+    # B starts exactly when A ends -- zero overlap, both kept
+    chapters = [
+        {"title": "A", "start_time": 0.0, "end_time": 300.0},
+        {"title": "B", "start_time": 300.0, "end_time": 600.0},
+    ]
+    result = dedupe_chapters(chapters)
+    assert [c["title"] for c in result] == ["A", "B"]
+
+
+def test_dedupe_chapters_empty_input_returns_empty():
+    assert dedupe_chapters([]) == []
