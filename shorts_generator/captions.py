@@ -11,13 +11,13 @@ import subprocess
 from typing import Dict, List, Tuple
 
 # ASS override tags for the karaoke-style active-word highlight: pop to
-# yellow + bold + 130% size. Line is centered, so growing the active word
-# shifts the whole line's rendered widrrth and re-centers it every word
-# (visible as the line jumping side to side) — accepted tradeoff for a
-# bigger highlight pop.
+# yellow + bold. No size scaling — a scaled word changes the line's
+# rendered width and re-centers the whole line every word, which reads as
+# the caption jumping/switching too fast even though only the highlight
+# moves.
 # `{\r}` resets back to the line's base `Caption` style for the remainder
 # of the text.
-_HIGHLIGHT_OPEN = "{\\c&H00FFFF&\\b1\\fscx130\\fscy130}"
+_HIGHLIGHT_OPEN = "{\\c&H00FFFF&\\b1}"
 _HIGHLIGHT_CLOSE = "{\\r}"
 
 FONT_DIR = os.path.join(os.path.dirname(__file__), "assets", "fonts")

@@ -203,17 +203,17 @@ def test_write_ass_emits_one_dialogue_per_word_with_highlight(tmp_path):
     assert content.count("Dialogue:") == 2          # one per word
     assert "\\c&H00FFFF&" in content                # yellow highlight
     assert "\\b1" in content                        # bold
-    assert "\\fscx" in content                      # scale bounce on highlight
-    assert "\\fscy" in content                      # scale bounce on highlight
+    assert "\\fscx" not in content                  # no scale bounce — would re-center line
+    assert "\\fscy" not in content                  # no scale bounce — would re-center line
     assert content.count("\\fad(300,0)") == 1       # fade on first word only
 
 
-def test_highlight_open_has_scale_bounce():
-    """Active word is scaled up (130%) on top of color/bold for a bigger
-    pop; this re-centers the (centered) caption line as focus moves word to
-    word, which is an accepted tradeoff for the bigger highlight."""
-    assert "\\fscx130" in _HIGHLIGHT_OPEN
-    assert "\\fscy130" in _HIGHLIGHT_OPEN
+def test_highlight_open_has_no_scale_bounce():
+    """Active word is color+bold only, no size scaling — scaling would
+    change the (centered) line's rendered width and re-center it every
+    word, reading as the caption jumping/switching too fast."""
+    assert "\\fscx" not in _HIGHLIGHT_OPEN
+    assert "\\fscy" not in _HIGHLIGHT_OPEN
     assert "\\c&H00FFFF&" in _HIGHLIGHT_OPEN
     assert "\\b1" in _HIGHLIGHT_OPEN
 
