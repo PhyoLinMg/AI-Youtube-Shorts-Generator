@@ -8,3 +8,5 @@ output/
 .DS_Store
 .claude/worktrees/
 .worktrees/
+*.log
+/result*.json
