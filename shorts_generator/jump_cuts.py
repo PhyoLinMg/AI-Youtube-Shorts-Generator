@@ -29,7 +29,11 @@ def excise_cut_segments(
     `source_path` (already trimmed to the highlight's envelope, starting at
     `envelope_start`), drop everything else, and write the concatenated
     result to `out_path`. Assumes `cut_segments` has at least one entry."""
-    tmp_dir = out_path + ".parts"
+    # Absolute so concat.txt entries resolve correctly regardless of whether
+    # ffmpeg's concat demuxer treats relative paths as relative to cwd or to
+    # the list file's own directory (it's the latter) -- a relative tmp_dir
+    # here previously got applied twice, e.g. "foo.parts/foo.parts/part0.mp4".
+    tmp_dir = os.path.abspath(out_path + ".parts")
     os.makedirs(tmp_dir, exist_ok=True)
     try:
         part_paths = []
