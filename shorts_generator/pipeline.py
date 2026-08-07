@@ -18,9 +18,9 @@ from typing import Dict, List, Optional
 
 from .clipper import _download_to, crop_highlights
 from .downloader import download_youtube
-from .highlights import call_muapi_llm, get_highlights_cached, select_final_highlights
+from .highlights import call_muapi_llm, get_chapters_cached, get_highlights_cached, select_final_highlights
 from .local.llm import call_openai_vision_llm
-from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_descriptions
+from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_chapter_descriptions, write_descriptions
 from .transcriber import transcribe
 from .visual_hook import call_muapi_vision_llm, score_visual_hooks
 
@@ -123,6 +123,61 @@ def _run_local(
         "transcript": transcript,
         "highlights": all_highlights,
         "shorts": shorts,
+    }
+
+
+def _run_local_chapters(
+    youtube_url: str,
+    num_chapters: int,
+    download_format: str,
+    language: Optional[str],
+    captions: bool,
+    caption_fade_duration: float,
+    paths: RunPaths,
+    word_highlight: bool = True,
+) -> Dict:
+    from .local.clipper import crop_chapters_local
+    from .local.downloader import download_youtube_local
+    from .local.llm import call_local_llm
+    from .local.transcriber import transcribe_local
+
+    if os.path.exists(paths.source_video):
+        print(f"[pipeline/local] reusing cached source: {paths.source_video}", flush=True)
+        source_path = paths.source_video
+    else:
+        source_path = download_youtube_local(youtube_url, target_path=paths.source_video, fmt=download_format)
+
+    transcript = transcribe_local(source_path, language=language)
+    if not transcript["segments"]:
+        raise RuntimeError(
+            "Whisper produced no segments. The video may have no detectable speech."
+        )
+
+    chapters_result = get_chapters_cached(
+        transcript, num_chapters=num_chapters, cache_path=paths.chapters_json, llm_fn=call_local_llm,
+    )
+    all_chapters: List[Dict] = chapters_result.get("chapters", [])
+    if not all_chapters:
+        raise RuntimeError("Chapter generator returned zero chapters.")
+    print(f"[pipeline/local] cropping {len(all_chapters)} chapters", flush=True)
+
+    chapters = crop_chapters_local(
+        source_path,
+        all_chapters,
+        out_dir=paths.chapters_dir,
+        transcript_segments=transcript["segments"],
+        captions=captions,
+        caption_fade_duration=caption_fade_duration,
+        word_highlight=word_highlight,
+    )
+    chapters = _trim_to_num_clips(chapters, num_chapters)
+
+    return {
+        "output_dir": paths.root,
+        "source_video_url": source_path,
+        "transcript": transcript,
+        "all_chapters": all_chapters,
+        "chapters": chapters,
     }
 
 
@@ -307,6 +362,55 @@ def generate_shorts(
             )
 
         write_descriptions(paths.shorts_dir, result["shorts"])
+
+        with open(paths.result_json, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2)
+
+    return result
+
+
+def generate_chapters(
+    youtube_url: str,
+    num_chapters: int = 5,
+    download_format: str = "1080",
+    language: Optional[str] = None,
+    captions: bool = True,
+    caption_fade_duration: float = 0.3,
+    word_highlight: bool = True,
+    paths: Optional[RunPaths] = None,
+) -> Dict:
+    """Run the chapter-cuts pipeline (local mode only) and return a
+    structured result. See generate_shorts for the parallel Shorts entry
+    point; this one has no `mode` param since chapters is local-only.
+
+    Args:
+        youtube_url: source URL.
+        num_chapters: target chapter count (the model may return 3-8 based
+            on natural topic boundaries; this is a target, not a hard slice).
+        download_format: source resolution ("360" / "480" / "720" / "1080").
+        language: ISO-639-1 to force Whisper language detection.
+        captions: burn near-bottom-edge captions onto each chapter (default True).
+        caption_fade_duration: caption fade-in duration in seconds (default 0.3).
+        word_highlight: highlight the currently-spoken word in each caption (default True).
+        paths: pre-resolved RunPaths to use instead of resolving them from youtube_url.
+
+    Returns:
+        {
+          "output_dir": str,         # output/<Title> for this run
+          "source_video_url": str,   # local path to the downloaded source
+          "transcript": {...},
+          "all_chapters": [...],     # every candidate chapter before trimming to num_chapters
+          "chapters": [...],         # top `num_chapters`, each with clip_url / *_error fields
+        }
+    """
+    paths = paths or resolve_output_dir(youtube_url)
+    with capture_progress_log(paths.progress_log):
+        result = _run_local_chapters(
+            youtube_url, num_chapters, download_format, language, captions, caption_fade_duration,
+            paths, word_highlight=word_highlight,
+        )
+
+        write_chapter_descriptions(paths.chapters_dir, result["chapters"])
 
         with open(paths.result_json, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2)

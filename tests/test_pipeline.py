@@ -654,3 +654,142 @@ def test_run_local_buffer_covers_a_single_crop_failure(tmp_path, monkeypatch):
 
     assert len(result["shorts"]) == 2
     assert all(s.get("clip_url") for s in result["shorts"])
+
+
+import shorts_generator.highlights as highlights_module
+
+
+def _fake_chapters_result():
+    return {"chapters": [{"start_time": 0.0, "end_time": 300.0, "title": "Chapter", "summary": "s"}]}
+
+
+def _fake_chapters_result_many(count):
+    return {
+        "chapters": [
+            {"start_time": float(i * 400), "end_time": float(i * 400) + 300.0, "title": f"Chapter {i}", "summary": "s"}
+            for i in range(count)
+        ]
+    }
+
+
+def test_run_local_chapters_threads_captions_params(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_chapters_cached",
+        lambda transcript, num_chapters, cache_path, llm_fn: _fake_chapters_result(),
+    )
+
+    crop_mock = Mock(return_value=[{"clip_url": "/tmp/out/01_Chapter.mp4"}])
+    monkeypatch.setattr(local_clipper_module, "crop_chapters_local", crop_mock)
+
+    result = pipeline_module._run_local_chapters(
+        "https://youtube.example/x",
+        num_chapters=1,
+        download_format="720",
+        language=None,
+        captions=False,
+        caption_fade_duration=0.7,
+        paths=_paths(tmp_path),
+        word_highlight=False,
+    )
+
+    assert result["chapters"] == [{"clip_url": "/tmp/out/01_Chapter.mp4"}]
+
+    _, kwargs = crop_mock.call_args
+    assert kwargs["captions"] is False
+    assert kwargs["caption_fade_duration"] == 0.7
+    assert kwargs["word_highlight"] is False
+    assert kwargs["transcript_segments"] == _fake_transcript()["segments"]
+
+
+def test_run_local_chapters_skips_download_when_source_already_exists(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    with open(paths.source_video, "wb") as f:
+        f.write(b"already downloaded")
+
+    def _fail_if_called(*a, **k):
+        raise AssertionError("download_youtube_local should not be called when full_source.mp4 exists")
+
+    monkeypatch.setattr(local_downloader_module, "download_youtube_local", _fail_if_called)
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_chapters_cached",
+        lambda transcript, num_chapters, cache_path, llm_fn: _fake_chapters_result(),
+    )
+    monkeypatch.setattr(local_clipper_module, "crop_chapters_local", Mock(return_value=[]))
+
+    result = pipeline_module._run_local_chapters(
+        "https://youtube.example/x", num_chapters=1, download_format="720", language=None,
+        captions=False, caption_fade_duration=0.3, paths=paths, word_highlight=True,
+    )
+    assert result["source_video_url"] == paths.source_video
+
+
+def test_run_local_chapters_raises_on_zero_chapters(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_chapters_cached",
+        lambda transcript, num_chapters, cache_path, llm_fn: {"chapters": []},
+    )
+
+    with pytest.raises(RuntimeError):
+        pipeline_module._run_local_chapters(
+            "https://youtube.example/x", num_chapters=1, download_format="720", language=None,
+            captions=False, caption_fade_duration=0.3, paths=_paths(tmp_path), word_highlight=True,
+        )
+
+
+def test_run_local_chapters_trims_extra_successes_to_num_chapters(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_chapters_cached",
+        lambda transcript, num_chapters, cache_path, llm_fn: _fake_chapters_result_many(5),
+    )
+
+    def all_succeed_crop(source_path, chapters, **kwargs):
+        return [{**c, "clip_url": f"/tmp/out/{c['title']}.mp4"} for c in chapters]
+
+    monkeypatch.setattr(local_clipper_module, "crop_chapters_local", all_succeed_crop)
+
+    result = pipeline_module._run_local_chapters(
+        "https://youtube.example/x", num_chapters=2, download_format="720", language=None,
+        captions=False, caption_fade_duration=0.3, paths=_paths(tmp_path), word_highlight=True,
+    )
+    assert len(result["chapters"]) == 2
+
+
+def test_generate_chapters_writes_chapter_descriptions_and_result_json(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_chapters_cached",
+        lambda transcript, num_chapters, cache_path, llm_fn: _fake_chapters_result(),
+    )
+    monkeypatch.setattr(
+        local_clipper_module, "crop_chapters_local",
+        Mock(return_value=[{"start_time": 0.0, "end_time": 300.0, "title": "Chapter", "summary": "s", "clip_url": os.path.join(paths.chapters_dir, "01_Chapter.mp4")}]),
+    )
+
+    result = pipeline_module.generate_chapters("https://youtube.example/x", paths=paths)
+
+    assert result["output_dir"] == paths.root
+    assert os.path.exists(os.path.join(paths.chapters_dir, "chapters_description.txt"))
+    assert os.path.exists(paths.result_json)
+    assert os.path.exists(paths.progress_log)
