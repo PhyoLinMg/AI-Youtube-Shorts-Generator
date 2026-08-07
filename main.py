@@ -84,6 +84,20 @@ def build_parser() -> argparse.ArgumentParser:
              "generic: positional, video1.mp4, video2.mp4, ... "
              "Falls back to the SHORT_FILENAME_STYLE env var when unset.",
     )
+    parser.add_argument(
+        "--clip-type",
+        choices=["shorts", "chapters"],
+        default="shorts",
+        help="shorts (default): viral 9:16 Shorts. chapters: long-form landscape "
+             "chapter cuts, up to 15min each, full topic context, --mode local only.",
+    )
+    parser.add_argument(
+        "--num-chapters",
+        type=int,
+        default=5,
+        help="Target chapter count for --clip-type chapters (default: 5); the model "
+             "may return 3-8 based on natural topic boundaries.",
+    )
     return parser
 
 

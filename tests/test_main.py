@@ -1,3 +1,5 @@
+import pytest
+
 from main import build_parser
 
 
@@ -37,3 +39,28 @@ def test_hook_card_on_by_default():
 def test_no_hook_card_flag_disables():
     args = build_parser().parse_args(["https://example.com/video", "--no-hook-card"])
     assert args.hook_card is False
+
+
+def test_clip_type_defaults_to_shorts():
+    args = build_parser().parse_args(["https://example.com/video"])
+    assert args.clip_type == "shorts"
+
+
+def test_clip_type_chapters_flag():
+    args = build_parser().parse_args(["https://example.com/video", "--clip-type", "chapters"])
+    assert args.clip_type == "chapters"
+
+
+def test_num_chapters_defaults_to_5():
+    args = build_parser().parse_args(["https://example.com/video"])
+    assert args.num_chapters == 5
+
+
+def test_num_chapters_flag_overrides_default():
+    args = build_parser().parse_args(["https://example.com/video", "--num-chapters", "8"])
+    assert args.num_chapters == 8
+
+
+def test_clip_type_rejects_invalid_value():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["https://example.com/video", "--clip-type", "bogus"])
