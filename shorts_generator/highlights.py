@@ -538,11 +538,10 @@ def call_chapter_api(
     content_info: Dict,
     duration: float,
     num_chapters: int,
-    is_chunk: bool = False,
     llm_fn: LLMFn = call_muapi_llm,
 ) -> Dict:
     target = max(num_chapters, 3)
-    natural_max = max(2 if is_chunk else 3, int(duration / 300))  # roughly one chapter per 5min of content
+    natural_max = max(3, int(duration / 300))  # roughly one chapter per 5min of content
     min_chapters = min(target, natural_max, 8)
     system = CHAPTER_SYSTEM_PROMPT.format(
         chapter_interest_criteria=CHAPTER_INTEREST_CRITERIA,
@@ -678,6 +677,81 @@ def get_highlights(
         highlights = dedupe_highlights(result.get("highlights", []))
 
     return {"highlights": highlights}
+
+
+def get_chapters(
+    transcript: Dict,
+    num_chapters: int = 5,
+    llm_fn: Optional[LLMFn] = None,
+) -> Dict:
+    """Main entry point for chapter selection — returns {chapters: [...]}
+    sorted chronologically. Unlike get_highlights, this never chunks the
+    transcript even for very long videos: a chapter can run up to
+    MAX_CHAPTER_DURATION_SECONDS (900s), longer than chunk_transcript's
+    60s overlap window, so a topic straddling a chunk boundary would get
+    truncated in a way dedupe_chapters can't recover (it has no way to
+    tell a truncated-but-valid chapter from a genuinely shorter one, and
+    picks whichever started earliest). One call over the full transcript
+    is simpler and fails loudly (via call_chapter_api's RuntimeError) on
+    an oversized transcript instead of silently truncating chapters.
+    """
+    llm_fn = llm_fn or call_muapi_llm
+    duration = transcript.get("duration", 0)
+    content_info = detect_content_type(transcript, llm_fn=llm_fn)
+    print(f"[chapters] content={content_info.get('content_type')} density={content_info.get('density')} duration={duration:.0f}s", flush=True)
+
+    text = build_transcript_text(transcript)
+    result = call_chapter_api(text, content_info, duration, num_chapters=num_chapters, llm_fn=llm_fn)
+    chapters = dedupe_chapters(result.get("chapters", []))
+
+    return {"chapters": chapters}
+
+
+def get_chapters_cached(
+    transcript: Dict,
+    num_chapters: int,
+    cache_path: str,
+    llm_fn: Optional[LLMFn] = None,
+) -> Dict:
+    """Wraps get_chapters with an on-disk cache keyed by a transcript
+    content fingerprint + num_chapters, mirroring get_highlights_cached."""
+    fingerprint = _transcript_fingerprint(transcript)
+
+    if os.path.exists(cache_path):
+        cached = None
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+        except json.JSONDecodeError:
+            print(f"[chapters] cached chapters corrupted, recomputing: {cache_path}", flush=True)
+
+        if (
+            isinstance(cached, dict)
+            and cached.get("transcript_fingerprint") == fingerprint
+            and cached.get("num_chapters") == num_chapters
+            and cached.get("schema_version") == CHAPTER_SCHEMA_VERSION
+            and isinstance(cached.get("chapters"), list)
+        ):
+            print(f"[chapters] reusing cached chapters: {cache_path}", flush=True)
+            return {"chapters": cached["chapters"]}
+
+    result = get_chapters(transcript, num_chapters=num_chapters, llm_fn=llm_fn or call_muapi_llm)
+
+    tmp_path = cache_path + ".part"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "transcript_fingerprint": fingerprint,
+                "num_chapters": num_chapters,
+                "schema_version": CHAPTER_SCHEMA_VERSION,
+                "chapters": result.get("chapters", []),
+            },
+            f,
+            ensure_ascii=False,
+        )
+    os.replace(tmp_path, cache_path)
+
+    return result
 
 
 def get_highlights_cached(

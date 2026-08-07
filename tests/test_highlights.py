@@ -16,6 +16,8 @@ from shorts_generator.highlights import (
     call_highlight_api,
     dedupe_chapters,
     dedupe_highlights,
+    get_chapters,
+    get_chapters_cached,
     get_highlights,
     get_highlights_cached,
     select_final_highlights,
@@ -661,3 +663,95 @@ def test_call_chapter_api_raises_after_max_attempts_with_real_error():
             duration=1000.0, num_chapters=5, llm_fn=always_fails,
         )
     assert "request timed out after 180s" in str(exc_info.value)
+
+
+def _fake_chapter_llm_responses(chapter_title):
+    def fake_llm_fn(prompt):
+        if "Analyze this video transcript" in prompt:
+            return '{"content_type": "podcast", "density": "high"}'
+        return (
+            '{"chapters": [{"title": "%s", "start_time": 0.0, "end_time": 300.0, '
+            '"summary": "full context here", "interest_reason": "reason"}]}' % chapter_title
+        )
+    return fake_llm_fn
+
+
+def test_get_chapters_returns_deduped_chapters():
+    transcript = {"duration": 1000.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi there"}]}
+    result = get_chapters(transcript, num_chapters=3, llm_fn=_fake_chapter_llm_responses("Chapter One"))
+    assert result["chapters"][0]["title"] == "Chapter One"
+
+
+def test_get_chapters_does_not_chunk_even_above_long_video_threshold():
+    # duration well above LONG_VIDEO_THRESHOLD (1800s) -- must still be ONE
+    # call_chapter_api call, not routed through chunk_transcript. A second
+    # call (or a call using a chunk-relative duration) would prove chunking
+    # crept back in.
+    calls = []
+
+    def fake_llm_fn(prompt):
+        if "Analyze this video transcript" in prompt:
+            return '{"content_type": "podcast", "density": "high"}'
+        calls.append(prompt)
+        return '{"chapters": [{"title": "Whole Thing", "start_time": 0.0, "end_time": 300.0}]}'
+
+    transcript = {
+        "duration": 10000.0,  # ~2h47m, far above LONG_VIDEO_THRESHOLD
+        "segments": [{"start": 0.0, "end": 5.0, "text": "hi there"}],
+    }
+    result = get_chapters(transcript, num_chapters=3, llm_fn=fake_llm_fn)
+
+    assert len(calls) == 1
+    assert result["chapters"][0]["title"] == "Whole Thing"
+
+
+def test_get_chapters_cached_calls_llm_and_writes_cache_on_miss(tmp_path):
+    cache_path = str(tmp_path / "chapters.json")
+    transcript = {"duration": 1000.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi there"}]}
+
+    result = get_chapters_cached(
+        transcript, num_chapters=3, cache_path=cache_path, llm_fn=_fake_chapter_llm_responses("Chapter One")
+    )
+
+    assert result["chapters"][0]["title"] == "Chapter One"
+    assert os.path.exists(cache_path)
+    with open(cache_path) as f:
+        cached = json.load(f)
+    assert cached["num_chapters"] == 3
+    assert cached["schema_version"] == CHAPTER_SCHEMA_VERSION
+    assert cached["transcript_fingerprint"] == _transcript_fingerprint(transcript)
+
+
+def test_get_chapters_cached_skips_llm_on_matching_cache(tmp_path):
+    cache_path = str(tmp_path / "chapters.json")
+    transcript = {"duration": 1000.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi there"}]}
+    with open(cache_path, "w") as f:
+        json.dump({
+            "transcript_fingerprint": _transcript_fingerprint(transcript),
+            "num_chapters": 3,
+            "schema_version": CHAPTER_SCHEMA_VERSION,
+            "chapters": [{"title": "Cached Chapter", "start_time": 0.0, "end_time": 300.0}],
+        }, f)
+
+    def fail_if_called(prompt):
+        raise AssertionError("llm_fn should not be called on a cache hit")
+
+    result = get_chapters_cached(transcript, num_chapters=3, cache_path=cache_path, llm_fn=fail_if_called)
+    assert result["chapters"][0]["title"] == "Cached Chapter"
+
+
+def test_get_chapters_cached_recomputes_on_schema_version_mismatch(tmp_path):
+    cache_path = str(tmp_path / "chapters.json")
+    transcript = {"duration": 1000.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi there"}]}
+    with open(cache_path, "w") as f:
+        json.dump({
+            "transcript_fingerprint": _transcript_fingerprint(transcript),
+            "num_chapters": 3,
+            "schema_version": CHAPTER_SCHEMA_VERSION - 1,
+            "chapters": [{"title": "Stale Chapter", "start_time": 0.0, "end_time": 300.0}],
+        }, f)
+
+    result = get_chapters_cached(
+        transcript, num_chapters=3, cache_path=cache_path, llm_fn=_fake_chapter_llm_responses("Fresh Chapter")
+    )
+    assert result["chapters"][0]["title"] == "Fresh Chapter"
