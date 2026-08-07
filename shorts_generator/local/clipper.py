@@ -263,7 +263,7 @@ def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> s
             capture_output=True, text=True, check=True,
         )
         duration = float(probe.stdout.strip())
-    except (subprocess.CalledProcessError, ValueError):
+    except (subprocess.CalledProcessError, ValueError, OSError):
         duration = None
     if not duration or duration <= 0:
         if os.path.exists(out_path):

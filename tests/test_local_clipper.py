@@ -7,7 +7,7 @@ import pytest
 
 import shorts_generator.local.clipper as local_clipper_module
 from shorts_generator import captions as captions_module
-from shorts_generator.local.clipper import _clamp_crop_origin, crop_chapters_local, crop_highlights_local
+from shorts_generator.local.clipper import _clamp_crop_origin, _cut_subclip, crop_chapters_local, crop_highlights_local
 
 
 @pytest.fixture(scope="module")
@@ -833,3 +833,32 @@ def test_crop_chapters_local_failure_is_recorded_and_run_continues(tmp_path, syn
     assert "error" in results[0]
     assert results[1]["clip_url"] is not None
     assert os.path.exists(results[1]["clip_url"])
+
+
+def test_cut_subclip_raises_and_cleans_up_on_out_of_range_window(tmp_path, synthetic_source):
+    """Direct unit test of _cut_subclip's postcondition (shared by both the
+    Shorts and chapters render paths): ffmpeg exits 0 on a -ss/-to window
+    past the source's actual duration, producing a near-empty durationless
+    file instead of erroring. _cut_subclip must detect that, remove the
+    garbage file, and raise -- proven here independent of either caller."""
+    out_path = str(tmp_path / "out.mp4")
+    with pytest.raises(RuntimeError, match=r"no usable output"):
+        _cut_subclip(synthetic_source, 900.0, 950.0, out_path)
+    assert not os.path.exists(out_path)
+
+
+def test_crop_highlights_local_out_of_range_window_records_error_not_garbage_clip(tmp_path, synthetic_source):
+    """Regression test for the Shorts path: crop_highlights_local must
+    surface an out-of-range highlight as clip_url=None + an error key
+    (via _cut_subclip's postcondition), not silently emit a garbage clip --
+    this behavior changed for this path as a side effect of the chapters
+    task's _cut_subclip hardening, and previously had zero coverage."""
+    bad_highlight = {"title": "Bad", "start_time": 900.0, "end_time": 950.0, "score": 90}
+    out_dir = str(tmp_path / "out")
+    results = crop_highlights_local(
+        synthetic_source, [bad_highlight], aspect_ratio="9:16", out_dir=out_dir,
+        captions=False, hook_card=False,
+    )
+    assert results[0]["clip_url"] is None
+    assert "error" in results[0]
+
