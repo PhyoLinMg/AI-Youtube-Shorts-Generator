@@ -7,7 +7,7 @@ import pytest
 
 import shorts_generator.local.clipper as local_clipper_module
 from shorts_generator import captions as captions_module
-from shorts_generator.local.clipper import _clamp_crop_origin, crop_highlights_local
+from shorts_generator.local.clipper import _clamp_crop_origin, crop_chapters_local, crop_highlights_local
 
 
 @pytest.fixture(scope="module")
@@ -709,3 +709,127 @@ def test_excision_failure_falls_back_to_plain_captions_on_unexcised_clip(tmp_pat
     assert abs(duration - 3.0) < 0.3  # un-excised envelope duration
     assert len(plain_calls) == 1
     assert len(segments_calls) == 0
+
+
+def _chapter():
+    return {
+        "title": "Test Chapter", "start_time": 1.0, "end_time": 4.0,
+        "summary": "A short test chapter.",
+    }
+
+
+def test_crop_chapters_local_produces_landscape_output_no_crop(tmp_path, synthetic_source):
+    out_dir = str(tmp_path / "out")
+    results = crop_chapters_local(
+        synthetic_source, [_chapter()], out_dir=out_dir, transcript_segments=_segments(),
+    )
+
+    assert len(results) == 1
+    assert results[0]["clip_url"] is not None
+    assert os.path.exists(results[0]["clip_url"])
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", results[0]["clip_url"]],
+        capture_output=True, text=True, check=True,
+    )
+    width, height = (int(v) for v in probe.stdout.strip().split(","))
+    # synthetic_source is 640x360 -- output must match the SOURCE frame size,
+    # not a vertical-HD canvas like the Shorts crop path produces.
+    assert (width, height) == (640, 360)
+
+
+def test_crop_chapters_local_output_duration_matches_trim_window(tmp_path, synthetic_source):
+    out_dir = str(tmp_path / "out")
+    results = crop_chapters_local(
+        synthetic_source, [_chapter()], out_dir=out_dir, transcript_segments=_segments(), captions=False,
+    )
+    duration = _probe_duration(results[0]["clip_url"])
+    assert abs(duration - 3.0) < 0.3  # end_time(4.0) - start_time(1.0)
+
+
+def test_crop_chapters_local_filename_uses_numbered_prefix(tmp_path, synthetic_source):
+    out_dir = str(tmp_path / "out")
+    results = crop_chapters_local(
+        synthetic_source, [_chapter()], out_dir=out_dir, transcript_segments=_segments(),
+    )
+    assert os.path.basename(results[0]["clip_url"]) == "01_Test_Chapter.mp4"
+
+
+def test_crop_chapters_local_second_chapter_gets_prefix_02(tmp_path, synthetic_source):
+    out_dir = str(tmp_path / "out")
+    chapter_two = {**_chapter(), "title": "Second Chapter", "start_time": 0.5, "end_time": 2.0}
+    results = crop_chapters_local(
+        synthetic_source, [_chapter(), chapter_two], out_dir=out_dir, transcript_segments=_segments(),
+    )
+    basenames = [os.path.basename(r["clip_url"]) for r in results]
+    assert basenames == ["01_Test_Chapter.mp4", "02_Second_Chapter.mp4"]
+
+
+def test_crop_chapters_local_captions_burned_by_default(tmp_path, synthetic_source):
+    out_dir = str(tmp_path / "out")
+    results = crop_chapters_local(
+        synthetic_source, [_chapter()], out_dir=out_dir, transcript_segments=_segments(),
+    )
+    assert "captions_error" not in results[0]
+
+
+def test_crop_chapters_local_captions_disabled_skips_burn_in(tmp_path, synthetic_source, monkeypatch):
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("burn_captions should not be called when captions=False")
+    monkeypatch.setattr("shorts_generator.local.clipper.burn_captions", _fail_if_called)
+
+    out_dir = str(tmp_path / "out")
+    results = crop_chapters_local(
+        synthetic_source, [_chapter()], out_dir=out_dir, transcript_segments=_segments(), captions=False,
+    )
+    assert results[0]["clip_url"] is not None
+    assert os.path.exists(results[0]["clip_url"])
+
+
+def test_crop_chapters_local_caption_failure_falls_back_to_plain_clip(tmp_path, synthetic_source, monkeypatch):
+    def _raise(*args, **kwargs):
+        raise captions_module.CaptionError("boom")
+    monkeypatch.setattr("shorts_generator.local.clipper.burn_captions", _raise)
+
+    out_dir = str(tmp_path / "out")
+    results = crop_chapters_local(
+        synthetic_source, [_chapter()], out_dir=out_dir, transcript_segments=_segments(),
+    )
+    assert results[0]["clip_url"] is not None
+    assert os.path.exists(results[0]["clip_url"])
+    assert results[0]["captions_error"] == "boom"
+
+
+def test_crop_chapters_local_uses_chapter_bottom_margin(tmp_path, synthetic_source, monkeypatch):
+    # Same spy shape as test_local_clipper.py's existing
+    # test_word_highlight_flag_forwarded_to_burn: burn_captions is called
+    # positionally (out_path, transcript_segments, start, end, captioned_path),
+    # so args[4] is always the destination path to fake-write.
+    captured = {}
+
+    def _spy(*args, **kwargs):
+        captured.update(kwargs)
+        import shutil
+        shutil.copyfile(args[0], args[4])
+        return args[4]
+
+    monkeypatch.setattr("shorts_generator.local.clipper.burn_captions", _spy)
+    crop_chapters_local(
+        synthetic_source, [_chapter()], out_dir=str(tmp_path / "out"), transcript_segments=_segments(),
+    )
+    assert captured["bottom_margin_frac"] == local_clipper_module.CHAPTER_CAPTION_BOTTOM_MARGIN_FRAC
+    assert local_clipper_module.CHAPTER_CAPTION_BOTTOM_MARGIN_FRAC == 0.06
+
+
+def test_crop_chapters_local_failure_is_recorded_and_run_continues(tmp_path, synthetic_source):
+    bad_chapter = {"title": "Bad", "start_time": 900.0, "end_time": 950.0}  # way past the 6s source
+    good_chapter = _chapter()
+    out_dir = str(tmp_path / "out")
+    results = crop_chapters_local(
+        synthetic_source, [bad_chapter, good_chapter], out_dir=out_dir, transcript_segments=_segments(),
+    )
+    assert len(results) == 2
+    assert results[0]["clip_url"] is None
+    assert "error" in results[0]
+    assert results[1]["clip_url"] is not None
+    assert os.path.exists(results[1]["clip_url"])

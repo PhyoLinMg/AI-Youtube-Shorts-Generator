@@ -24,7 +24,7 @@ from ..captions import CaptionError, burn_captions, burn_captions_segments
 from ..config import LOCAL_OUTPUT_DIR
 from ..hook_card import HookCardError, render_card_overlay, render_end_card_overlay
 from ..jump_cuts import excise_cut_segments, JumpCutError
-from ..run_output import unique_short_filename
+from ..run_output import unique_chapter_filename, unique_short_filename
 
 # --- adaptive framing tunables -------------------------------------------------
 PERSON_FACE_MIN_W_FRAC = 0.12   # face width as a fraction of src width to count as "main person"
@@ -57,6 +57,12 @@ SCENE_CUT_SAMPLE_SIZE = (160, 90)  # downscale target for frames retained in
                                     # survives thumbnail-scale just fine
 
 OUTPUT_CANVAS_H = 1920          # final render height regardless of source resolution
+
+CHAPTER_CAPTION_BOTTOM_MARGIN_FRAC = 0.06  # landscape chapter clips have no
+                                            # platform UI to dodge (no Shorts
+                                            # reply/like column) -- captions
+                                            # sit near the bottom edge, not
+                                            # pushed up to Shorts' 0.30
 
 
 def _output_size(target_ratio: float) -> Tuple[int, int]:
@@ -229,7 +235,16 @@ def _merge_short_segments(
 
 
 def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> str:
-    """ffmpeg -ss start -to end → re-encoded mp4 with audio."""
+    """ffmpeg -ss start -to end → re-encoded mp4 with audio.
+
+    A `-ss` past the source's actual duration is not an ffmpeg error -- it
+    exits 0 having seeked straight to EOF and written a near-empty,
+    durationless mp4 (confirmed empirically: a 262-byte file, `ffprobe
+    format=duration` -> "N/A"). Without this postcondition check that
+    "success" silently propagates as a garbage clip_url instead of a
+    reported error, so verify the output actually has a positive duration
+    and raise (removing the garbage file first) if it doesn't.
+    """
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", source_path,
@@ -240,6 +255,20 @@ def _cut_subclip(source_path: str, start: float, end: float, out_path: str) -> s
         out_path,
     ]
     subprocess.run(cmd, check=True)
+
+    duration = None
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out_path],
+            capture_output=True, text=True, check=True,
+        )
+        duration = float(probe.stdout.strip())
+    except (subprocess.CalledProcessError, ValueError):
+        duration = None
+    if not duration or duration <= 0:
+        if os.path.exists(out_path):
+            os.remove(out_path)
+        raise RuntimeError(f"ffmpeg produced no usable output for [{start}, {end}] from {source_path}")
     return out_path
 
 
@@ -806,4 +835,56 @@ def crop_highlights_local(
         except Exception as e:
             print(f"[clip/local] {i} failed: {e}", flush=True)
             results.append({**h, "clip_url": None, "error": str(e)})
+    return results
+
+
+def crop_chapters_local(
+    source_path: str,
+    chapters: List[Dict],
+    out_dir: Optional[str] = None,
+    transcript_segments: Optional[List[Dict]] = None,
+    captions: bool = True,
+    caption_fade_duration: float = 0.3,
+    word_highlight: bool = True,
+) -> List[Dict]:
+    """Trim every chapter to its own landscape mp4 -- no crop, no hook/end
+    card, no jump-cut excision (the whole selected span is kept intact by
+    design). Captions burn near the bottom edge via
+    CHAPTER_CAPTION_BOTTOM_MARGIN_FRAC instead of Shorts' 0.30.
+    """
+    out_dir = out_dir or LOCAL_OUTPUT_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    results: List[Dict] = []
+    used_names: set = set()
+    for i, c in enumerate(chapters, 1):
+        out_path = os.path.join(out_dir, unique_chapter_filename(c.get("title"), i, used_names))
+        print(f"[chapter/local] {i}/{len(chapters)}: {c.get('title', '(untitled)')}", flush=True)
+        try:
+            _cut_subclip(source_path, float(c["start_time"]), float(c["end_time"]), out_path)
+            entry = {**c, "clip_url": out_path}
+
+            if captions and transcript_segments:
+                captioned_path = out_path + ".captioned.mp4"
+                try:
+                    burn_captions(
+                        out_path,
+                        transcript_segments,
+                        float(c["start_time"]),
+                        float(c["end_time"]),
+                        captioned_path,
+                        fade_seconds=caption_fade_duration,
+                        word_highlight=word_highlight,
+                        bottom_margin_frac=CHAPTER_CAPTION_BOTTOM_MARGIN_FRAC,
+                    )
+                    os.replace(captioned_path, out_path)
+                except CaptionError as e:
+                    print(f"[chapter/local] {i} captions skipped: {e}", flush=True)
+                    entry["captions_error"] = str(e)
+                    if os.path.exists(captioned_path):
+                        os.remove(captioned_path)
+
+            results.append(entry)
+        except Exception as e:
+            print(f"[chapter/local] {i} failed: {e}", flush=True)
+            results.append({**c, "clip_url": None, "error": str(e)})
     return results
