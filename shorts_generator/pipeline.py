@@ -170,7 +170,13 @@ def _run_local_chapters(
         caption_fade_duration=caption_fade_duration,
         word_highlight=word_highlight,
     )
-    chapters = _trim_to_num_clips(chapters, num_chapters)
+    # No _trim_to_num_clips here (unlike the Shorts path): num_chapters is a
+    # target/floor hint fed into the LLM prompt, not a post-render slice --
+    # chapters have no score to rank by, so a hard cutoff here would always
+    # discard whichever chapters happen to sort last chronologically, after
+    # already paying the full crop/caption-burn cost for them. The actual
+    # count ceiling (MAX_CHAPTERS_PER_EPISODE) is enforced in
+    # highlights.get_chapters, before any chapter reaches this function.
 
     return {
         "output_dir": paths.root,

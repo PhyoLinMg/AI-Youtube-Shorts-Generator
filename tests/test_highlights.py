@@ -8,6 +8,7 @@ from shorts_generator.highlights import (
     CLAIM_SPECIFICITY_THRESHOLD,
     HIGHLIGHT_SCHEMA_VERSION,
     MAX_CHAPTER_DURATION_SECONDS,
+    MAX_CHAPTERS_PER_EPISODE,
     MIN_CHAPTER_DURATION_SECONDS,
     _sanitize_chapters,
     _sanitize_highlights,
@@ -766,3 +767,34 @@ def test_get_chapters_cached_recomputes_on_schema_version_mismatch(tmp_path):
         transcript, num_chapters=3, cache_path=cache_path, llm_fn=_fake_chapter_llm_responses("Fresh Chapter")
     )
     assert result["chapters"][0]["title"] == "Fresh Chapter"
+
+
+def test_max_chapters_per_episode_is_8():
+    assert MAX_CHAPTERS_PER_EPISODE == 8
+
+
+def test_get_chapters_caps_at_max_chapters_per_episode_before_render():
+    # 12 non-overlapping candidates survive dedupe -- get_chapters must
+    # slice down to MAX_CHAPTERS_PER_EPISODE itself (a pre-render backstop
+    # against a model that ignores the prompt's stated upper bound), not
+    # rely on some later pipeline step to do it after cropping/captioning.
+    def fake_llm_fn(prompt):
+        if "Analyze this video transcript" in prompt:
+            return '{"content_type": "podcast", "density": "high"}'
+        chapters = [
+            {
+                "title": f"Chapter {i}",
+                "start_time": float(i * 200),
+                "end_time": float(i * 200) + 100.0,
+            }
+            for i in range(12)
+        ]
+        import json as _json
+        return _json.dumps({"chapters": chapters})
+
+    transcript = {"duration": 5000.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi there"}]}
+    result = get_chapters(transcript, num_chapters=5, llm_fn=fake_llm_fn)
+
+    assert len(result["chapters"]) == MAX_CHAPTERS_PER_EPISODE
+    # the kept ones must be the earliest chronologically, not an arbitrary subset
+    assert [c["title"] for c in result["chapters"]] == [f"Chapter {i}" for i in range(MAX_CHAPTERS_PER_EPISODE)]

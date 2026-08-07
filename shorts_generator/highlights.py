@@ -220,6 +220,10 @@ MAX_HIGHLIGHT_DURATION_SECONDS = 180  # hard ceiling matching the prompt's outer
 
 MIN_CHAPTER_DURATION_SECONDS = 60    # shorter than this isn't "full context," it's a fragment
 MAX_CHAPTER_DURATION_SECONDS = 900   # 15min hard ceiling
+MAX_CHAPTERS_PER_EPISODE = 8         # upper bound stated to the model AND enforced
+                                      # defensively post-dedupe (get_chapters), before
+                                      # any render cost is paid -- num_chapters is a
+                                      # target/floor hint, never a post-render trim
 CHAPTER_SCHEMA_VERSION = 1           # bump whenever the chapter dict shape changes
 
 
@@ -542,12 +546,12 @@ def call_chapter_api(
 ) -> Dict:
     target = max(num_chapters, 3)
     natural_max = max(3, int(duration / 300))  # roughly one chapter per 5min of content
-    min_chapters = min(target, natural_max, 8)
+    min_chapters = min(target, natural_max, MAX_CHAPTERS_PER_EPISODE)
     system = CHAPTER_SYSTEM_PROMPT.format(
         chapter_interest_criteria=CHAPTER_INTEREST_CRITERIA,
         content_type=content_info.get("content_type", "other"),
         density=content_info.get("density", "medium"),
-        num_chapters_instruction=f"Identify at least {min_chapters} chapters",
+        num_chapters_instruction=f"Identify between {min_chapters} and {MAX_CHAPTERS_PER_EPISODE} chapters",
     )
     base_prompt = f"{system}\n\nTranscript:\n{transcript_text}"
     prompt = base_prompt
@@ -708,6 +712,13 @@ def get_chapters(
     text = build_transcript_text(transcript)
     result = call_chapter_api(text, content_info, duration, num_chapters=num_chapters, llm_fn=llm_fn)
     chapters = dedupe_chapters(result.get("chapters", []))
+    # Defensive backstop, not the primary mechanism -- the prompt already
+    # states this same upper bound, but a model that ignores it shouldn't
+    # be able to trigger unbounded render/caption cost downstream. Slicing
+    # here (pre-render) rather than after crop_chapters_local runs is the
+    # whole point: no wasted ffmpeg/caption work on chapters that get
+    # discarded anyway.
+    chapters = chapters[:MAX_CHAPTERS_PER_EPISODE]
 
     return {"chapters": chapters}
 

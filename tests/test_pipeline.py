@@ -656,9 +656,6 @@ def test_run_local_buffer_covers_a_single_crop_failure(tmp_path, monkeypatch):
     assert all(s.get("clip_url") for s in result["shorts"])
 
 
-import shorts_generator.highlights as highlights_module
-
-
 def _fake_chapters_result():
     return {"chapters": [{"start_time": 0.0, "end_time": 300.0, "title": "Chapter", "summary": "s"}]}
 
@@ -747,7 +744,14 @@ def test_run_local_chapters_raises_on_zero_chapters(tmp_path, monkeypatch):
         )
 
 
-def test_run_local_chapters_trims_extra_successes_to_num_chapters(tmp_path, monkeypatch):
+def test_run_local_chapters_returns_every_cropped_chapter_no_post_render_trim(tmp_path, monkeypatch):
+    # num_chapters is a target/floor hint fed into the LLM prompt (and the
+    # count ceiling lives in highlights.get_chapters, pre-render) -- this
+    # function must NOT slice the result down to num_chapters afterward.
+    # Requesting 2 while 5 chapters were cropped must return all 5, not 2:
+    # a post-render trim would always discard whichever chapters sort last
+    # chronologically, after already paying the full crop/caption-burn cost
+    # for them.
     monkeypatch.setattr(
         local_downloader_module, "download_youtube_local",
         lambda url, target_path, fmt: "/tmp/source.mp4",
@@ -767,7 +771,7 @@ def test_run_local_chapters_trims_extra_successes_to_num_chapters(tmp_path, monk
         "https://youtube.example/x", num_chapters=2, download_format="720", language=None,
         captions=False, caption_fade_duration=0.3, paths=_paths(tmp_path), word_highlight=True,
     )
-    assert len(result["chapters"]) == 2
+    assert len(result["chapters"]) == 5
 
 
 def test_generate_chapters_writes_chapter_descriptions_and_result_json(tmp_path, monkeypatch):
