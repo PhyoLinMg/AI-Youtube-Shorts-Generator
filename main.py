@@ -105,7 +105,12 @@ def main() -> int:
     args = build_parser().parse_args()
 
     if args.clip_type == "chapters":
-        if args.mode != "local":
+        # Only warn if --mode was explicitly typed and isn't "local" -- args.mode
+        # defaults to "api" when omitted, and the plain, most natural invocation
+        # (`--clip-type chapters` with no --mode at all) must not spuriously warn
+        # on every single run just because the shorts-path default happens to
+        # differ from what chapters always uses anyway.
+        if "--mode" in sys.argv and args.mode != "local":
             print(f"[main] --clip-type chapters is local-only; ignoring --mode {args.mode!r} and using local", file=sys.stderr)
         ignored_flags = []
         if args.aspect_ratio != "9:16":

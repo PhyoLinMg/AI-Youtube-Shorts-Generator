@@ -421,7 +421,7 @@ def generate_chapters(
 
         write_chapter_descriptions(paths.chapters_dir, result["chapters"])
 
-        with open(paths.result_json, "w", encoding="utf-8") as f:
+        with open(paths.chapters_result_json, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2)
 
     return result

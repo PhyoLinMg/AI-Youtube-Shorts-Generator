@@ -40,6 +40,7 @@ def _fake_run_paths(tmp_path):
         highlights_json=os.path.join(root, "highlights.json"),
         chapters_json=os.path.join(root, "chapters.json"),
         result_json=os.path.join(root, "result.json"),
+        chapters_result_json=os.path.join(root, "chapters_result.json"),
         progress_log=os.path.join(root, "progress.log"),
     )
 

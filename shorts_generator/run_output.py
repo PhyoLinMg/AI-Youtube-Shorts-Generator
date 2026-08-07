@@ -36,6 +36,7 @@ class RunPaths:
     highlights_json: str
     chapters_json: str
     result_json: str
+    chapters_result_json: str
     progress_log: str
 
 
@@ -182,6 +183,13 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
         highlights_json=os.path.join(root, "highlights.json"),
         chapters_json=os.path.join(root, "chapters.json"),
         result_json=os.path.join(root, "result.json"),
+        # Deliberately separate from result_json: generate_shorts and
+        # generate_chapters can both run against the same video (that's the
+        # normal workflow this feature exists for), and their result shapes
+        # are incompatible ("shorts"/"mode" vs "chapters", no "mode" key) --
+        # sharing one path means whichever pipeline runs second silently
+        # clobbers the other's result.json.
+        chapters_result_json=os.path.join(root, "chapters_result.json"),
         progress_log=os.path.join(root, "progress.log"),
     )
 
@@ -299,10 +307,11 @@ def write_chapter_descriptions(chapters_dir: str, chapters: List[Dict]) -> str:
     for that chapter's own filename, so "chapter 02" here lines up with
     "02_..." on disk (unlike Shorts' write_descriptions, whose block number
     has no relation to the short's own slugified-title filename). Each
-    chapter is its own file, not a marker in one long video, but the range
-    is still useful context) plus the full `summary` -- unlike Shorts'
-    write_descriptions, there's no yt_title/hashtags/hook_strength here,
-    those fields don't exist on the chapter shape.
+    block carries the original video's timestamp range (each chapter is its
+    own file, not a marker in one long video, but the range is still useful
+    context) plus the full `summary` -- unlike Shorts' write_descriptions,
+    there's no yt_title/hashtags/hook_strength here, those fields don't
+    exist on the chapter shape.
     """
     path = os.path.join(chapters_dir, "chapters_description.txt")
     blocks = []

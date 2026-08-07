@@ -43,6 +43,7 @@ def _paths(tmp_path):
         highlights_json=os.path.join(root, "highlights.json"),
         chapters_json=os.path.join(root, "chapters.json"),
         result_json=os.path.join(root, "result.json"),
+        chapters_result_json=os.path.join(root, "chapters_result.json"),
         progress_log=os.path.join(root, "progress.log"),
     )
 
@@ -795,5 +796,40 @@ def test_generate_chapters_writes_chapter_descriptions_and_result_json(tmp_path,
 
     assert result["output_dir"] == paths.root
     assert os.path.exists(os.path.join(paths.chapters_dir, "chapters_description.txt"))
-    assert os.path.exists(paths.result_json)
+    assert os.path.exists(paths.chapters_result_json)
     assert os.path.exists(paths.progress_log)
+
+
+def test_generate_chapters_does_not_clobber_a_prior_generate_shorts_result(tmp_path, monkeypatch):
+    # generate_shorts and generate_chapters can both run against the same
+    # video (that's the normal workflow this feature exists for) -- they
+    # must write to separate result files, or whichever runs second silently
+    # destroys the other's result.json.
+    paths = _paths(tmp_path)
+
+    with open(paths.result_json, "w", encoding="utf-8") as f:
+        json.dump({"mode": "local", "shorts": [{"clip_url": "Shorts/x.mp4"}]}, f)
+
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_chapters_cached",
+        lambda transcript, num_chapters, cache_path, llm_fn: _fake_chapters_result(),
+    )
+    monkeypatch.setattr(
+        local_clipper_module, "crop_chapters_local",
+        Mock(return_value=[{"start_time": 0.0, "end_time": 300.0, "title": "Chapter", "summary": "s", "clip_url": os.path.join(paths.chapters_dir, "01_Chapter.mp4")}]),
+    )
+
+    pipeline_module.generate_chapters("https://youtube.example/x", paths=paths)
+
+    with open(paths.result_json) as f:
+        shorts_result = json.load(f)
+    assert shorts_result["shorts"] == [{"clip_url": "Shorts/x.mp4"}]
+
+    with open(paths.chapters_result_json) as f:
+        chapters_result = json.load(f)
+    assert "chapters" in chapters_result

@@ -131,3 +131,30 @@ def test_main_warns_on_shorts_only_flags_with_clip_type_chapters(monkeypatch, ca
     err = capsys.readouterr().err
     assert "--num-clips 7" in err
     assert "--filename-style generic" in err
+
+
+def test_main_does_not_warn_about_mode_when_mode_flag_omitted(monkeypatch, capsys):
+    # args.mode defaults to "api" when --mode is never typed -- the plain,
+    # most natural invocation ("--clip-type chapters" with no --mode at all)
+    # must not spuriously warn on every single run just because the default
+    # differs from what chapters always uses regardless.
+    monkeypatch.setattr(main_module, "generate_chapters", lambda **kwargs: _fake_chapters_result())
+    monkeypatch.setattr(sys, "argv", ["main.py", "https://example.com/video", "--clip-type", "chapters"])
+
+    main_module.main()
+
+    err = capsys.readouterr().err
+    assert "--mode" not in err
+
+
+def test_main_warns_on_mode_when_explicitly_passed_non_local(monkeypatch, capsys):
+    monkeypatch.setattr(main_module, "generate_chapters", lambda **kwargs: _fake_chapters_result())
+    monkeypatch.setattr(
+        sys, "argv",
+        ["main.py", "https://example.com/video", "--clip-type", "chapters", "--mode", "api"],
+    )
+
+    main_module.main()
+
+    err = capsys.readouterr().err
+    assert "ignoring --mode 'api'" in err

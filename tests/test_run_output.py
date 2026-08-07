@@ -158,6 +158,24 @@ def test_resolve_output_dir_builds_chapters_paths(tmp_path, monkeypatch):
     assert os.path.isdir(paths.chapters_dir)
 
 
+def test_resolve_output_dir_gives_chapters_its_own_result_json_path(tmp_path, monkeypatch):
+    # Deliberately separate from result_json (used by generate_shorts) --
+    # generate_shorts and generate_chapters can both run against the same
+    # video, and sharing one result path means whichever runs second
+    # silently clobbers the other's result.
+    monkeypatch.setattr(
+        run_output.requests, "get",
+        lambda *a, **k: _FakeResponse(200, {"title": "How To Build A Startup"}),
+    )
+
+    paths = run_output.resolve_output_dir(
+        "https://www.youtube.com/watch?v=abc123", base_dir=str(tmp_path)
+    )
+
+    assert paths.chapters_result_json == os.path.join(paths.root, "chapters_result.json")
+    assert paths.chapters_result_json != paths.result_json
+
+
 from pathlib import Path
 
 import pytest
