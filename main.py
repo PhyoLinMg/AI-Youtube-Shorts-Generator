@@ -15,7 +15,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from shorts_generator import generate_shorts
+from shorts_generator import generate_chapters, generate_shorts
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -104,44 +104,89 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
 
+    if args.clip_type == "chapters":
+        if args.mode != "local":
+            print(f"[main] --clip-type chapters is local-only; ignoring --mode {args.mode!r} and using local", file=sys.stderr)
+        ignored_flags = []
+        if args.aspect_ratio != "9:16":
+            ignored_flags.append(f"--aspect-ratio {args.aspect_ratio}")
+        if args.framing != "locked":
+            ignored_flags.append(f"--framing {args.framing}")
+        if args.hook_card is False:
+            ignored_flags.append("--no-hook-card")
+        if args.end_card is True:
+            ignored_flags.append("--end-card")
+        if ignored_flags:
+            print(
+                f"[main] --clip-type chapters ignores: {', '.join(ignored_flags)} "
+                "(no crop, no card overlays in this path)",
+                file=sys.stderr,
+            )
+
     try:
-        result = generate_shorts(
-            youtube_url=args.url,
-            num_clips=args.num_clips,
-            aspect_ratio=args.aspect_ratio,
-            download_format=args.format,
-            language=args.language,
-            mode=args.mode,
-            captions=args.captions,
-            caption_fade_duration=args.caption_fade_duration,
-            word_highlight=args.word_highlight,
-            framing=args.framing,
-            hook_card=args.hook_card,
-            end_card=args.end_card,
-            filename_style=args.filename_style,
-        )
+        if args.clip_type == "chapters":
+            result = generate_chapters(
+                youtube_url=args.url,
+                num_chapters=args.num_chapters,
+                download_format=args.format,
+                language=args.language,
+                captions=args.captions,
+                caption_fade_duration=args.caption_fade_duration,
+                word_highlight=args.word_highlight,
+            )
+        else:
+            result = generate_shorts(
+                youtube_url=args.url,
+                num_clips=args.num_clips,
+                aspect_ratio=args.aspect_ratio,
+                download_format=args.format,
+                language=args.language,
+                mode=args.mode,
+                captions=args.captions,
+                caption_fade_duration=args.caption_fade_duration,
+                word_highlight=args.word_highlight,
+                framing=args.framing,
+                hook_card=args.hook_card,
+                end_card=args.end_card,
+                filename_style=args.filename_style,
+            )
     except Exception as e:
         print(f"\nFAILED: {e}", file=sys.stderr)
         return 1
 
     print("\n" + "=" * 72)
-    print(f"Mode:          {result.get('mode', args.mode)}")
-    print(f"Output folder: {result.get('output_dir')}")
-    print(f"Source video:  {result['source_video_url']}")
-    print(f"Highlights:    {len(result['highlights'])} candidates → kept top {len(result['shorts'])}")
-    print("=" * 72)
-    for i, s in enumerate(result["shorts"], 1):
-        print(f"\n#{i}  score={s.get('score')}  {s.get('start_time'):.1f}s → {s.get('end_time'):.1f}s")
-        print(f"     title:  {s.get('yt_title') or s.get('title')}")
-        print(f"     hook:   {s.get('hook_sentence')}")
-        if s.get("description"):
-            print(f"     desc:   {s.get('description')}")
-        if s.get("yt_hashtags"):
-            print(f"     tags:   {' '.join(s.get('yt_hashtags'))}")
-        if s.get("clip_url"):
-            print(f"     clip:   {s['clip_url']}")
-        else:
-            print(f"     clip:   FAILED ({s.get('error')})")
+    if args.clip_type == "chapters":
+        print(f"Output folder: {result.get('output_dir')}")
+        print(f"Source video:  {result['source_video_url']}")
+        print(f"Chapters:      {len(result['chapters'])} produced (target was {args.num_chapters})")
+        print("=" * 72)
+        for i, c in enumerate(result["chapters"], 1):
+            print(f"\n#{i}  {c.get('start_time'):.1f}s -> {c.get('end_time'):.1f}s")
+            print(f"     title:   {c.get('title')}")
+            if c.get("summary"):
+                print(f"     summary: {c.get('summary')}")
+            if c.get("clip_url"):
+                print(f"     clip:    {c['clip_url']}")
+            else:
+                print(f"     clip:    FAILED ({c.get('error')})")
+    else:
+        print(f"Mode:          {result.get('mode', args.mode)}")
+        print(f"Output folder: {result.get('output_dir')}")
+        print(f"Source video:  {result['source_video_url']}")
+        print(f"Highlights:    {len(result['highlights'])} candidates → kept top {len(result['shorts'])}")
+        print("=" * 72)
+        for i, s in enumerate(result["shorts"], 1):
+            print(f"\n#{i}  score={s.get('score')}  {s.get('start_time'):.1f}s → {s.get('end_time'):.1f}s")
+            print(f"     title:  {s.get('yt_title') or s.get('title')}")
+            print(f"     hook:   {s.get('hook_sentence')}")
+            if s.get("description"):
+                print(f"     desc:   {s.get('description')}")
+            if s.get("yt_hashtags"):
+                print(f"     tags:   {' '.join(s.get('yt_hashtags'))}")
+            if s.get("clip_url"):
+                print(f"     clip:   {s['clip_url']}")
+            else:
+                print(f"     clip:   FAILED ({s.get('error')})")
 
     if args.output_json:
         with open(args.output_json, "w") as f:
