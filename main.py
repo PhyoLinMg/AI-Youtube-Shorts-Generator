@@ -116,6 +116,10 @@ def main() -> int:
             ignored_flags.append("--no-hook-card")
         if args.end_card is True:
             ignored_flags.append("--end-card")
+        if args.num_clips != 3:
+            ignored_flags.append(f"--num-clips {args.num_clips}")
+        if args.filename_style is not None:
+            ignored_flags.append(f"--filename-style {args.filename_style}")
         if ignored_flags:
             print(
                 f"[main] --clip-type chapters ignores: {', '.join(ignored_flags)} "
