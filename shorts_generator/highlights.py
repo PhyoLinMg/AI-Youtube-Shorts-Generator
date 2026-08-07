@@ -688,12 +688,17 @@ def get_chapters(
     sorted chronologically. Unlike get_highlights, this never chunks the
     transcript even for very long videos: a chapter can run up to
     MAX_CHAPTER_DURATION_SECONDS (900s), longer than chunk_transcript's
-    60s overlap window, so a topic straddling a chunk boundary would get
-    truncated in a way dedupe_chapters can't recover (it has no way to
-    tell a truncated-but-valid chapter from a genuinely shorter one, and
-    picks whichever started earliest). One call over the full transcript
-    is simpler and fails loudly (via call_chapter_api's RuntimeError) on
-    an oversized transcript instead of silently truncating chapters.
+    CHUNK_OVERLAP_SECONDS window, so a topic straddling a chunk boundary
+    would get truncated in a way dedupe_chapters can't recover (it has no
+    way to tell a truncated-but-valid chapter from a genuinely shorter one,
+    and picks whichever started earliest). Widening CHUNK_OVERLAP_SECONDS
+    would NOT fix this on its own -- it would make the complete candidate
+    exist, but dedupe_chapters has no length-aware tiebreak, so it would
+    still keep whichever truncated candidate started earliest; fixing that
+    means reopening dedupe_chapters' overlap-resolution policy, not just
+    this function. One call over the full transcript sidesteps the whole
+    problem and fails loudly (via call_chapter_api's RuntimeError) on an
+    oversized transcript instead of silently truncating chapters.
     """
     llm_fn = llm_fn or call_muapi_llm
     duration = transcript.get("duration", 0)
