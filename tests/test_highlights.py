@@ -697,7 +697,18 @@ def test_get_chapters_does_not_chunk_even_above_long_video_threshold():
 
     transcript = {
         "duration": 10000.0,  # ~2h47m, far above LONG_VIDEO_THRESHOLD
-        "segments": [{"start": 0.0, "end": 5.0, "text": "hi there"}],
+        # Segments spread across the whole duration -- a single segment near
+        # t=0 would make chunk_transcript() itself return only 1 chunk no
+        # matter what (later chunk windows would see zero overlapping
+        # segments and get dropped), making this test pass even if chunking
+        # crept back into get_chapters. Spreading segments across multiple
+        # would-be chunk windows means len(calls) == 1 only holds if
+        # get_chapters genuinely never chunks.
+        "segments": [
+            {"start": 0.0, "end": 5.0, "text": "hi there"},
+            {"start": 5000.0, "end": 5005.0, "text": "middle of the episode"},
+            {"start": 9000.0, "end": 9005.0, "text": "near the end"},
+        ],
     }
     result = get_chapters(transcript, num_chapters=3, llm_fn=fake_llm_fn)
 
