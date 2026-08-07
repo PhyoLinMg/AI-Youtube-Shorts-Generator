@@ -405,8 +405,11 @@ def generate_chapters(
           "output_dir": str,         # output/<Title> for this run
           "source_video_url": str,   # local path to the downloaded source
           "transcript": {...},
-          "all_chapters": [...],     # every candidate chapter before trimming to num_chapters
-          "chapters": [...],         # top `num_chapters`, each with clip_url / *_error fields
+          "all_chapters": [...],     # every chapter get_chapters returned (already
+                                      #   capped at MAX_CHAPTERS_PER_EPISODE, pre-render)
+          "chapters": [...],         # same chapters as all_chapters, post-crop, each with
+                                      #   clip_url / *_error fields -- num_chapters is a
+                                      #   target hint fed into the LLM prompt, not a slice
         }
     """
     paths = paths or resolve_output_dir(youtube_url)
