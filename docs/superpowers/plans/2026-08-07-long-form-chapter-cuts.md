@@ -964,11 +964,109 @@ git commit -m "feat: add CHAPTER_SYSTEM_PROMPT and call_chapter_api"
 
 ### Task 9: `highlights.py` — `get_chapters` + `get_chapters_cached`
 
+**Revised during implementation** (after Task 8 shipped): the original spec
+below chunked long transcripts the same way `get_highlights` does
+(`chunk_transcript`, 20min chunks / 60s overlap). That's wrong for chapters
+specifically. Walk the failure: a topic spans 1000s→1500s, nominal chunk
+boundary at 1200s. Chunk 0 (ending at 1200) emits it clamped to
+1000s→1200s — truncated, but ≥`MIN_CHAPTER_DURATION_SECONDS` so it survives
+sanitize. Chunk 1 (offset 1140, 60s overlap) emits the complete
+1000s→1500s... no — chunk 1 only *starts* at 1140, so it can only see
+1140s→1500s, itself truncated from the other end. Neither chunk ever sees
+the whole 1000s→1500s span, and `dedupe_chapters` (Task 7) sorts by
+`start_time` and keeps whichever truncated candidate started earliest —
+the complete version never existed to begin with. Silent, no error, and it
+directly defeats the feature's core "full context" requirement. A bigger
+overlap constant doesn't fix this either — it would need `dedupe_chapters`
+to prefer the longer candidate on overlap, which reopens already-shipped
+Task 7 code.
+
+**Decision:** `get_chapters` does not chunk at all — one `call_chapter_api`
+call over the full transcript, always. Measured on two real transcripts in
+this repo's `output/` dir (gitignored, not in the worktree, but present in
+the main checkout): a 2h53m podcast (10414s) produces a ~50,840-token
+transcript (`build_transcript_text`, char-count / 4 estimate); a 1h36m one
+produces ~24,289 tokens. Both comfortably fit in a single call for any of
+this project's local-mode providers (`OPENAI_MODEL`/`OPENROUTER_MODEL`
+default to 128k-context models; `GEMINI_MODEL` defaults to a 1M-context
+one — see `shorts_generator/config.py`). An episode long enough to actually
+blow a 128k context is a real but rare edge case, and it now fails loudly
+through `call_chapter_api`'s existing `RuntimeError` (a provider 400 on an
+oversized prompt surfaces as `last_error` same as any other API failure)
+rather than silently truncating chapters — an explicit tradeoff, not an
+oversight.
+
+**Knock-on fix required in this same task:** `call_chapter_api`'s `is_chunk`
+parameter (added in Task 8) becomes dead code once nothing ever calls it
+with `is_chunk=True`. Per this repo's own convention (delete code you're
+certain is unused, don't leave unreferenced parameters), this task also
+edits `call_chapter_api` to drop `is_chunk` entirely and simplify
+`natural_max` to `max(3, int(duration / 300))`. This is a small edit to a
+function Task 8 already shipped and reviewed — that's expected and fine,
+not a sign Task 8 was wrong; the review process caught a plan-level gap
+between tasks, not an implementation bug in Task 8 itself.
+
+**Note, no action needed:** `LOCAL_LLM_TIMEOUT_SECONDS` (config.py, default
+180s) applies to this call same as any other local-mode LLM call. A very
+long transcript could plausibly take longer to process than a short Shorts
+chunk does today. `call_chapter_api` already retries on any exception
+(including a timeout) up to `MAX_HIGHLIGHT_API_ATTEMPTS` times, and the env
+var is already user-overridable — no code change needed here, just don't
+be surprised if a multi-hour podcast needs `LOCAL_LLM_TIMEOUT_SECONDS` bumped
+in `.env` for a slow provider.
+
 **Files:**
 - Modify: `shorts_generator/highlights.py`
 - Test: `tests/test_highlights.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Simplify `call_chapter_api` — drop the now-dead `is_chunk` param**
+
+In `shorts_generator/highlights.py`, find `call_chapter_api` (added in Task
+8). Its current signature and first few lines:
+
+```python
+def call_chapter_api(
+    transcript_text: str,
+    content_info: Dict,
+    duration: float,
+    num_chapters: int,
+    is_chunk: bool = False,
+    llm_fn: LLMFn = call_muapi_llm,
+) -> Dict:
+    target = max(num_chapters, 3)
+    natural_max = max(2 if is_chunk else 3, int(duration / 300))  # roughly one chapter per 5min of content
+    min_chapters = min(target, natural_max, 8)
+```
+
+Change to:
+
+```python
+def call_chapter_api(
+    transcript_text: str,
+    content_info: Dict,
+    duration: float,
+    num_chapters: int,
+    llm_fn: LLMFn = call_muapi_llm,
+) -> Dict:
+    target = max(num_chapters, 3)
+    natural_max = max(3, int(duration / 300))  # roughly one chapter per 5min of content
+    min_chapters = min(target, natural_max, 8)
+```
+
+(the rest of the function — the retry loop, `_sanitize_chapters` call,
+final `RuntimeError` — is unchanged)
+
+Check `tests/test_highlights.py`'s three `call_chapter_api` tests added in
+Task 8 (`test_call_chapter_api_returns_sanitized_chapters`,
+`test_call_chapter_api_retries_on_invalid_json_then_succeeds`,
+`test_call_chapter_api_raises_after_max_attempts_with_real_error`) — none
+of them pass `is_chunk`, so they keep working unchanged; no test edits
+needed for this step.
+
+Run: `python -m pytest tests/test_highlights.py -k call_chapter_api -v`
+Expected: PASS (3 passed, unaffected by the signature simplification)
+
+- [ ] **Step 2: Write the failing tests for `get_chapters`/`get_chapters_cached`**
 
 Add to `tests/test_highlights.py`, at the end of the file:
 
@@ -991,6 +1089,29 @@ def test_get_chapters_returns_deduped_chapters():
     transcript = {"duration": 1000.0, "segments": [{"start": 0.0, "end": 5.0, "text": "hi there"}]}
     result = get_chapters(transcript, num_chapters=3, llm_fn=_fake_chapter_llm_responses("Chapter One"))
     assert result["chapters"][0]["title"] == "Chapter One"
+
+
+def test_get_chapters_does_not_chunk_even_above_long_video_threshold():
+    # duration well above LONG_VIDEO_THRESHOLD (1800s) -- must still be ONE
+    # call_chapter_api call, not routed through chunk_transcript. A second
+    # call (or a call using a chunk-relative duration) would prove chunking
+    # crept back in.
+    calls = []
+
+    def fake_llm_fn(prompt):
+        if "Analyze this video transcript" in prompt:
+            return '{"content_type": "podcast", "density": "high"}'
+        calls.append(prompt)
+        return '{"chapters": [{"title": "Whole Thing", "start_time": 0.0, "end_time": 300.0}]}'
+
+    transcript = {
+        "duration": 10000.0,  # ~2h47m, far above LONG_VIDEO_THRESHOLD
+        "segments": [{"start": 0.0, "end": 5.0, "text": "hi there"}],
+    }
+    result = get_chapters(transcript, num_chapters=3, llm_fn=fake_llm_fn)
+
+    assert len(calls) == 1
+    assert result["chapters"][0]["title"] == "Whole Thing"
 
 
 def test_get_chapters_cached_calls_llm_and_writes_cache_on_miss(tmp_path):
@@ -1045,14 +1166,15 @@ def test_get_chapters_cached_recomputes_on_schema_version_mismatch(tmp_path):
     assert result["chapters"][0]["title"] == "Fresh Chapter"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 3: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_highlights.py -k get_chapters -v`
 Expected: FAIL with `ImportError: cannot import name 'get_chapters'`
 
-- [ ] **Step 3: Implement `get_chapters`**
+- [ ] **Step 4: Implement `get_chapters`**
 
-In `shorts_generator/highlights.py`, add right after `get_highlights` (after line 531):
+In `shorts_generator/highlights.py`, add right after `get_highlights` (find
+`def get_highlights`, add this immediately after that function ends):
 
 ```python
 def get_chapters(
@@ -1061,32 +1183,24 @@ def get_chapters(
     llm_fn: Optional[LLMFn] = None,
 ) -> Dict:
     """Main entry point for chapter selection — returns {chapters: [...]}
-    sorted chronologically. Mirrors get_highlights' chunking/caching shape;
-    reuses detect_content_type/chunk_transcript/build_transcript_text as-is.
+    sorted chronologically. Unlike get_highlights, this never chunks the
+    transcript even for very long videos: a chapter can run up to
+    MAX_CHAPTER_DURATION_SECONDS (900s), longer than chunk_transcript's
+    60s overlap window, so a topic straddling a chunk boundary would get
+    truncated in a way dedupe_chapters can't recover (it has no way to
+    tell a truncated-but-valid chapter from a genuinely shorter one, and
+    picks whichever started earliest). One call over the full transcript
+    is simpler and fails loudly (via call_chapter_api's RuntimeError) on
+    an oversized transcript instead of silently truncating chapters.
     """
     llm_fn = llm_fn or call_muapi_llm
     duration = transcript.get("duration", 0)
     content_info = detect_content_type(transcript, llm_fn=llm_fn)
     print(f"[chapters] content={content_info.get('content_type')} density={content_info.get('density')} duration={duration:.0f}s", flush=True)
 
-    if duration >= LONG_VIDEO_THRESHOLD:
-        chunks = chunk_transcript(transcript)
-        print(f"[chapters] long video — splitting into {len(chunks)} chunks", flush=True)
-        all_chapters: List[Dict] = []
-        for i, chunk in enumerate(chunks):
-            offset = chunk.get("_offset", 0)
-            text = build_transcript_text(chunk)
-            print(f"[chapters] chunk {i + 1}/{len(chunks)} (offset {offset:.0f}s)", flush=True)
-            chunk_abs_end = offset + chunk["duration"]
-            t0 = time.time()
-            result = call_chapter_api(text, content_info, chunk_abs_end, num_chapters=num_chapters, is_chunk=True, llm_fn=llm_fn)
-            print(f"[chapters] chunk {i + 1}/{len(chunks)} done in {time.time() - t0:.1f}s", flush=True)
-            all_chapters.extend(result.get("chapters", []))
-        chapters = dedupe_chapters(all_chapters)
-    else:
-        text = build_transcript_text(transcript)
-        result = call_chapter_api(text, content_info, duration, num_chapters=num_chapters, llm_fn=llm_fn)
-        chapters = dedupe_chapters(result.get("chapters", []))
+    text = build_transcript_text(transcript)
+    result = call_chapter_api(text, content_info, duration, num_chapters=num_chapters, llm_fn=llm_fn)
+    chapters = dedupe_chapters(result.get("chapters", []))
 
     return {"chapters": chapters}
 
@@ -1138,21 +1252,31 @@ def get_chapters_cached(
     return result
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_highlights.py -k get_chapters -v`
-Expected: PASS
+Expected: PASS (6 tests: the 5 originally specified plus the new
+`test_get_chapters_does_not_chunk_even_above_long_video_threshold`)
 
-- [ ] **Step 5: Run the full highlights test file to confirm no regression**
+- [ ] **Step 6: Run the full highlights test file to confirm no regression**
 
 Run: `python -m pytest tests/test_highlights.py -v`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add shorts_generator/highlights.py tests/test_highlights.py
-git commit -m "feat: add get_chapters/get_chapters_cached entry points"
+git commit -m "feat: add get_chapters/get_chapters_cached (single-call, no chunking)
+
+Chunking (chunk_transcript, reused as-is from get_highlights) would
+silently truncate any chapter straddling a chunk boundary -- a chapter
+can run up to 15min, longer than the chunker's 60s overlap window, and
+dedupe_chapters has no way to recover the complete version once a
+truncated one exists. One call over the full transcript instead; fails
+loudly via call_chapter_api's RuntimeError on an oversized transcript
+rather than silently truncating. Also drops call_chapter_api's now-dead
+is_chunk param (added in the prior commit, unused once nothing chunks)."
 ```
 
 ---
