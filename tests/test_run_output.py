@@ -210,6 +210,14 @@ def test_resolve_output_dir_gives_chapters_its_own_result_json_path(tmp_path, mo
     assert paths.chapters_result_json != paths.result_json
 
 
+def test_resolve_thread_output_dir_slugifies_thesis(tmp_path):
+    result = run_output.resolve_thread_output_dir(
+        "Two founders, two answers to the same question.", base_dir=str(tmp_path)
+    )
+    assert result == str(tmp_path / "_Threads" / "Two_founders_two_answers_to_the_same_question")
+    assert os.path.isdir(result)
+
+
 from pathlib import Path
 
 import pytest

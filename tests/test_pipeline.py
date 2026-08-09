@@ -851,3 +851,43 @@ def test_generate_chapters_does_not_clobber_a_prior_generate_shorts_result(tmp_p
     with open(paths.chapters_result_json) as f:
         chapters_result = json.load(f)
     assert "chapters" in chapters_result
+
+
+def test_generate_threads_returns_none_when_build_thread_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "build_thread", lambda base_dir=None, llm_fn=None: None)
+
+    result = pipeline_module.generate_threads(base_dir=str(tmp_path))
+
+    assert result is None
+
+
+def test_generate_threads_assembles_and_writes_result(tmp_path, monkeypatch):
+    episode_a_dir = tmp_path / "Episode_A"
+    episode_b_dir = tmp_path / "Episode_B"
+    episode_a_dir.mkdir()
+    episode_b_dir.mkdir()
+    (episode_a_dir / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+    (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
+
+    fake_thread = {
+        "shared_question": "Does X cause Y?",
+        "thesis": "Two guests disagree about X causing Y.",
+        "bridge": "Here's the other side.",
+        "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
+        "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
+    }
+    monkeypatch.setattr(pipeline_module, "build_thread", lambda base_dir=None, llm_fn=None: fake_thread)
+    monkeypatch.setattr(pipeline_module, "acquire_clip", lambda run_dir, source_url, cached_duration, start_time, end_time, out_path: open(out_path, "wb").write(b"clip") or {"clip_path": out_path})
+    monkeypatch.setattr(pipeline_module, "synthesize_narration", lambda text, out_path, **k: open(out_path, "wb").write(b"audio") or out_path)
+    monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
+    assemble_calls = []
+    monkeypatch.setattr(pipeline_module, "assemble_thread", lambda segment_paths, out_path: (assemble_calls.append(segment_paths), open(out_path, "wb").write(b"final"))[1] or out_path)
+
+    result = pipeline_module.generate_threads(base_dir=str(tmp_path))
+
+    assert result is not None
+    assert result["shared_question"] == "Does X cause Y?"
+    assert result["clip_url"].endswith("thread.mp4")
+    assert os.path.isfile(os.path.join(result["output_dir"], "thread_result.json"))
+    # intro card, clip A, bridge card, clip B, in that order
+    assert len(assemble_calls[0]) == 4

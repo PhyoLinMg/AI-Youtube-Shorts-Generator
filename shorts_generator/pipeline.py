@@ -20,7 +20,11 @@ from .clipper import _download_to, crop_highlights
 from .downloader import download_youtube
 from .highlights import call_muapi_llm, get_chapters_cached, get_highlights_cached, select_final_highlights
 from .local.llm import call_openai_vision_llm
-from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_chapter_descriptions, write_descriptions, write_source_url
+from .local.narration import render_narration_card, synthesize_narration
+from .local.thread_assembler import assemble_thread
+from .local.thread_source import acquire_clip
+from .run_output import RunPaths, capture_progress_log, resolve_output_dir, resolve_thread_output_dir, write_chapter_descriptions, write_descriptions, write_source_url
+from .thread_builder import build_thread
 from .transcriber import transcribe
 from .visual_hook import call_muapi_vision_llm, score_visual_hooks
 
@@ -426,4 +430,58 @@ def generate_chapters(
         with open(paths.chapters_result_json, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2)
 
+    return result
+
+
+def generate_threads(base_dir: Optional[str] = None) -> Optional[Dict]:
+    """Build one multi-episode thread from the local corpus (see corpus.py,
+    thread_builder.py). Local-mode only, like generate_chapters -- there is
+    no MuAPI equivalent of this feature. Returns None if no same-topic pair
+    currently exists in the corpus -- this is the expected, correct result
+    when the corpus is too thin or too topically scattered, not a failure
+    to work around.
+    """
+    from .local.llm import call_local_llm
+
+    thread = build_thread(base_dir=base_dir, llm_fn=call_local_llm)
+    if thread is None:
+        return None
+
+    out_dir = resolve_thread_output_dir(thread["thesis"], base_dir=base_dir)
+
+    episode_a = thread["episode_a"]
+    episode_b = thread["episode_b"]
+
+    with open(os.path.join(episode_a["run_dir"], "full_source.json"), "r", encoding="utf-8") as f:
+        duration_a = json.load(f)["duration"]
+    with open(os.path.join(episode_b["run_dir"], "full_source.json"), "r", encoding="utf-8") as f:
+        duration_b = json.load(f)["duration"]
+
+    clip_a_path = os.path.join(out_dir, "clip_a.mp4")
+    clip_b_path = os.path.join(out_dir, "clip_b.mp4")
+    acquire_clip(
+        episode_a["run_dir"], episode_a["source_url"], cached_duration=duration_a,
+        start_time=episode_a["start_time"], end_time=episode_a["end_time"], out_path=clip_a_path,
+    )
+    acquire_clip(
+        episode_b["run_dir"], episode_b["source_url"], cached_duration=duration_b,
+        start_time=episode_b["start_time"], end_time=episode_b["end_time"], out_path=clip_b_path,
+    )
+
+    intro_audio = os.path.join(out_dir, "thesis.mp3")
+    bridge_audio = os.path.join(out_dir, "bridge.mp3")
+    synthesize_narration(thread["thesis"], intro_audio)
+    synthesize_narration(thread["bridge"], bridge_audio)
+
+    intro_card = os.path.join(out_dir, "intro_card.mp4")
+    bridge_card = os.path.join(out_dir, "bridge_card.mp4")
+    render_narration_card(intro_audio, thread["thesis"], intro_card)
+    render_narration_card(bridge_audio, thread["bridge"], bridge_card)
+
+    final_path = os.path.join(out_dir, "thread.mp4")
+    assemble_thread([intro_card, clip_a_path, bridge_card, clip_b_path], final_path)
+
+    result = {**thread, "output_dir": out_dir, "clip_url": final_path}
+    with open(os.path.join(out_dir, "thread_result.json"), "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
     return result

@@ -196,6 +196,17 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
     )
 
 
+def resolve_thread_output_dir(thesis: str, base_dir: Optional[str] = None) -> str:
+    """A thread's output lives outside any single episode's RunPaths tree --
+    it draws footage from two existing episode runs, so it gets its own
+    output/_Threads/<slug>/ folder keyed by the thread's own thesis text."""
+    base_dir = base_dir or LOCAL_OUTPUT_DIR
+    slug = sanitize_title(thesis)
+    root = os.path.join(base_dir, "_Threads", slug)
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
 def write_source_url(paths: RunPaths, youtube_url: str) -> None:
     """Persist the original source URL so a pruned full_source.mp4 (deleted
     to save disk once a channel has 100+ episodes) can still be
