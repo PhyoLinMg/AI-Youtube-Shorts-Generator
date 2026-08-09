@@ -5,6 +5,7 @@ then, only for a qualifying pair, exact clip spans + narration text grounded
 in the two chosen full transcripts.
 """
 import json
+import math
 from typing import Dict, List, Optional
 
 from .corpus import build_corpus
@@ -57,9 +58,12 @@ MAX_CLIP_SECONDS = 60.0
 
 def _coerce_float_or_none(value: object) -> Optional[float]:
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(result):
+        return None
+    return result
 
 
 def _sanitize_topic_pick(raw: object, corpus_len: int) -> Optional[Dict]:
@@ -175,12 +179,23 @@ def build_thread(base_dir: Optional[str] = None, llm_fn: Optional[LLMFn] = None)
         print(f"[thread_builder] failed to load full transcript for picked pair: {e} -- refusing to build a thread", flush=True)
         return None
 
-    clips = pick_thread_clips(
-        {**entry_a, "transcript": transcript_a},
-        {**entry_b, "transcript": transcript_b},
-        pick["shared_question"],
-        llm_fn,
-    )
+    # build_corpus only validates that full_source.json parses as JSON, not
+    # that it has the {duration, segments: [{start, end, text}, ...]} shape
+    # pick_thread_clips/build_transcript_text assume -- a present-but-null
+    # "duration" or a segment missing "start"/"text" is valid JSON but
+    # malformed shape, and would otherwise raise (TypeError/KeyError/
+    # AttributeError) past this point instead of refusing like every other
+    # "corpus doesn't support a pairing" case in this module.
+    try:
+        clips = pick_thread_clips(
+            {**entry_a, "transcript": transcript_a},
+            {**entry_b, "transcript": transcript_b},
+            pick["shared_question"],
+            llm_fn,
+        )
+    except Exception as e:
+        print(f"[thread_builder] malformed transcript shape for picked pair: {e} -- refusing to build a thread", flush=True)
+        return None
     if clips is None:
         print("[thread_builder] no groundable clip pair for the shared question -- refusing to build a thread", flush=True)
         return None

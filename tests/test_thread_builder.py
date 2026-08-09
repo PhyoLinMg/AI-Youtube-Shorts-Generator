@@ -1,5 +1,4 @@
 import json
-import os
 
 import pytest
 
@@ -65,6 +64,19 @@ def test_find_same_topic_pair_rejects_missing_shared_question():
     assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
 
 
+def test_find_same_topic_pair_rejects_non_string_shared_question():
+    corpus = [
+        _corpus_entry(0, "Ep A", "abstract a", "/tmp/a"),
+        _corpus_entry(1, "Ep B", "abstract b", "/tmp/b"),
+    ]
+    llm_fn = lambda prompt: json.dumps({
+        "no_match": False, "episode_a_index": 0, "episode_b_index": 1,
+        "shared_question": ["a", "b"],
+    })
+
+    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
+
+
 def test_find_same_topic_pair_returns_none_on_malformed_llm_output():
     corpus = [
         _corpus_entry(0, "Ep A", "abstract a", "/tmp/a"),
@@ -84,6 +96,20 @@ def test_pick_thread_clips_returns_none_when_not_grounded():
     episode_a = _episode(100.0, [(0.0, 10.0, "hello")])
     episode_b = _episode(100.0, [(0.0, 10.0, "world")])
     llm_fn = lambda prompt: json.dumps({"grounded": False, "thesis": "", "bridge": "", "clip_a": {}, "clip_b": {}})
+
+    assert thread_builder.pick_thread_clips(episode_a, episode_b, "shared question?", llm_fn) is None
+
+
+def test_pick_thread_clips_rejects_non_string_thesis():
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True,
+        "thesis": ["not", "a", "string"],
+        "bridge": "Here is the other side.",
+        "clip_a": {"start_time": 5.0, "end_time": 25.0},
+        "clip_b": {"start_time": 2.0, "end_time": 20.0},
+    })
 
     assert thread_builder.pick_thread_clips(episode_a, episode_b, "shared question?", llm_fn) is None
 
@@ -208,3 +234,123 @@ def test_build_thread_returns_full_shape_on_qualifying_pair(tmp_path, monkeypatc
             "start_time": 2.0, "end_time": 20.0,
         },
     }
+
+
+def _topic_gate_llm_response():
+    return json.dumps({
+        "no_match": False, "episode_a_index": 0, "episode_b_index": 1,
+        "shared_question": "Does remote work increase or decrease productivity?",
+    })
+
+
+def test_build_thread_returns_none_when_picked_run_dir_missing_full_source_json(tmp_path, monkeypatch):
+    run_dir_a = tmp_path / "a"
+    run_dir_b = tmp_path / "b"
+    run_dir_a.mkdir()
+    run_dir_b.mkdir()
+    # run_dir_a has no full_source.json at all -- the open() should fail
+    # and build_thread should refuse rather than raise.
+    (run_dir_b / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+
+    monkeypatch.setattr(
+        thread_builder, "build_corpus",
+        lambda base_dir=None, llm_fn=None: [
+            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
+            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
+        ],
+    )
+    llm_fn = lambda prompt: _topic_gate_llm_response()
+
+    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
+
+
+def test_build_thread_returns_none_when_full_source_json_is_unparseable(tmp_path, monkeypatch):
+    run_dir_a = tmp_path / "a"
+    run_dir_b = tmp_path / "b"
+    run_dir_a.mkdir()
+    run_dir_b.mkdir()
+    (run_dir_a / "full_source.json").write_text("{not valid json")
+    (run_dir_b / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+
+    monkeypatch.setattr(
+        thread_builder, "build_corpus",
+        lambda base_dir=None, llm_fn=None: [
+            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
+            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
+        ],
+    )
+    llm_fn = lambda prompt: _topic_gate_llm_response()
+
+    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
+
+
+def test_build_thread_returns_none_when_transcript_shape_is_malformed(tmp_path, monkeypatch):
+    run_dir_a = tmp_path / "a"
+    run_dir_b = tmp_path / "b"
+    run_dir_a.mkdir()
+    run_dir_b.mkdir()
+    # Valid JSON, but a segment missing "start"/"text" -- build_corpus never
+    # validates transcript shape, only that the file parses as JSON, so this
+    # sails through build_corpus and must be caught by build_thread itself.
+    (run_dir_a / "full_source.json").write_text(json.dumps({
+        "duration": 100.0,
+        "segments": [{"end": 10.0}],
+    }))
+    (run_dir_b / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+
+    monkeypatch.setattr(
+        thread_builder, "build_corpus",
+        lambda base_dir=None, llm_fn=None: [
+            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
+            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
+        ],
+    )
+    responses = [
+        _topic_gate_llm_response(),
+        json.dumps({
+            "grounded": True, "thesis": "t", "bridge": "b",
+            "clip_a": {"start_time": 5.0, "end_time": 25.0},
+            "clip_b": {"start_time": 2.0, "end_time": 20.0},
+        }),
+    ]
+
+    def llm_fn(prompt):
+        return responses.pop(0)
+
+    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
+
+
+def test_build_thread_returns_none_when_transcript_duration_is_null(tmp_path, monkeypatch):
+    run_dir_a = tmp_path / "a"
+    run_dir_b = tmp_path / "b"
+    run_dir_a.mkdir()
+    run_dir_b.mkdir()
+    # "duration" key present but literally null -- transcript.get("duration",
+    # 0.0) returns None (not the default), which used to blow up the
+    # `if duration > 0:` comparison inside _sanitize_clip_span.
+    (run_dir_a / "full_source.json").write_text(json.dumps({
+        "duration": None,
+        "segments": [{"start": 0.0, "end": 30.0, "text": "hello"}],
+    }))
+    (run_dir_b / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+
+    monkeypatch.setattr(
+        thread_builder, "build_corpus",
+        lambda base_dir=None, llm_fn=None: [
+            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
+            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
+        ],
+    )
+    responses = [
+        _topic_gate_llm_response(),
+        json.dumps({
+            "grounded": True, "thesis": "t", "bridge": "b",
+            "clip_a": {"start_time": 5.0, "end_time": 25.0},
+            "clip_b": {"start_time": 2.0, "end_time": 20.0},
+        }),
+    ]
+
+    def llm_fn(prompt):
+        return responses.pop(0)
+
+    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
