@@ -34,6 +34,12 @@ LOCAL_OUTPUT_DIR = os.getenv("LOCAL_OUTPUT_DIR", "output")
 # "generic"  -> positional (video1.mp4, video2.mp4, ...)
 SHORT_FILENAME_STYLE = os.getenv("SHORT_FILENAME_STYLE", "specific").strip().lower()
 
+# Thread-compilation narration (--clip-type thread, local mode only).
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
+# "George - Warm, Captivating Storyteller" -- validated by hand for narrator
+# tone; override via env if a different channel voice is wanted later.
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb").strip()
+
 # VAD (Voice Activity Detection) settings for faster-whisper
 # Default threshold is 0.5; lower = more sensitive, higher = less sensitive
 # Default min_speech_duration_ms is 250ms; increase to avoid tiny false positives
@@ -88,3 +94,12 @@ def require_openrouter_key() -> str:
             "LLM_PROVIDER=openrouter. Add it to your .env or export it."
         )
     return OPENROUTER_API_KEY
+
+
+def require_elevenlabs_key() -> str:
+    if not ELEVENLABS_API_KEY:
+        raise RuntimeError(
+            "ELEVENLABS_API_KEY is not set. Thread narration needs an ElevenLabs "
+            "key. Add it to your .env file or export it as an env var."
+        )
+    return ELEVENLABS_API_KEY
