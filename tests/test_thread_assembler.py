@@ -1,3 +1,4 @@
+import re
 import subprocess
 
 import pytest
@@ -63,6 +64,14 @@ def test_assemble_thread_normalizes_mismatched_sources_into_one_output(synthetic
     assert f"width={thread_assembler.TARGET_WIDTH}" in output
     assert f"height={thread_assembler.TARGET_HEIGHT}" in output
     assert "r_frame_rate=30000/1001" in output
+
+    # Guards against a filter-graph regression (e.g. a mismatched concat `n`)
+    # that silently drops a segment while ffmpeg still exits 0 and the
+    # surviving segment(s) still probe at the correct dims/fps above.
+    duration_match = re.search(r"duration=([\d.]+)", output)
+    assert duration_match is not None
+    duration = float(duration_match.group(1))
+    assert duration == pytest.approx(5.0, abs=0.5)  # clip_a (2s) + clip_b (3s)
 
 
 def test_assemble_thread_raises_thread_assembly_error_on_ffmpeg_failure(tmp_path):

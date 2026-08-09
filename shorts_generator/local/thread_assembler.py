@@ -57,4 +57,6 @@ def assemble_thread(segment_paths: List[str], out_path: str) -> str:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
         raise ThreadAssemblyError(f"ffmpeg concat failed: {e.stderr}") from e
+    except OSError as e:
+        raise ThreadAssemblyError(f"failed to run ffmpeg: {e}") from e
     return out_path
