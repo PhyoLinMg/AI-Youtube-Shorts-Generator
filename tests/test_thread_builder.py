@@ -1,0 +1,158 @@
+import json
+import os
+
+import pytest
+
+from shorts_generator import thread_builder
+
+
+def _corpus_entry(idx, title, abstract, run_dir):
+    return {"run_dir": run_dir, "title": title, "source_url": f"https://example.com/{idx}", "abstract": abstract}
+
+
+def test_find_same_topic_pair_returns_none_on_no_match_response():
+    corpus = [
+        _corpus_entry(0, "Politics Ep", "discusses tax policy", "/tmp/a"),
+        _corpus_entry(1, "Science Ep", "discusses black holes", "/tmp/b"),
+    ]
+    llm_fn = lambda prompt: json.dumps({"no_match": True, "episode_a_index": None, "episode_b_index": None, "shared_question": ""})
+
+    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
+
+
+def test_find_same_topic_pair_returns_none_with_fewer_than_two_entries():
+    corpus = [_corpus_entry(0, "Solo Ep", "abstract", "/tmp/a")]
+    llm_fn = lambda prompt: pytest.fail("llm_fn should not be called with < 2 corpus entries")
+
+    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
+
+
+def test_find_same_topic_pair_returns_pick_on_valid_match():
+    corpus = [
+        _corpus_entry(0, "Ep A", "argues remote work increases productivity", "/tmp/a"),
+        _corpus_entry(1, "Ep B", "argues remote work decreases productivity", "/tmp/b"),
+    ]
+    llm_fn = lambda prompt: json.dumps({
+        "no_match": False, "episode_a_index": 0, "episode_b_index": 1,
+        "shared_question": "Does remote work increase or decrease productivity?",
+    })
+
+    result = thread_builder.find_same_topic_pair(corpus, llm_fn)
+
+    assert result == {
+        "episode_a_index": 0, "episode_b_index": 1,
+        "shared_question": "Does remote work increase or decrease productivity?",
+    }
+
+
+def test_find_same_topic_pair_rejects_out_of_range_indices():
+    corpus = [
+        _corpus_entry(0, "Ep A", "abstract a", "/tmp/a"),
+        _corpus_entry(1, "Ep B", "abstract b", "/tmp/b"),
+    ]
+    llm_fn = lambda prompt: json.dumps({"no_match": False, "episode_a_index": 0, "episode_b_index": 5, "shared_question": "x?"})
+
+    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
+
+
+def test_find_same_topic_pair_rejects_missing_shared_question():
+    corpus = [
+        _corpus_entry(0, "Ep A", "abstract a", "/tmp/a"),
+        _corpus_entry(1, "Ep B", "abstract b", "/tmp/b"),
+    ]
+    llm_fn = lambda prompt: json.dumps({"no_match": False, "episode_a_index": 0, "episode_b_index": 1, "shared_question": ""})
+
+    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
+
+
+def test_find_same_topic_pair_returns_none_on_malformed_llm_output():
+    corpus = [
+        _corpus_entry(0, "Ep A", "abstract a", "/tmp/a"),
+        _corpus_entry(1, "Ep B", "abstract b", "/tmp/b"),
+    ]
+    llm_fn = lambda prompt: "not json at all"
+
+    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
+
+
+def _episode(duration, texts_with_times):
+    segments = [{"start": s, "end": e, "text": t} for s, e, t in texts_with_times]
+    return {"transcript": {"duration": duration, "segments": segments}}
+
+
+def test_pick_thread_clips_returns_none_when_not_grounded():
+    episode_a = _episode(100.0, [(0.0, 10.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 10.0, "world")])
+    llm_fn = lambda prompt: json.dumps({"grounded": False, "thesis": "", "bridge": "", "clip_a": {}, "clip_b": {}})
+
+    assert thread_builder.pick_thread_clips(episode_a, episode_b, "shared question?", llm_fn) is None
+
+
+def test_pick_thread_clips_returns_clips_and_narration_on_valid_response():
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True,
+        "thesis": "Two guests, one question.",
+        "bridge": "Here is the other side.",
+        "clip_a": {"start_time": 5.0, "end_time": 25.0},
+        "clip_b": {"start_time": 2.0, "end_time": 20.0},
+    })
+
+    result = thread_builder.pick_thread_clips(episode_a, episode_b, "shared question?", llm_fn)
+
+    assert result == {
+        "thesis": "Two guests, one question.",
+        "bridge": "Here is the other side.",
+        "clip_a": {"start_time": 5.0, "end_time": 25.0},
+        "clip_b": {"start_time": 2.0, "end_time": 20.0},
+    }
+
+
+def test_pick_thread_clips_rejects_span_shorter_than_8_seconds():
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True, "thesis": "t", "bridge": "b",
+        "clip_a": {"start_time": 5.0, "end_time": 7.0},
+        "clip_b": {"start_time": 2.0, "end_time": 20.0},
+    })
+
+    assert thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn) is None
+
+
+def test_pick_thread_clips_clamps_end_time_to_episode_duration():
+    episode_a = _episode(20.0, [(0.0, 20.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True, "thesis": "t", "bridge": "b",
+        "clip_a": {"start_time": 5.0, "end_time": 50.0},
+        "clip_b": {"start_time": 2.0, "end_time": 20.0},
+    })
+
+    result = thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn)
+
+    assert result["clip_a"]["end_time"] == 20.0
+
+
+def test_build_thread_returns_none_when_no_same_topic_pair(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        thread_builder, "build_corpus",
+        lambda base_dir=None, llm_fn=None: [
+            _corpus_entry(0, "Ep A", "unrelated topic one", "/tmp/a"),
+            _corpus_entry(1, "Ep B", "unrelated topic two", "/tmp/b"),
+        ],
+    )
+    llm_fn = lambda prompt: json.dumps({"no_match": True, "episode_a_index": None, "episode_b_index": None, "shared_question": ""})
+
+    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
+
+
+def test_build_thread_returns_none_when_corpus_has_fewer_than_two_episodes(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        thread_builder, "build_corpus",
+        lambda base_dir=None, llm_fn=None: [_corpus_entry(0, "Only Ep", "abstract", "/tmp/a")],
+    )
+    llm_fn = lambda prompt: pytest.fail("llm_fn should not be called for topic gate with < 2 episodes")
+
+    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
