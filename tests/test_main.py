@@ -3,7 +3,7 @@ import sys
 import pytest
 
 import main as main_module
-from main import build_parser
+from main import build_parser, main
 
 
 def test_captions_on_by_default():
@@ -158,3 +158,75 @@ def test_main_warns_on_mode_when_explicitly_passed_non_local(monkeypatch, capsys
 
     err = capsys.readouterr().err
     assert "ignoring --mode 'api'" in err
+
+
+def test_clip_type_accepts_thread():
+    args = build_parser().parse_args(["--clip-type", "thread"])
+    assert args.clip_type == "thread"
+
+
+def test_url_is_optional_for_clip_type_thread():
+    args = build_parser().parse_args(["--clip-type", "thread"])
+    assert args.url is None
+
+
+def test_url_still_required_positional_when_provided():
+    args = build_parser().parse_args(["https://example.com/video"])
+    assert args.url == "https://example.com/video"
+
+
+def test_main_fails_cleanly_without_url_for_shorts(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["main.py"])
+    exit_code = main()
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "url is required" in captured.err
+
+
+def test_main_dispatches_to_generate_threads_for_clip_type_thread(monkeypatch, capsys):
+    calls = []
+    fake_result = {
+        "output_dir": "output/_Threads/Some_Thesis",
+        "shared_question": "Does X cause Y?",
+        "thesis": "Two guests disagree.",
+        "bridge": "Here's the other side.",
+        "episode_a": {"title": "Episode A", "start_time": 10.0, "end_time": 30.0},
+        "episode_b": {"title": "Episode B", "start_time": 5.0, "end_time": 25.0},
+        "clip_url": "output/_Threads/Some_Thesis/thread.mp4",
+    }
+    monkeypatch.setattr(main_module, "generate_threads", lambda **kwargs: (calls.append(kwargs), fake_result)[1])
+    monkeypatch.setattr(sys, "argv", ["main.py", "--clip-type", "thread"])
+
+    exit_code = main()
+
+    assert exit_code == 0
+    assert calls == [{}]
+    captured = capsys.readouterr()
+    assert "Does X cause Y?" in captured.out
+
+
+def test_main_reports_no_thread_available_when_generate_threads_returns_none(monkeypatch, capsys):
+    monkeypatch.setattr(main_module, "generate_threads", lambda **kwargs: None)
+    monkeypatch.setattr(sys, "argv", ["main.py", "--clip-type", "thread"])
+
+    exit_code = main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "No same-topic episode pair" in captured.err
+
+
+def test_main_warns_when_url_given_with_clip_type_thread(monkeypatch, capsys):
+    fake_result = {
+        "output_dir": "d", "shared_question": "q?", "thesis": "t", "bridge": "b",
+        "episode_a": {"title": "A", "start_time": 0.0, "end_time": 1.0},
+        "episode_b": {"title": "B", "start_time": 0.0, "end_time": 1.0},
+        "clip_url": "d/thread.mp4",
+    }
+    monkeypatch.setattr(main_module, "generate_threads", lambda **kwargs: fake_result)
+    monkeypatch.setattr(sys, "argv", ["main.py", "https://example.com/video", "--clip-type", "thread"])
+
+    main()
+
+    captured = capsys.readouterr()
+    assert "ignores the url argument" in captured.err

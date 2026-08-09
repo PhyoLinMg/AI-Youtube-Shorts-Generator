@@ -15,12 +15,16 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from shorts_generator import generate_chapters, generate_shorts
+from shorts_generator import generate_chapters, generate_shorts, generate_threads
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AI YouTube Shorts Generator")
-    parser.add_argument("url", help="YouTube URL, file:// URL, or local file path")
+    parser.add_argument(
+        "url", nargs="?", default=None,
+        help="YouTube URL, file:// URL, or local file path. Not used for "
+             "--clip-type thread, which draws from the existing local corpus instead.",
+    )
     parser.add_argument(
         "--mode",
         choices=["api", "local"],
@@ -86,10 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--clip-type",
-        choices=["shorts", "chapters"],
+        choices=["shorts", "chapters", "thread"],
         default="shorts",
         help="shorts (default): viral 9:16 Shorts. chapters: long-form landscape "
-             "chapter cuts, up to 15min each, full topic context, --mode local only.",
+             "chapter cuts, up to 15min each, full topic context, --mode local only. "
+             "thread: a two-episode same-topic compilation built from the existing "
+             "local corpus, no url needed, --mode local only.",
     )
     parser.add_argument(
         "--num-chapters",
@@ -103,6 +109,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+
+    if args.clip_type != "thread" and not args.url:
+        print("\nFAILED: url is required for --clip-type shorts/chapters", file=sys.stderr)
+        return 1
+    if args.clip_type == "thread" and args.url:
+        print(
+            f"[main] --clip-type thread ignores the url argument ({args.url!r}); "
+            "it draws from the existing local corpus instead",
+            file=sys.stderr,
+        )
 
     if args.clip_type == "chapters":
         # Only warn if --mode was explicitly typed and isn't "local" -- args.mode
@@ -133,7 +149,9 @@ def main() -> int:
             )
 
     try:
-        if args.clip_type == "chapters":
+        if args.clip_type == "thread":
+            result = generate_threads()
+        elif args.clip_type == "chapters":
             result = generate_chapters(
                 youtube_url=args.url,
                 num_chapters=args.num_chapters,
@@ -163,8 +181,22 @@ def main() -> int:
         print(f"\nFAILED: {e}", file=sys.stderr)
         return 1
 
+    if args.clip_type == "thread" and result is None:
+        print("\nNo same-topic episode pair found in the local corpus -- nothing to build.", file=sys.stderr)
+        print("This is expected until enough related episodes have been transcribed locally.", file=sys.stderr)
+        return 1
+
     print("\n" + "=" * 72)
-    if args.clip_type == "chapters":
+    if args.clip_type == "thread":
+        print(f"Output folder:   {result.get('output_dir')}")
+        print(f"Shared question: {result.get('shared_question')}")
+        print(f"Thesis:          {result.get('thesis')}")
+        print(f"Bridge:          {result.get('bridge')}")
+        ea, eb = result["episode_a"], result["episode_b"]
+        print(f"Episode A:       {ea['title']} ({ea['start_time']:.1f}s -> {ea['end_time']:.1f}s)")
+        print(f"Episode B:       {eb['title']} ({eb['start_time']:.1f}s -> {eb['end_time']:.1f}s)")
+        print(f"Clip:            {result.get('clip_url')}")
+    elif args.clip_type == "chapters":
         print(f"Output folder: {result.get('output_dir')}")
         print(f"Source video:  {result['source_video_url']}")
         print(f"Chapters:      {len(result['chapters'])} produced (target was {args.num_chapters})")
