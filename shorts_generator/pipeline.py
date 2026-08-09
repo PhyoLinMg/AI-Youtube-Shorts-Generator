@@ -453,9 +453,9 @@ def generate_threads(base_dir: Optional[str] = None) -> Optional[Dict]:
     episode_b = thread["episode_b"]
 
     with open(os.path.join(episode_a["run_dir"], "full_source.json"), "r", encoding="utf-8") as f:
-        duration_a = json.load(f)["duration"]
+        duration_a = json.load(f).get("duration", 0.0)
     with open(os.path.join(episode_b["run_dir"], "full_source.json"), "r", encoding="utf-8") as f:
-        duration_b = json.load(f)["duration"]
+        duration_b = json.load(f).get("duration", 0.0)
 
     clip_a_path = os.path.join(out_dir, "clip_a.mp4")
     clip_b_path = os.path.join(out_dir, "clip_b.mp4")

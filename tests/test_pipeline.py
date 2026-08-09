@@ -890,4 +890,40 @@ def test_generate_threads_assembles_and_writes_result(tmp_path, monkeypatch):
     assert result["clip_url"].endswith("thread.mp4")
     assert os.path.isfile(os.path.join(result["output_dir"], "thread_result.json"))
     # intro card, clip A, bridge card, clip B, in that order
-    assert len(assemble_calls[0]) == 4
+    out_dir = result["output_dir"]
+    assert assemble_calls[0] == [
+        os.path.join(out_dir, "intro_card.mp4"),
+        os.path.join(out_dir, "clip_a.mp4"),
+        os.path.join(out_dir, "bridge_card.mp4"),
+        os.path.join(out_dir, "clip_b.mp4"),
+    ]
+
+
+def test_generate_threads_tolerates_missing_duration_key(tmp_path, monkeypatch):
+    # thread_builder.py already tolerates a null/missing "duration" in
+    # full_source.json via .get("duration", 0.0) -- generate_threads
+    # re-reads the same file and must degrade the same way, not KeyError
+    # right after thread_builder's own defense let a thread through.
+    episode_a_dir = tmp_path / "Episode_A"
+    episode_b_dir = tmp_path / "Episode_B"
+    episode_a_dir.mkdir()
+    episode_b_dir.mkdir()
+    (episode_a_dir / "full_source.json").write_text(json.dumps({"segments": []}))  # no "duration" key
+    (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
+
+    fake_thread = {
+        "shared_question": "Does X cause Y?",
+        "thesis": "Two guests disagree about X causing Y.",
+        "bridge": "Here's the other side.",
+        "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
+        "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
+    }
+    monkeypatch.setattr(pipeline_module, "build_thread", lambda base_dir=None, llm_fn=None: fake_thread)
+    monkeypatch.setattr(pipeline_module, "acquire_clip", lambda run_dir, source_url, cached_duration, start_time, end_time, out_path: open(out_path, "wb").write(b"clip") or {"clip_path": out_path})
+    monkeypatch.setattr(pipeline_module, "synthesize_narration", lambda text, out_path, **k: open(out_path, "wb").write(b"audio") or out_path)
+    monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
+    monkeypatch.setattr(pipeline_module, "assemble_thread", lambda segment_paths, out_path: open(out_path, "wb").write(b"final") or out_path)
+
+    result = pipeline_module.generate_threads(base_dir=str(tmp_path))
+
+    assert result is not None
