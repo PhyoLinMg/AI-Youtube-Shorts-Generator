@@ -17,7 +17,7 @@ def test_synthesize_narration_requires_api_key(monkeypatch, tmp_path):
 
 
 def test_synthesize_narration_writes_audio_from_fake_client(monkeypatch, tmp_path):
-    monkeypatch.setattr(narration_module, "ELEVENLABS_API_KEY", "fake-key")
+    monkeypatch.setattr(config, "ELEVENLABS_API_KEY", "fake-key")
 
     class _FakeTTS:
         def convert(self, **kwargs):
@@ -46,7 +46,7 @@ def test_synthesize_narration_wraps_client_errors(monkeypatch, tmp_path):
         def __init__(self, api_key):
             self.text_to_speech = _FakeTTS()
 
-    monkeypatch.setattr(narration_module, "ELEVENLABS_API_KEY", "fake-key")
+    monkeypatch.setattr(config, "ELEVENLABS_API_KEY", "fake-key")
     monkeypatch.setattr(narration_module, "_get_elevenlabs_client_class", lambda: _FakeClient)
 
     with pytest.raises(narration_module.NarrationError, match="api down"):

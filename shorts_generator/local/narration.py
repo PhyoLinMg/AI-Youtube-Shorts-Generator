@@ -9,7 +9,7 @@ import os
 import subprocess
 from typing import Type
 
-from ..config import ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, require_elevenlabs_key
+from ..config import ELEVENLABS_VOICE_ID, require_elevenlabs_key
 from ..hook_card import FONT_PATH
 
 DEFAULT_VOICE_ID = ELEVENLABS_VOICE_ID
@@ -36,9 +36,8 @@ def _get_elevenlabs_client_class() -> Type:
 
 def synthesize_narration(text: str, out_path: str, voice_id: str = DEFAULT_VOICE_ID) -> str:
     """Call ElevenLabs TTS and write the audio to out_path (mp3)."""
-    require_elevenlabs_key()
     client_cls = _get_elevenlabs_client_class()
-    client = client_cls(api_key=ELEVENLABS_API_KEY)
+    client = client_cls(api_key=require_elevenlabs_key())
     try:
         audio = client.text_to_speech.convert(
             voice_id=voice_id,
@@ -78,10 +77,11 @@ def render_narration_card(audio_path: str, text: str, out_path: str) -> str:
     card, muxed with the narration audio at audio_path, sized/timed to match
     the thread's live-footage clips (see thread_assembler.py's TARGET_*)."""
     text_file = out_path + ".txt"
-    with open(text_file, "w", encoding="utf-8") as f:
-        f.write(_wrap_text(text))
 
     try:
+        with open(text_file, "w", encoding="utf-8") as f:
+            f.write(_wrap_text(text))
+
         probe = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", audio_path],
             capture_output=True, text=True, check=True,
