@@ -49,8 +49,14 @@ def _resolve_device() -> str:
     return "cpu"
 
 
-def transcribe_local(media_path: str, language: Optional[str] = None) -> Dict:
-    """Run faster-whisper on a local file path, caching the result as .json."""
+def transcribe_local(media_path: str, language: Optional[str] = None, model_size: Optional[str] = None) -> Dict:
+    """Run faster-whisper on a local file path, caching the result as .json.
+
+    model_size overrides LOCAL_WHISPER_MODEL for this call only -- used by
+    thread compilation's source re-acquisition path, which re-transcribes a
+    short (~30s) span and can afford a larger, more accurate model than the
+    pipeline-wide default without changing the cost of every Shorts run.
+    """
     cache_path = _transcript_cache_path(media_path)
     if cache_path.exists():
         source_mtime = os.path.getmtime(media_path)
@@ -80,11 +86,12 @@ def transcribe_local(media_path: str, language: Optional[str] = None) -> Dict:
 
     device = _resolve_device()
     compute_type = "float16" if device == "cuda" else "int8"
-    print(f"[transcribe/local] faster-whisper model={LOCAL_WHISPER_MODEL} device={device}", flush=True)
+    model_name = model_size or LOCAL_WHISPER_MODEL
+    print(f"[transcribe/local] faster-whisper model={model_name} device={device}", flush=True)
 
     from ..config import LOCAL_WHISPER_VAD_FILTER, LOCAL_WHISPER_VAD_PARAMETERS
 
-    model = WhisperModel(LOCAL_WHISPER_MODEL, device=device, compute_type=compute_type)
+    model = WhisperModel(model_name, device=device, compute_type=compute_type)
 
     transcribe_kwargs = {
         "audio": media_path,

@@ -92,6 +92,28 @@ def test_transcribe_local_requests_word_timestamps_and_collects_words(tmp_path, 
     assert cached["segments"][0]["words"][2]["word"] == "fox"
 
 
+def test_transcribe_local_model_size_overrides_config_default(tmp_path, monkeypatch):
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"fake")
+
+    import faster_whisper
+    monkeypatch.setattr(faster_whisper, "WhisperModel", _FakeWhisperModel)
+    monkeypatch.setattr(tr, "LOCAL_WHISPER_MODEL", "base")
+
+    captured = {}
+    orig_init = _FakeWhisperModel.__init__
+
+    def _capturing_init(self, model_name, *args, **kwargs):
+        captured["model_name"] = model_name
+        return orig_init(self, model_name, *args, **kwargs)
+
+    monkeypatch.setattr(_FakeWhisperModel, "__init__", _capturing_init)
+
+    tr.transcribe_local(str(media), model_size="small")
+
+    assert captured["model_name"] == "small"
+
+
 def test_cache_path_follows_media_directory_not_global_default(tmp_path):
     nested = tmp_path / "run_folder"
     nested.mkdir()
