@@ -21,11 +21,16 @@ import subprocess
 import tempfile
 from typing import Dict, List
 
-from ..captions import burn_captions
+from ..captions import CaptionError, burn_captions
 from .clipper import crop_clip_local
 from .transcriber import transcribe_local
 
 PAD_SECONDS = 3.0
+# Heuristic, not proof of content identity: two different uploads of the
+# same length would slip past this check. It exists to catch the specific,
+# common failure mode from the design-spec incident (a wrong/stale URL
+# pointing at a differently-lengthed video), not to guarantee the bytes are
+# the exact same upload.
 DURATION_MISMATCH_TOLERANCE_SECONDS = 2.0
 
 
@@ -39,35 +44,48 @@ def _probe_source_duration(source_url: str) -> float:
         ["yt-dlp", "--skip-download", "--print", "duration", source_url],
         capture_output=True, text=True, check=True,
     )
-    return float(result.stdout.strip().splitlines()[-1])
+    stdout = result.stdout.strip()
+    try:
+        return float(stdout.splitlines()[-1])
+    except (IndexError, ValueError) as e:
+        raise RuntimeError(
+            f"could not parse a duration from yt-dlp output for {source_url!r}: "
+            f"stdout={stdout!r}"
+        ) from e
 
 
 def _download_padded_section(source_url: str, start_time: float, end_time: float, out_path: str) -> None:
     padded_start = max(0.0, start_time - PAD_SECONDS)
     padded_end = end_time + PAD_SECONDS
     webm_path = out_path + ".webm"
-    subprocess.run(
-        [
-            "yt-dlp",
-            "--download-sections", f"*{padded_start}-{padded_end}",
-            "-f", "bv*[height<=720]+ba/b[height<=720]",
-            "--force-keyframes-at-cuts",
-            "-o", webm_path,
-            source_url,
-        ],
-        check=True,
-    )
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-i", webm_path,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-            "-c:a", "aac", "-b:a", "192k",
-            out_path,
-        ],
-        check=True,
-    )
-    os.remove(webm_path)
+    try:
+        subprocess.run(
+            [
+                "yt-dlp",
+                "--download-sections", f"*{padded_start}-{padded_end}",
+                "-f", "bv*[height<=720]+ba/b[height<=720]",
+                "--force-keyframes-at-cuts",
+                "-o", webm_path,
+                source_url,
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-i", webm_path,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                out_path,
+            ],
+            check=True,
+        )
+    finally:
+        # Self-sufficient cleanup: don't rely on the caller wrapping this in
+        # a TemporaryDirectory. Runs whether the yt-dlp step, the ffmpeg
+        # transcode step, or neither failed.
+        if os.path.exists(webm_path):
+            os.remove(webm_path)
 
 
 def _find_word_start(segments: List[Dict], min_time: float) -> float:
@@ -79,6 +97,42 @@ def _find_word_start(segments: List[Dict], min_time: float) -> float:
             if float(w["start"]) >= min_time:
                 return float(w["start"])
     return min_time
+
+
+def _crop_and_caption(
+    source_path: str,
+    start_time: float,
+    end_time: float,
+    aspect_ratio: str,
+    out_path: str,
+    segments: List[Dict],
+    log_label: str,
+) -> Dict:
+    """Crop [start_time, end_time] out of source_path to out_path, then try
+    to burn captions onto it -- matching the established crop_highlights_local
+    / crop_chapters_local pattern (local/clipper.py): a caption failure is
+    logged and leaves the uncaptioned-but-valid clip in place at out_path
+    rather than raising, and any partial .captioned.mp4 is cleaned up. On
+    success the caption result is atomically swapped into out_path.
+    """
+    crop_clip_local(
+        source_path, start_time, end_time, aspect_ratio, out_path,
+        framing="locked", cut_segments=[{"start_time": start_time, "end_time": end_time}],
+    )
+    result = {"clip_path": out_path}
+    captioned_path = out_path + ".captioned.mp4"
+    try:
+        burn_captions(
+            out_path, segments, start_time, end_time, captioned_path,
+            fade_seconds=0.3, word_highlight=True,
+        )
+        os.replace(captioned_path, out_path)
+    except CaptionError as e:
+        print(f"[thread_source] {log_label} captions skipped: {e}", flush=True)
+        result["captions_error"] = str(e)
+        if os.path.exists(captioned_path):
+            os.remove(captioned_path)
+    return result
 
 
 def acquire_clip(
@@ -101,17 +155,10 @@ def acquire_clip(
     if os.path.exists(full_source):
         with open(full_transcript_path, "r", encoding="utf-8") as f:
             transcript = json.load(f)
-        crop_clip_local(
+        return _crop_and_caption(
             full_source, start_time, end_time, aspect_ratio, out_path,
-            framing="locked", cut_segments=[{"start_time": start_time, "end_time": end_time}],
+            transcript["segments"], "full_source",
         )
-        captioned_path = out_path + ".captioned.mp4"
-        burn_captions(
-            out_path, transcript["segments"], start_time, end_time, captioned_path,
-            fade_seconds=0.3, word_highlight=True,
-        )
-        os.replace(captioned_path, out_path)
-        return {"clip_path": out_path}
 
     full_duration = _probe_source_duration(source_url)
     if abs(full_duration - cached_duration) > DURATION_MISMATCH_TOLERANCE_SECONDS:
@@ -131,14 +178,7 @@ def acquire_clip(
         relative_start = _find_word_start(fresh_transcript["segments"], start_time - padded_start)
         relative_end = min(end_time - padded_start, fresh_transcript["duration"])
 
-        crop_clip_local(
+        return _crop_and_caption(
             padded_path, relative_start, relative_end, aspect_ratio, out_path,
-            framing="locked", cut_segments=[{"start_time": relative_start, "end_time": relative_end}],
+            fresh_transcript["segments"], "re-acquired",
         )
-        captioned_path = out_path + ".captioned.mp4"
-        burn_captions(
-            out_path, fresh_transcript["segments"], relative_start, relative_end, captioned_path,
-            fade_seconds=0.3, word_highlight=True,
-        )
-        os.replace(captioned_path, out_path)
-        return {"clip_path": out_path}

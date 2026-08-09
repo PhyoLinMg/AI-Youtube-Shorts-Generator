@@ -4,6 +4,7 @@ import subprocess
 
 import pytest
 
+from shorts_generator.captions import CaptionError
 from shorts_generator.local import thread_source as thread_source_module
 from shorts_generator.local.thread_source import SourceMismatchError, acquire_clip
 
@@ -112,3 +113,98 @@ def test_acquire_clip_proceeds_when_duration_matches_within_tolerance(tmp_path, 
 
     assert result == {"clip_path": str(tmp_path / "out.mp4")}
     assert padded_path_holder["out_path"]
+
+
+def test_acquire_clip_keeps_uncaptioned_clip_when_burn_captions_fails(tmp_path, monkeypatch):
+    """A CaptionError must not propagate uncaught and must not leave a
+    stray .captioned.mp4 -- the crop_clip_local output at out_path (already
+    written before burn_captions runs) is left in place as a valid,
+    playable, if uncaptioned, clip."""
+    run_dir = tmp_path / "episode"
+    run_dir.mkdir()
+    (run_dir / "full_source.mp4").write_bytes(b"fake video bytes")
+    (run_dir / "full_source.json").write_text(json.dumps({
+        "duration": 100.0,
+        "segments": [{"start": 0.0, "end": 10.0, "text": "hello world", "words": []}],
+    }))
+
+    out_path = str(tmp_path / "clip.mp4")
+
+    def _fake_crop(source_path, start, end, aspect_ratio, out_path, **kwargs):
+        with open(out_path, "wb") as f:
+            f.write(b"cropped but uncaptioned")
+
+    def _fail_captions(src, segs, start, end, out, **kwargs):
+        # Simulate the real burn path: it may write a partial file before
+        # raising.
+        with open(out, "wb") as f:
+            f.write(b"partial")
+        raise CaptionError("no transcript overlaps clip window")
+
+    monkeypatch.setattr(thread_source_module, "crop_clip_local", _fake_crop)
+    monkeypatch.setattr(thread_source_module, "burn_captions", _fail_captions)
+
+    result = acquire_clip(
+        str(run_dir), "https://example.com/video", cached_duration=100.0,
+        start_time=1.0, end_time=8.0, out_path=out_path,
+    )
+
+    assert result["clip_path"] == out_path
+    assert "captions_error" in result
+    assert os.path.exists(out_path)
+    with open(out_path, "rb") as f:
+        assert f.read() == b"cropped but uncaptioned"
+    # the partial captioned file must be cleaned up, not left as debris
+    assert not os.path.exists(out_path + ".captioned.mp4")
+
+
+def test_probe_source_duration_raises_clear_error_on_unparseable_output(monkeypatch):
+    class _FakeResult:
+        stdout = "NA\n"
+
+    monkeypatch.setattr(
+        thread_source_module.subprocess, "run",
+        lambda *a, **k: _FakeResult(),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        thread_source_module._probe_source_duration("https://example.com/video")
+    # must not be a bare ValueError/IndexError -- should carry context
+    assert "https://example.com/video" in str(exc_info.value)
+
+
+def test_probe_source_duration_raises_clear_error_on_empty_output(monkeypatch):
+    class _FakeResult:
+        stdout = ""
+
+    monkeypatch.setattr(
+        thread_source_module.subprocess, "run",
+        lambda *a, **k: _FakeResult(),
+    )
+
+    with pytest.raises(RuntimeError):
+        thread_source_module._probe_source_duration("https://example.com/video")
+
+
+def test_download_padded_section_cleans_up_webm_when_ffmpeg_fails(tmp_path, monkeypatch):
+    out_path = str(tmp_path / "padded.mp4")
+    webm_path = out_path + ".webm"
+    calls = {"n": 0}
+
+    def _fake_run(cmd, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # simulate yt-dlp actually producing the intermediate .webm
+            with open(webm_path, "wb") as f:
+                f.write(b"fake webm bytes")
+            return subprocess.CompletedProcess(cmd, 0)
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(thread_source_module.subprocess, "run", _fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        thread_source_module._download_padded_section(
+            "https://example.com/video", 10.0, 20.0, out_path,
+        )
+
+    assert not os.path.exists(webm_path)
