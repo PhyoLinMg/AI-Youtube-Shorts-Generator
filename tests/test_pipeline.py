@@ -44,6 +44,7 @@ def _paths(tmp_path):
         chapters_json=os.path.join(root, "chapters.json"),
         result_json=os.path.join(root, "result.json"),
         chapters_result_json=os.path.join(root, "chapters_result.json"),
+        source_url_txt=os.path.join(root, "source_url.txt"),
         progress_log=os.path.join(root, "progress.log"),
     )
 
@@ -434,6 +435,23 @@ def test_generate_shorts_uses_provided_paths_without_resolving(tmp_path, monkeyp
 
     assert result["output_dir"] == paths.root
     assert os.path.exists(paths.progress_log)
+
+
+def test_generate_shorts_persists_source_url(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(pipeline_module, "resolve_output_dir", lambda url: paths)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(local_clipper_module, "crop_highlights_local", lambda *a, **k: [{"clip_url": "/tmp/out/Short-01.mp4"}])
+
+    pipeline_module.generate_shorts("https://www.youtube.com/watch?v=xyz", mode="local", num_clips=1)
+
+    with open(paths.source_url_txt) as f:
+        assert f.read().strip() == "https://www.youtube.com/watch?v=xyz"
 
 
 def test_run_api_recovers_from_corrupted_transcript_cache(tmp_path, monkeypatch):

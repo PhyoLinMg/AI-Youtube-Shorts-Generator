@@ -37,6 +37,7 @@ class RunPaths:
     chapters_json: str
     result_json: str
     chapters_result_json: str
+    source_url_txt: str
     progress_log: str
 
 
@@ -190,8 +191,26 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
         # sharing one path means whichever pipeline runs second silently
         # clobbers the other's result.json.
         chapters_result_json=os.path.join(root, "chapters_result.json"),
+        source_url_txt=os.path.join(root, "source_url.txt"),
         progress_log=os.path.join(root, "progress.log"),
     )
+
+
+def write_source_url(paths: RunPaths, youtube_url: str) -> None:
+    """Persist the original source URL so a pruned full_source.mp4 (deleted
+    to save disk once a channel has 100+ episodes) can still be
+    re-acquired later -- see corpus.py / local/thread_source.py, which need
+    to re-download a specific clip's source long after the original run."""
+    with open(paths.source_url_txt, "w", encoding="utf-8") as f:
+        f.write(youtube_url.strip())
+
+
+def read_source_url(paths: RunPaths) -> Optional[str]:
+    if not os.path.exists(paths.source_url_txt):
+        return None
+    with open(paths.source_url_txt, "r", encoding="utf-8") as f:
+        content = f.read().strip()
+    return content or None
 
 
 @dataclass

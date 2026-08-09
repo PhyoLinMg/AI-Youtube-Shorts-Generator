@@ -158,6 +158,40 @@ def test_resolve_output_dir_builds_chapters_paths(tmp_path, monkeypatch):
     assert os.path.isdir(paths.chapters_dir)
 
 
+def test_resolve_output_dir_includes_source_url_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        run_output.requests, "get",
+        lambda *a, **k: _FakeResponse(200, {"title": "How To Build A Startup"}),
+    )
+    paths = run_output.resolve_output_dir(
+        "https://www.youtube.com/watch?v=abc123", base_dir=str(tmp_path)
+    )
+    assert paths.source_url_txt == os.path.join(paths.root, "source_url.txt")
+
+
+def test_write_source_url_then_read_source_url_roundtrips(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        run_output.requests, "get",
+        lambda *a, **k: _FakeResponse(200, {"title": "How To Build A Startup"}),
+    )
+    paths = run_output.resolve_output_dir(
+        "https://www.youtube.com/watch?v=abc123", base_dir=str(tmp_path)
+    )
+    run_output.write_source_url(paths, "https://www.youtube.com/watch?v=abc123")
+    assert run_output.read_source_url(paths) == "https://www.youtube.com/watch?v=abc123"
+
+
+def test_read_source_url_returns_none_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        run_output.requests, "get",
+        lambda *a, **k: _FakeResponse(200, {"title": "How To Build A Startup"}),
+    )
+    paths = run_output.resolve_output_dir(
+        "https://www.youtube.com/watch?v=abc123", base_dir=str(tmp_path)
+    )
+    assert run_output.read_source_url(paths) is None
+
+
 def test_resolve_output_dir_gives_chapters_its_own_result_json_path(tmp_path, monkeypatch):
     # Deliberately separate from result_json (used by generate_shorts) --
     # generate_shorts and generate_chapters can both run against the same

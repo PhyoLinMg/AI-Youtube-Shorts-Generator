@@ -20,7 +20,7 @@ from .clipper import _download_to, crop_highlights
 from .downloader import download_youtube
 from .highlights import call_muapi_llm, get_chapters_cached, get_highlights_cached, select_final_highlights
 from .local.llm import call_openai_vision_llm
-from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_chapter_descriptions, write_descriptions
+from .run_output import RunPaths, capture_progress_log, resolve_output_dir, write_chapter_descriptions, write_descriptions, write_source_url
 from .transcriber import transcribe
 from .visual_hook import call_muapi_vision_llm, score_visual_hooks
 
@@ -353,6 +353,7 @@ def generate_shorts(
         raise ValueError(f"Unknown mode: {mode!r}. Use 'api' or 'local'.")
 
     paths = paths or resolve_output_dir(youtube_url)
+    write_source_url(paths, youtube_url)
     with capture_progress_log(paths.progress_log):
         if mode == "local":
             result = _run_local(
@@ -413,6 +414,7 @@ def generate_chapters(
         }
     """
     paths = paths or resolve_output_dir(youtube_url)
+    write_source_url(paths, youtube_url)
     with capture_progress_log(paths.progress_log):
         result = _run_local_chapters(
             youtube_url, num_chapters, download_format, language, captions, caption_fade_duration,
