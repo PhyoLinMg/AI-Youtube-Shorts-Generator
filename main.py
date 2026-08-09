@@ -150,6 +150,8 @@ def main() -> int:
             ignored_flags.append("--no-hook-card")
         if args.end_card is True:
             ignored_flags.append("--end-card")
+        if args.num_chapters != 5:
+            ignored_flags.append(f"--num-chapters {args.num_chapters}")
         if ignored_flags:
             print(
                 f"[main] --clip-type thread ignores: {', '.join(ignored_flags)} "
@@ -222,8 +224,8 @@ def main() -> int:
         print("\nNo same-topic episode pair found in the local corpus -- nothing to build.", file=sys.stderr)
         print(
             "This is expected until enough related episodes have been transcribed locally: "
-            "run `--mode local` on two or more videos covering the same topic first, then "
-            "retry `--clip-type thread`.",
+            "run the pipeline on two or more videos covering the same topic first (any mode), "
+            "then retry `--clip-type thread`.",
             file=sys.stderr,
         )
         return 1

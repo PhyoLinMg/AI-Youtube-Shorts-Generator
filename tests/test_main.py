@@ -248,7 +248,7 @@ def test_main_warns_on_shorts_only_flags_with_clip_type_thread(monkeypatch, caps
         ["main.py", "--clip-type", "thread", "--num-clips", "7", "--filename-style", "generic",
          "--mode", "local", "--aspect-ratio", "16:9", "--format", "720", "--language", "en",
          "--framing", "adaptive", "--no-captions", "--caption-fade-duration", "0.5",
-         "--no-word-highlight", "--no-hook-card", "--end-card"],
+         "--no-word-highlight", "--no-hook-card", "--end-card", "--num-chapters", "9"],
     )
 
     main()
@@ -266,6 +266,7 @@ def test_main_warns_on_shorts_only_flags_with_clip_type_thread(monkeypatch, caps
     assert "--no-word-highlight" in err
     assert "--no-hook-card" in err
     assert "--end-card" in err
+    assert "--num-chapters 9" in err
 
 
 def test_main_does_not_warn_when_no_flags_passed_with_clip_type_thread(monkeypatch, capsys):
@@ -296,5 +297,9 @@ def test_main_no_thread_message_is_actionable(monkeypatch, capsys):
 
     err = capsys.readouterr().err
     assert exit_code == 1
-    assert "--mode local" in err
+    assert "any mode" in err
     assert "--clip-type thread" in err
+    # Mode is irrelevant to corpus eligibility (full_source.json + source_url.txt
+    # are written unconditionally in both api and local mode) -- the message must
+    # not tell the user they specifically need --mode local.
+    assert "--mode local" not in err
