@@ -95,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="shorts (default): viral 9:16 Shorts. chapters: long-form landscape "
              "chapter cuts, up to 15min each, full topic context, --mode local only. "
              "thread: a two-episode same-topic compilation built from the existing "
-             "local corpus, no url needed, --mode local only.",
+             "local corpus, no url needed.",
     )
     parser.add_argument(
         "--num-chapters",
@@ -155,7 +155,7 @@ def main() -> int:
         if ignored_flags:
             print(
                 f"[main] --clip-type thread ignores: {', '.join(ignored_flags)} "
-                "(it builds from the existing local corpus, --mode local only)",
+                "(no url, no mode -- it builds from the existing local corpus)",
                 file=sys.stderr,
             )
 
