@@ -107,9 +107,16 @@ def list_corpus_run_dirs(base_dir: Optional[str] = None) -> List[str]:
         # Match run_output.read_source_url's empty-value contract: a
         # whitespace-only source_url.txt counts as "no source URL", so
         # treat the run as ineligible rather than surfacing source_url: "".
-        with open(source_url_path, "r", encoding="utf-8") as f:
-            if not f.read().strip():
-                continue
+        # Unreadable/non-UTF-8 files are treated the same way -- this read
+        # happens before build_corpus's own per-run try/except ever runs,
+        # so it needs its own error handling rather than propagating.
+        try:
+            with open(source_url_path, "r", encoding="utf-8") as f:
+                if not f.read().strip():
+                    continue
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"[corpus] skipping {run_dir}: {e}", flush=True)
+            continue
         run_dirs.append(run_dir)
     return run_dirs
 
@@ -126,7 +133,7 @@ def build_corpus(base_dir: Optional[str] = None, llm_fn: Optional[LLMFn] = None)
                 transcript = json.load(f)
             with open(os.path.join(run_dir, "source_url.txt"), "r", encoding="utf-8") as f:
                 source_url = f.read().strip()
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
             print(f"[corpus] skipping {run_dir}: {e}", flush=True)
             continue
         entries.append({

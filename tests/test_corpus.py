@@ -124,3 +124,34 @@ def test_list_corpus_run_dirs_excludes_empty_source_url(tmp_path):
 
     assert len(run_dirs) == 1
     assert run_dirs[0].endswith("Has_Url")
+
+
+def test_build_corpus_skips_invalid_utf8_transcript_and_keeps_valid_episode(tmp_path):
+    valid = _write_episode(str(tmp_path), "Valid_Episode", source_url="https://example.com/valid")
+    bad_dir = os.path.join(str(tmp_path), "Bad_Bytes_Episode")
+    os.makedirs(bad_dir, exist_ok=True)
+    # Invalid UTF-8 byte sequence -- not valid JSON either, but the point is
+    # it must fail at the decode step (UnicodeDecodeError), not JSONDecodeError.
+    with open(os.path.join(bad_dir, "full_source.json"), "wb") as f:
+        f.write(b'{"duration": 1.0, "segments": [{"text": "\xff\xfe bad bytes"}]}')
+    with open(os.path.join(bad_dir, "source_url.txt"), "w", encoding="utf-8") as f:
+        f.write("https://example.com/bad-bytes")
+
+    entries = corpus.build_corpus(base_dir=str(tmp_path), llm_fn=lambda prompt: "summary text")
+
+    assert len(entries) == 1
+    assert entries[0]["run_dir"] == valid
+
+
+def test_list_corpus_run_dirs_skips_invalid_utf8_source_url(tmp_path):
+    valid = _write_episode(str(tmp_path), "Valid_Episode")
+    bad_dir = os.path.join(str(tmp_path), "Bad_Bytes_Url")
+    os.makedirs(bad_dir, exist_ok=True)
+    with open(os.path.join(bad_dir, "full_source.json"), "w", encoding="utf-8") as f:
+        json.dump({"duration": 10.0, "segments": []}, f)
+    with open(os.path.join(bad_dir, "source_url.txt"), "wb") as f:
+        f.write(b"\xff\xfe not valid utf-8")
+
+    run_dirs = corpus.list_corpus_run_dirs(base_dir=str(tmp_path))
+
+    assert run_dirs == [valid]
