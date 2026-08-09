@@ -9,7 +9,7 @@ import os
 import subprocess
 from typing import Type
 
-from ..config import ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID
+from ..config import ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, require_elevenlabs_key
 from ..hook_card import FONT_PATH
 
 DEFAULT_VOICE_ID = ELEVENLABS_VOICE_ID
@@ -36,14 +36,7 @@ def _get_elevenlabs_client_class() -> Type:
 
 def synthesize_narration(text: str, out_path: str, voice_id: str = DEFAULT_VOICE_ID) -> str:
     """Call ElevenLabs TTS and write the audio to out_path (mp3)."""
-    # Checked against this module's own binding (not config.require_elevenlabs_key)
-    # so tests can monkeypatch narration.ELEVENLABS_API_KEY; the config helper
-    # reads config's own global and would fall through to a real API call.
-    if not ELEVENLABS_API_KEY:
-        raise RuntimeError(
-            "ELEVENLABS_API_KEY is not set. Thread narration needs an ElevenLabs "
-            "key. Add it to your .env file or export it as an env var."
-        )
+    require_elevenlabs_key()
     client_cls = _get_elevenlabs_client_class()
     client = client_cls(api_key=ELEVENLABS_API_KEY)
     try:
@@ -102,7 +95,8 @@ def render_narration_card(audio_path: str, text: str, out_path: str) -> str:
                 "-i", audio_path,
                 "-vf",
                 f"drawtext=fontfile='{FONT_PATH}':textfile='{text_file}':fontsize=64:fontcolor=white:"
-                "box=1:boxcolor=black@0.55:boxborderw=16:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=20",
+                "box=1:boxcolor=black@0.55:boxborderw=16:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=20:"
+                "expansion=none",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", CARD_FPS,
                 "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "192k",
                 "-shortest", out_path,
@@ -111,6 +105,8 @@ def render_narration_card(audio_path: str, text: str, out_path: str) -> str:
         )
     except subprocess.CalledProcessError as e:
         raise NarrationError(f"narration card render failed: {e.stderr}") from e
+    except (OSError, ValueError) as e:
+        raise NarrationError(f"narration card render failed: {e}") from e
     finally:
         if os.path.exists(text_file):
             os.remove(text_file)

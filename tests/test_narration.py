@@ -8,7 +8,10 @@ from shorts_generator.local import narration as narration_module
 
 
 def test_synthesize_narration_requires_api_key(monkeypatch, tmp_path):
-    monkeypatch.setattr(narration_module, "ELEVENLABS_API_KEY", "")
+    # require_elevenlabs_key() is called directly (imported from config) and
+    # resolves ELEVENLABS_API_KEY against config's own module namespace at
+    # call time, so the key must be patched there, not on narration_module.
+    monkeypatch.setattr(config, "ELEVENLABS_API_KEY", "")
     with pytest.raises(RuntimeError, match="ELEVENLABS_API_KEY"):
         narration_module.synthesize_narration("hello", str(tmp_path / "out.mp3"))
 
@@ -66,6 +69,21 @@ def synthetic_audio(tmp_path_factory):
         check=True,
     )
     return path
+
+
+def test_render_narration_card_wraps_ffprobe_parse_errors(monkeypatch, tmp_path):
+    class _FakeCompletedProcess:
+        stdout = "not-a-number\n"
+        stderr = ""
+
+    def _fake_run(cmd, **kwargs):
+        return _FakeCompletedProcess()
+
+    monkeypatch.setattr(narration_module.subprocess, "run", _fake_run)
+
+    out_path = str(tmp_path / "card.mp4")
+    with pytest.raises(narration_module.NarrationError):
+        narration_module.render_narration_card(str(tmp_path / "fake.mp3"), "hi", out_path)
 
 
 def test_render_narration_card_produces_vertical_video_matching_audio_duration(synthetic_audio, tmp_path):
