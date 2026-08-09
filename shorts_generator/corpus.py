@@ -67,7 +67,7 @@ def get_abstract_cached(run_dir: str, transcript: Dict, llm_fn: Optional[LLMFn] 
             ):
                 print(f"[corpus] reusing cached abstract: {cache_path}", flush=True)
                 return cached["abstract"]
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             print(f"[corpus] cached abstract corrupted, recomputing: {cache_path}", flush=True)
 
     abstract = llm_fn(ABSTRACT_PROMPT.format(sample=_sample_transcript_text(transcript))).strip()
@@ -133,13 +133,22 @@ def build_corpus(base_dir: Optional[str] = None, llm_fn: Optional[LLMFn] = None)
                 transcript = json.load(f)
             with open(os.path.join(run_dir, "source_url.txt"), "r", encoding="utf-8") as f:
                 source_url = f.read().strip()
+            # get_abstract_cached lives inside this same try block: a live
+            # llm_fn call across 100+ episodes can fail transiently (network
+            # error, rate limit) just as easily as a file can be corrupted,
+            # and either failure should skip only this one episode rather
+            # than aborting the whole corpus build.
+            abstract = get_abstract_cached(run_dir, transcript, llm_fn=llm_fn)
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
             print(f"[corpus] skipping {run_dir}: {e}", flush=True)
+            continue
+        except Exception as e:
+            print(f"[corpus] skipping {run_dir}: abstract generation failed: {e}", flush=True)
             continue
         entries.append({
             "run_dir": run_dir,
             "title": os.path.basename(run_dir),
             "source_url": source_url,
-            "abstract": get_abstract_cached(run_dir, transcript, llm_fn=llm_fn),
+            "abstract": abstract,
         })
     return entries

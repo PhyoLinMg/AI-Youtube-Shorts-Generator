@@ -155,3 +155,25 @@ def test_list_corpus_run_dirs_skips_invalid_utf8_source_url(tmp_path):
     run_dirs = corpus.list_corpus_run_dirs(base_dir=str(tmp_path))
 
     assert run_dirs == [valid]
+
+
+def test_build_corpus_skips_episode_when_llm_fn_raises(tmp_path):
+    # Simulates a real live-LLM failure mode (network error, rate limit)
+    # during abstract generation for one episode among many -- this must
+    # not abort the whole corpus build, only skip that one episode.
+    valid = _write_episode(str(tmp_path), "A_Valid_Episode", source_url="https://example.com/valid")
+    _write_episode(str(tmp_path), "B_Failing_Episode", source_url="https://example.com/failing")
+
+    # list_corpus_run_dirs visits run dirs in sorted (alphabetical) order,
+    # so A_Valid_Episode is processed first and B_Failing_Episode second.
+    calls = []
+    def flaky_llm(prompt):
+        calls.append(prompt)
+        if len(calls) == 2:
+            raise RuntimeError("simulated network error")
+        return "summary text"
+
+    entries = corpus.build_corpus(base_dir=str(tmp_path), llm_fn=flaky_llm)
+
+    assert len(entries) == 1
+    assert entries[0]["run_dir"] == valid
