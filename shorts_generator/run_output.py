@@ -284,6 +284,12 @@ def list_runs(base_dir: Optional[str] = None) -> List[RunSummary]:
         return []
     runs = []
     for name in os.listdir(base_dir):
+        # resolve_thread_output_dir() (see above) creates output/_Threads/
+        # as a sibling of per-episode run folders, keyed by thread slug, not
+        # by episode title -- it has no full_source.mp4/Shorts shape of its
+        # own and isn't a run the History tab should list.
+        if name == "_Threads":
+            continue
         root = os.path.join(base_dir, name)
         if not os.path.isdir(root):
             continue
