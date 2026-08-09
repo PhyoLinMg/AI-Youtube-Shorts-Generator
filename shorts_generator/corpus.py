@@ -29,8 +29,22 @@ def _abstract_cache_path(run_dir: str) -> str:
 
 def _sample_transcript_text(transcript: Dict, max_chars: int = 6000) -> str:
     segments = transcript.get("segments", [])
-    text = " ".join(s.get("text", "") for s in segments)
-    return text[:max_chars]
+    texts = [s.get("text", "") for s in segments]
+    total = len(texts)
+    if total == 0:
+        return ""
+    # Sample evenly across the whole episode (opening, middle, closing) rather
+    # than just the first N chars -- a podcast's real topic often isn't
+    # established until after intro/sponsor-read chatter, so head-truncation
+    # biases the abstract toward the wrong part of the episode.
+    budget_per_section = max_chars // 3
+    thirds = [
+        texts[: total // 3],
+        texts[total // 3 : 2 * total // 3],
+        texts[2 * total // 3 :],
+    ]
+    parts = [" ".join(section)[:budget_per_section] for section in thirds]
+    return " ... ".join(parts)
 
 
 def get_abstract_cached(run_dir: str, transcript: Dict, llm_fn: Optional[LLMFn] = None) -> str:
@@ -51,9 +65,10 @@ def get_abstract_cached(run_dir: str, transcript: Dict, llm_fn: Optional[LLMFn] 
                 and cached.get("schema_version") == ABSTRACT_SCHEMA_VERSION
                 and cached.get("abstract")
             ):
+                print(f"[corpus] reusing cached abstract: {cache_path}", flush=True)
                 return cached["abstract"]
         except json.JSONDecodeError:
-            pass
+            print(f"[corpus] cached abstract corrupted, recomputing: {cache_path}", flush=True)
 
     abstract = llm_fn(ABSTRACT_PROMPT.format(sample=_sample_transcript_text(transcript))).strip()
 
@@ -84,11 +99,18 @@ def list_corpus_run_dirs(base_dir: Optional[str] = None) -> List[str]:
         run_dir = os.path.join(base_dir, name)
         if not os.path.isdir(run_dir):
             continue
-        if (
-            os.path.exists(os.path.join(run_dir, "full_source.json"))
-            and os.path.exists(os.path.join(run_dir, "source_url.txt"))
-        ):
-            run_dirs.append(run_dir)
+        source_url_path = os.path.join(run_dir, "source_url.txt")
+        if not os.path.exists(os.path.join(run_dir, "full_source.json")):
+            continue
+        if not os.path.exists(source_url_path):
+            continue
+        # Match run_output.read_source_url's empty-value contract: a
+        # whitespace-only source_url.txt counts as "no source URL", so
+        # treat the run as ineligible rather than surfacing source_url: "".
+        with open(source_url_path, "r", encoding="utf-8") as f:
+            if not f.read().strip():
+                continue
+        run_dirs.append(run_dir)
     return run_dirs
 
 
@@ -99,10 +121,14 @@ def build_corpus(base_dir: Optional[str] = None, llm_fn: Optional[LLMFn] = None)
     full transcript only for the two episodes actually picked."""
     entries = []
     for run_dir in list_corpus_run_dirs(base_dir):
-        with open(os.path.join(run_dir, "full_source.json"), "r", encoding="utf-8") as f:
-            transcript = json.load(f)
-        with open(os.path.join(run_dir, "source_url.txt"), "r", encoding="utf-8") as f:
-            source_url = f.read().strip()
+        try:
+            with open(os.path.join(run_dir, "full_source.json"), "r", encoding="utf-8") as f:
+                transcript = json.load(f)
+            with open(os.path.join(run_dir, "source_url.txt"), "r", encoding="utf-8") as f:
+                source_url = f.read().strip()
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"[corpus] skipping {run_dir}: {e}", flush=True)
+            continue
         entries.append({
             "run_dir": run_dir,
             "title": os.path.basename(run_dir),

@@ -76,3 +76,51 @@ def test_build_corpus_returns_title_source_url_and_abstract(tmp_path):
     assert entries[0]["source_url"] == "https://example.com/my-episode"
     assert entries[0]["abstract"] == "summary text"
     assert entries[0]["run_dir"].endswith("My_Episode")
+
+
+def test_sample_transcript_text_samples_beyond_the_opening(tmp_path):
+    # Build a transcript with exactly one (oversized) segment per third, and
+    # a distinctive marker as the entire closing-third segment. Head
+    # truncation of the whole transcript would never reach it; even
+    # sampling across thirds should return it intact.
+    marker = "UNIQUE_CLOSING_MARKER_XYZ"
+    segments = [
+        {"start": 0.0, "end": 1.0, "text": "filler " * 2000},
+        {"start": 1.0, "end": 2.0, "text": "filler " * 2000},
+        {"start": 2.0, "end": 3.0, "text": marker},
+    ]
+    transcript = {"duration": 3.0, "segments": segments}
+
+    sample = corpus._sample_transcript_text(transcript, max_chars=6000)
+
+    assert marker in sample
+
+
+def test_build_corpus_skips_corrupted_transcript_and_keeps_valid_episode(tmp_path):
+    valid = _write_episode(str(tmp_path), "Valid_Episode", source_url="https://example.com/valid")
+    corrupted_dir = os.path.join(str(tmp_path), "Corrupted_Episode")
+    os.makedirs(corrupted_dir, exist_ok=True)
+    with open(os.path.join(corrupted_dir, "full_source.json"), "w", encoding="utf-8") as f:
+        f.write("{not valid json")
+    with open(os.path.join(corrupted_dir, "source_url.txt"), "w", encoding="utf-8") as f:
+        f.write("https://example.com/corrupted")
+
+    entries = corpus.build_corpus(base_dir=str(tmp_path), llm_fn=lambda prompt: "summary text")
+
+    assert len(entries) == 1
+    assert entries[0]["run_dir"] == valid
+
+
+def test_list_corpus_run_dirs_excludes_empty_source_url(tmp_path):
+    _write_episode(str(tmp_path), "Has_Url")
+    empty_dir = os.path.join(str(tmp_path), "Empty_Url")
+    os.makedirs(empty_dir, exist_ok=True)
+    with open(os.path.join(empty_dir, "full_source.json"), "w", encoding="utf-8") as f:
+        json.dump({"duration": 10.0, "segments": []}, f)
+    with open(os.path.join(empty_dir, "source_url.txt"), "w", encoding="utf-8") as f:
+        f.write("   \n")
+
+    run_dirs = corpus.list_corpus_run_dirs(base_dir=str(tmp_path))
+
+    assert len(run_dirs) == 1
+    assert run_dirs[0].endswith("Has_Url")
