@@ -443,6 +443,7 @@ def generate_threads(base_dir: Optional[str] = None) -> Optional[Dict]:
     """
     from .local.llm import call_local_llm
 
+    print("[pipeline/local] scanning local corpus for a same-topic thread...", flush=True)
     thread = build_thread(base_dir=base_dir, llm_fn=call_local_llm)
     if thread is None:
         return None
@@ -451,6 +452,8 @@ def generate_threads(base_dir: Optional[str] = None) -> Optional[Dict]:
 
     episode_a = thread["episode_a"]
     episode_b = thread["episode_b"]
+    print(f"[pipeline/local] found a thread: {thread['shared_question']!r}", flush=True)
+    print(f"[pipeline/local] thesis: {thread['thesis']}", flush=True)
 
     with open(os.path.join(episode_a["run_dir"], "full_source.json"), "r", encoding="utf-8") as f:
         duration_a = json.load(f).get("duration", 0.0)
@@ -459,10 +462,12 @@ def generate_threads(base_dir: Optional[str] = None) -> Optional[Dict]:
 
     clip_a_path = os.path.join(out_dir, "clip_a.mp4")
     clip_b_path = os.path.join(out_dir, "clip_b.mp4")
+    print(f"[pipeline/local] acquiring clip A from {episode_a['title']!r}...", flush=True)
     acquire_clip(
         episode_a["run_dir"], episode_a["source_url"], cached_duration=duration_a,
         start_time=episode_a["start_time"], end_time=episode_a["end_time"], out_path=clip_a_path,
     )
+    print(f"[pipeline/local] acquiring clip B from {episode_b['title']!r}...", flush=True)
     acquire_clip(
         episode_b["run_dir"], episode_b["source_url"], cached_duration=duration_b,
         start_time=episode_b["start_time"], end_time=episode_b["end_time"], out_path=clip_b_path,
@@ -470,18 +475,22 @@ def generate_threads(base_dir: Optional[str] = None) -> Optional[Dict]:
 
     intro_audio = os.path.join(out_dir, "thesis.mp3")
     bridge_audio = os.path.join(out_dir, "bridge.mp3")
+    print("[pipeline/local] synthesizing narration (thesis + bridge)...", flush=True)
     synthesize_narration(thread["thesis"], intro_audio)
     synthesize_narration(thread["bridge"], bridge_audio)
 
     intro_card = os.path.join(out_dir, "intro_card.mp4")
     bridge_card = os.path.join(out_dir, "bridge_card.mp4")
+    print("[pipeline/local] rendering narration cards...", flush=True)
     render_narration_card(intro_audio, thread["thesis"], intro_card)
     render_narration_card(bridge_audio, thread["bridge"], bridge_card)
 
     final_path = os.path.join(out_dir, "thread.mp4")
+    print("[pipeline/local] assembling final thread (intro -> clip A -> bridge -> clip B)...", flush=True)
     assemble_thread([intro_card, clip_a_path, bridge_card, clip_b_path], final_path)
 
     result = {**thread, "output_dir": out_dir, "clip_url": final_path}
     with open(os.path.join(out_dir, "thread_result.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
+    print(f"[pipeline/local] done: {final_path}", flush=True)
     return result
