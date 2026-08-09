@@ -120,6 +120,43 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    if args.clip_type == "thread":
+        # generate_threads() only takes base_dir -- every shorts/chapters-only
+        # flag below is silently discarded, so tell the user which ones (if
+        # any) they explicitly passed but that won't do anything here.
+        thread_mode_explicit = any(a == "--mode" or a.startswith("--mode=") for a in sys.argv)
+        ignored_flags = []
+        if thread_mode_explicit:
+            ignored_flags.append(f"--mode {args.mode}")
+        if args.num_clips != 3:
+            ignored_flags.append(f"--num-clips {args.num_clips}")
+        if args.aspect_ratio != "9:16":
+            ignored_flags.append(f"--aspect-ratio {args.aspect_ratio}")
+        if args.format != "1080":
+            ignored_flags.append(f"--format {args.format}")
+        if args.language is not None:
+            ignored_flags.append(f"--language {args.language}")
+        if args.framing != "locked":
+            ignored_flags.append(f"--framing {args.framing}")
+        if args.filename_style is not None:
+            ignored_flags.append(f"--filename-style {args.filename_style}")
+        if args.captions is False:
+            ignored_flags.append("--no-captions")
+        if args.caption_fade_duration != 0.3:
+            ignored_flags.append(f"--caption-fade-duration {args.caption_fade_duration}")
+        if args.word_highlight is False:
+            ignored_flags.append("--no-word-highlight")
+        if args.hook_card is False:
+            ignored_flags.append("--no-hook-card")
+        if args.end_card is True:
+            ignored_flags.append("--end-card")
+        if ignored_flags:
+            print(
+                f"[main] --clip-type thread ignores: {', '.join(ignored_flags)} "
+                "(it builds from the existing local corpus, --mode local only)",
+                file=sys.stderr,
+            )
+
     if args.clip_type == "chapters":
         # Only warn if --mode was explicitly typed and isn't "local" -- args.mode
         # defaults to "api" when omitted, and the plain, most natural invocation
@@ -183,7 +220,12 @@ def main() -> int:
 
     if args.clip_type == "thread" and result is None:
         print("\nNo same-topic episode pair found in the local corpus -- nothing to build.", file=sys.stderr)
-        print("This is expected until enough related episodes have been transcribed locally.", file=sys.stderr)
+        print(
+            "This is expected until enough related episodes have been transcribed locally: "
+            "run `--mode local` on two or more videos covering the same topic first, then "
+            "retry `--clip-type thread`.",
+            file=sys.stderr,
+        )
         return 1
 
     print("\n" + "=" * 72)

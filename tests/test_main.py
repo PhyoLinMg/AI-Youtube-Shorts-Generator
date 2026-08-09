@@ -230,3 +230,71 @@ def test_main_warns_when_url_given_with_clip_type_thread(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "ignores the url argument" in captured.err
+
+
+def _fake_thread_result():
+    return {
+        "output_dir": "d", "shared_question": "q?", "thesis": "t", "bridge": "b",
+        "episode_a": {"title": "A", "start_time": 0.0, "end_time": 1.0},
+        "episode_b": {"title": "B", "start_time": 0.0, "end_time": 1.0},
+        "clip_url": "d/thread.mp4",
+    }
+
+
+def test_main_warns_on_shorts_only_flags_with_clip_type_thread(monkeypatch, capsys):
+    monkeypatch.setattr(main_module, "generate_threads", lambda **kwargs: _fake_thread_result())
+    monkeypatch.setattr(
+        sys, "argv",
+        ["main.py", "--clip-type", "thread", "--num-clips", "7", "--filename-style", "generic",
+         "--mode", "local", "--aspect-ratio", "16:9", "--format", "720", "--language", "en",
+         "--framing", "adaptive", "--no-captions", "--caption-fade-duration", "0.5",
+         "--no-word-highlight", "--no-hook-card", "--end-card"],
+    )
+
+    main()
+
+    err = capsys.readouterr().err
+    assert "--num-clips 7" in err
+    assert "--filename-style generic" in err
+    assert "--mode local" in err
+    assert "--aspect-ratio 16:9" in err
+    assert "--format 720" in err
+    assert "--language en" in err
+    assert "--framing adaptive" in err
+    assert "--no-captions" in err
+    assert "--caption-fade-duration 0.5" in err
+    assert "--no-word-highlight" in err
+    assert "--no-hook-card" in err
+    assert "--end-card" in err
+
+
+def test_main_does_not_warn_when_no_flags_passed_with_clip_type_thread(monkeypatch, capsys):
+    monkeypatch.setattr(main_module, "generate_threads", lambda **kwargs: _fake_thread_result())
+    monkeypatch.setattr(sys, "argv", ["main.py", "--clip-type", "thread"])
+
+    main()
+
+    err = capsys.readouterr().err
+    assert "ignores" not in err
+
+
+def test_main_warns_on_mode_equals_form_with_clip_type_thread(monkeypatch, capsys):
+    monkeypatch.setattr(main_module, "generate_threads", lambda **kwargs: _fake_thread_result())
+    monkeypatch.setattr(sys, "argv", ["main.py", "--clip-type", "thread", "--mode=api"])
+
+    main()
+
+    err = capsys.readouterr().err
+    assert "--mode api" in err
+
+
+def test_main_no_thread_message_is_actionable(monkeypatch, capsys):
+    monkeypatch.setattr(main_module, "generate_threads", lambda **kwargs: None)
+    monkeypatch.setattr(sys, "argv", ["main.py", "--clip-type", "thread"])
+
+    exit_code = main()
+
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "--mode local" in err
+    assert "--clip-type thread" in err
