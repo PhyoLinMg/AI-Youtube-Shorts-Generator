@@ -71,7 +71,10 @@ def _sanitize_topic_pick(raw: object, corpus_len: int) -> Optional[Dict]:
         return None
     if a == b or not (0 <= a < corpus_len) or not (0 <= b < corpus_len):
         return None
-    question = str(raw.get("shared_question") or "").strip()
+    raw_question = raw.get("shared_question")
+    if not isinstance(raw_question, str):
+        return None
+    question = raw_question.strip()
     if not question:
         return None
     return {"episode_a_index": a, "episode_b_index": b, "shared_question": question}
@@ -97,8 +100,12 @@ def _sanitize_clip_span(raw: object, duration: float) -> Optional[Dict]:
 def _sanitize_clip_pick(raw: object, duration_a: float, duration_b: float) -> Optional[Dict]:
     if not isinstance(raw, dict) or not raw.get("grounded"):
         return None
-    thesis = str(raw.get("thesis") or "").strip()
-    bridge = str(raw.get("bridge") or "").strip()
+    raw_thesis = raw.get("thesis")
+    raw_bridge = raw.get("bridge")
+    if not isinstance(raw_thesis, str) or not isinstance(raw_bridge, str):
+        return None
+    thesis = raw_thesis.strip()
+    bridge = raw_bridge.strip()
     if not thesis or not bridge:
         return None
     clip_a = _sanitize_clip_span(raw.get("clip_a"), duration_a)
@@ -159,10 +166,14 @@ def build_thread(base_dir: Optional[str] = None, llm_fn: Optional[LLMFn] = None)
 
     entry_a = corpus[pick["episode_a_index"]]
     entry_b = corpus[pick["episode_b_index"]]
-    with open(f"{entry_a['run_dir']}/full_source.json", "r", encoding="utf-8") as f:
-        transcript_a = json.load(f)
-    with open(f"{entry_b['run_dir']}/full_source.json", "r", encoding="utf-8") as f:
-        transcript_b = json.load(f)
+    try:
+        with open(f"{entry_a['run_dir']}/full_source.json", "r", encoding="utf-8") as f:
+            transcript_a = json.load(f)
+        with open(f"{entry_b['run_dir']}/full_source.json", "r", encoding="utf-8") as f:
+            transcript_b = json.load(f)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        print(f"[thread_builder] failed to load full transcript for picked pair: {e} -- refusing to build a thread", flush=True)
+        return None
 
     clips = pick_thread_clips(
         {**entry_a, "transcript": transcript_a},

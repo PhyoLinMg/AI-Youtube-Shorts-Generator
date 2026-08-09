@@ -156,3 +156,55 @@ def test_build_thread_returns_none_when_corpus_has_fewer_than_two_episodes(tmp_p
     llm_fn = lambda prompt: pytest.fail("llm_fn should not be called for topic gate with < 2 episodes")
 
     assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
+
+
+def test_build_thread_returns_full_shape_on_qualifying_pair(tmp_path, monkeypatch):
+    run_dir_a = tmp_path / "a"
+    run_dir_b = tmp_path / "b"
+    run_dir_a.mkdir()
+    run_dir_b.mkdir()
+    transcript_a = {"duration": 100.0, "segments": [{"start": 0.0, "end": 30.0, "text": "hello from a"}]}
+    transcript_b = {"duration": 100.0, "segments": [{"start": 0.0, "end": 30.0, "text": "hello from b"}]}
+    (run_dir_a / "full_source.json").write_text(json.dumps(transcript_a))
+    (run_dir_b / "full_source.json").write_text(json.dumps(transcript_b))
+
+    monkeypatch.setattr(
+        thread_builder, "build_corpus",
+        lambda base_dir=None, llm_fn=None: [
+            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
+            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
+        ],
+    )
+
+    responses = [
+        json.dumps({
+            "no_match": False, "episode_a_index": 0, "episode_b_index": 1,
+            "shared_question": "Does remote work increase or decrease productivity?",
+        }),
+        json.dumps({
+            "grounded": True,
+            "thesis": "Two guests, one question.",
+            "bridge": "Here is the other side.",
+            "clip_a": {"start_time": 5.0, "end_time": 25.0},
+            "clip_b": {"start_time": 2.0, "end_time": 20.0},
+        }),
+    ]
+
+    def llm_fn(prompt):
+        return responses.pop(0)
+
+    result = thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn)
+
+    assert result == {
+        "shared_question": "Does remote work increase or decrease productivity?",
+        "thesis": "Two guests, one question.",
+        "bridge": "Here is the other side.",
+        "episode_a": {
+            "run_dir": str(run_dir_a), "title": "Ep A", "source_url": "https://example.com/0",
+            "start_time": 5.0, "end_time": 25.0,
+        },
+        "episode_b": {
+            "run_dir": str(run_dir_b), "title": "Ep B", "source_url": "https://example.com/1",
+            "start_time": 2.0, "end_time": 20.0,
+        },
+    }
