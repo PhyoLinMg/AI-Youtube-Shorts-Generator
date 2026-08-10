@@ -29,6 +29,26 @@ Episodes:
 Respond ONLY with valid JSON (no markdown, no explanation):
 {{"no_match": bool, "episode_a_index": int or null, "episode_b_index": int or null, "shared_question": "string or empty"}}"""
 
+SAME_TOPIC_MULTI_PROMPT = """You are a strict fact-checker deciding whether two podcast episodes share any genuine same-question topics that could each become a short video.
+
+You will be given the abstracts for exactly two episodes, A and B. Find EVERY genuinely distinct shared question where:
+1. Both episodes discuss the SAME specific topic (not just an adjacent or loosely related one)
+2. Each episode independently makes a claim, argument, or statement that answers or responds to that SAME underlying question -- not just the same subject area
+
+Rules -- read carefully, these are hard requirements, not preferences:
+- Sharing a broad subject (e.g. both mention "aliens", both mention "the economy") is NOT enough. Two episodes both mentioning AI is not a match; two episodes both making a claim about whether AI will take creative jobs IS a match.
+- Only report a question if the abstracts themselves make the shared question obvious. Do not invent a connection.
+- Each shared question must be genuinely distinct from the others you report -- do not report near-duplicate phrasings of the same question twice.
+- Return at most {num_pairs} questions, ordered from strongest/most obvious match to weakest.
+- If there is no genuine shared question at all, return an empty list.
+
+Episode A: {abstract_a}
+
+Episode B: {abstract_b}
+
+Respond ONLY with valid JSON (no markdown, no explanation):
+{{"shared_questions": ["question 1?", "question 2?"]}}"""
+
 THREAD_PICK_SYSTEM_PROMPT = """You are editing a short video that puts two podcast guests' answers to the same question side by side.
 
 Shared question both episodes are answering: {shared_question}
@@ -84,6 +104,27 @@ def _sanitize_topic_pick(raw: object, corpus_len: int) -> Optional[Dict]:
     return {"episode_a_index": a, "episode_b_index": b, "shared_question": question}
 
 
+def _sanitize_topic_picks_multi(raw: object, num_pairs: int) -> List[str]:
+    if not isinstance(raw, dict):
+        return []
+    raw_questions = raw.get("shared_questions")
+    if not isinstance(raw_questions, list):
+        return []
+    seen = set()
+    questions = []
+    for item in raw_questions:
+        if not isinstance(item, str):
+            continue
+        question = item.strip()
+        if not question or question.lower() in seen:
+            continue
+        seen.add(question.lower())
+        questions.append(question)
+        if len(questions) >= num_pairs:
+            break
+    return questions
+
+
 def _sanitize_clip_span(raw: object, duration: float) -> Optional[Dict]:
     if not isinstance(raw, dict):
         return None
@@ -134,6 +175,25 @@ def find_same_topic_pair(corpus: List[Dict], llm_fn: LLMFn) -> Optional[Dict]:
     except Exception:
         return None
     return _sanitize_topic_pick(parsed, corpus_len=len(corpus))
+
+
+def find_same_topic_pairs(entry_a: Dict, entry_b: Dict, num_pairs: int, llm_fn: LLMFn) -> List[str]:
+    """Stage A, fixed-pair variant (see select_thread_pairs). Given exactly
+    two corpus entries (each needing "abstract"), returns up to num_pairs
+    distinct shared-question strings both abstracts genuinely answer -- []
+    whenever none exist. Same hard same-topic gate as find_same_topic_pair,
+    just returning every qualifying question instead of the single best
+    one, since the pair itself is already fixed by the caller."""
+    if num_pairs < 1:
+        return []
+    prompt = SAME_TOPIC_MULTI_PROMPT.format(
+        num_pairs=num_pairs, abstract_a=entry_a["abstract"], abstract_b=entry_b["abstract"],
+    )
+    try:
+        parsed = _parse_json_loose(llm_fn(prompt))
+    except Exception:
+        return []
+    return _sanitize_topic_picks_multi(parsed, num_pairs)
 
 
 def pick_thread_clips(episode_a: Dict, episode_b: Dict, shared_question: str, llm_fn: LLMFn) -> Optional[Dict]:

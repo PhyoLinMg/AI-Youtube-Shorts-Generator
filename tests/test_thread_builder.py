@@ -9,84 +9,6 @@ def _corpus_entry(idx, title, abstract, run_dir):
     return {"run_dir": run_dir, "title": title, "source_url": f"https://example.com/{idx}", "abstract": abstract}
 
 
-def test_find_same_topic_pair_returns_none_on_no_match_response():
-    corpus = [
-        _corpus_entry(0, "Politics Ep", "discusses tax policy", "/tmp/a"),
-        _corpus_entry(1, "Science Ep", "discusses black holes", "/tmp/b"),
-    ]
-    llm_fn = lambda prompt: json.dumps({"no_match": True, "episode_a_index": None, "episode_b_index": None, "shared_question": ""})
-
-    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
-
-
-def test_find_same_topic_pair_returns_none_with_fewer_than_two_entries():
-    corpus = [_corpus_entry(0, "Solo Ep", "abstract", "/tmp/a")]
-    llm_fn = lambda prompt: pytest.fail("llm_fn should not be called with < 2 corpus entries")
-
-    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
-
-
-def test_find_same_topic_pair_returns_pick_on_valid_match():
-    corpus = [
-        _corpus_entry(0, "Ep A", "argues remote work increases productivity", "/tmp/a"),
-        _corpus_entry(1, "Ep B", "argues remote work decreases productivity", "/tmp/b"),
-    ]
-    llm_fn = lambda prompt: json.dumps({
-        "no_match": False, "episode_a_index": 0, "episode_b_index": 1,
-        "shared_question": "Does remote work increase or decrease productivity?",
-    })
-
-    result = thread_builder.find_same_topic_pair(corpus, llm_fn)
-
-    assert result == {
-        "episode_a_index": 0, "episode_b_index": 1,
-        "shared_question": "Does remote work increase or decrease productivity?",
-    }
-
-
-def test_find_same_topic_pair_rejects_out_of_range_indices():
-    corpus = [
-        _corpus_entry(0, "Ep A", "abstract a", "/tmp/a"),
-        _corpus_entry(1, "Ep B", "abstract b", "/tmp/b"),
-    ]
-    llm_fn = lambda prompt: json.dumps({"no_match": False, "episode_a_index": 0, "episode_b_index": 5, "shared_question": "x?"})
-
-    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
-
-
-def test_find_same_topic_pair_rejects_missing_shared_question():
-    corpus = [
-        _corpus_entry(0, "Ep A", "abstract a", "/tmp/a"),
-        _corpus_entry(1, "Ep B", "abstract b", "/tmp/b"),
-    ]
-    llm_fn = lambda prompt: json.dumps({"no_match": False, "episode_a_index": 0, "episode_b_index": 1, "shared_question": ""})
-
-    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
-
-
-def test_find_same_topic_pair_rejects_non_string_shared_question():
-    corpus = [
-        _corpus_entry(0, "Ep A", "abstract a", "/tmp/a"),
-        _corpus_entry(1, "Ep B", "abstract b", "/tmp/b"),
-    ]
-    llm_fn = lambda prompt: json.dumps({
-        "no_match": False, "episode_a_index": 0, "episode_b_index": 1,
-        "shared_question": ["a", "b"],
-    })
-
-    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
-
-
-def test_find_same_topic_pair_returns_none_on_malformed_llm_output():
-    corpus = [
-        _corpus_entry(0, "Ep A", "abstract a", "/tmp/a"),
-        _corpus_entry(1, "Ep B", "abstract b", "/tmp/b"),
-    ]
-    llm_fn = lambda prompt: "not json at all"
-
-    assert thread_builder.find_same_topic_pair(corpus, llm_fn) is None
-
-
 def _episode(duration, texts_with_times):
     segments = [{"start": s, "end": e, "text": t} for s, e, t in texts_with_times]
     return {"transcript": {"duration": duration, "segments": segments}}
@@ -318,6 +240,61 @@ def test_build_thread_returns_none_when_transcript_shape_is_malformed(tmp_path, 
         return responses.pop(0)
 
     assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
+
+
+def test_find_same_topic_pairs_returns_up_to_num_pairs_questions():
+    entry_a = _corpus_entry(0, "Ep A", "discusses remote work and also housing policy", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "discusses remote work and also housing policy", "/tmp/b")
+    llm_fn = lambda prompt: json.dumps({"shared_questions": [
+        "Does remote work increase productivity?",
+        "Does zoning reform lower housing costs?",
+        "A third question that should be dropped",
+    ]})
+
+    result = thread_builder.find_same_topic_pairs(entry_a, entry_b, num_pairs=2, llm_fn=llm_fn)
+
+    assert result == [
+        "Does remote work increase productivity?",
+        "Does zoning reform lower housing costs?",
+    ]
+
+
+def test_find_same_topic_pairs_drops_non_string_items():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    llm_fn = lambda prompt: json.dumps({"shared_questions": ["A real question?", ["not", "a", "string"], "", "   "]})
+
+    result = thread_builder.find_same_topic_pairs(entry_a, entry_b, num_pairs=5, llm_fn=llm_fn)
+
+    assert result == ["A real question?"]
+
+
+def test_find_same_topic_pairs_dedupes_case_insensitive_duplicates():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    llm_fn = lambda prompt: json.dumps({"shared_questions": [
+        "Does X cause Y?", "does x cause y?", "Does X Cause Y?",
+    ]})
+
+    result = thread_builder.find_same_topic_pairs(entry_a, entry_b, num_pairs=5, llm_fn=llm_fn)
+
+    assert result == ["Does X cause Y?"]
+
+
+def test_find_same_topic_pairs_returns_empty_list_on_malformed_llm_output():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    llm_fn = lambda prompt: "not json at all"
+
+    assert thread_builder.find_same_topic_pairs(entry_a, entry_b, num_pairs=3, llm_fn=llm_fn) == []
+
+
+def test_find_same_topic_pairs_returns_empty_list_when_num_pairs_less_than_one():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    llm_fn = lambda prompt: pytest.fail("llm_fn should not be called when num_pairs < 1")
+
+    assert thread_builder.find_same_topic_pairs(entry_a, entry_b, num_pairs=0, llm_fn=llm_fn) == []
 
 
 def test_build_thread_returns_none_when_transcript_duration_is_null(tmp_path, monkeypatch):
