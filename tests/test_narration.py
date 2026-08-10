@@ -7,12 +7,35 @@ from shorts_generator import config
 from shorts_generator.local import narration as narration_module
 
 
-def test_synthesize_narration_requires_api_key(monkeypatch, tmp_path):
+def test_synthesize_narration_falls_back_to_gtts_when_key_missing(monkeypatch, tmp_path):
     # require_elevenlabs_key() is called directly (imported from config) and
     # resolves ELEVENLABS_API_KEY against config's own module namespace at
     # call time, so the key must be patched there, not on narration_module.
     monkeypatch.setattr(config, "ELEVENLABS_API_KEY", "")
-    with pytest.raises(RuntimeError, match="ELEVENLABS_API_KEY"):
+
+    def _fake_gtts(text, out_path):
+        with open(out_path, "wb") as f:
+            f.write(b"gtts-audio")
+        return out_path
+
+    monkeypatch.setattr(narration_module, "_synthesize_via_gtts", _fake_gtts)
+
+    out_path = str(tmp_path / "out.mp3")
+    narration_module.synthesize_narration("hello", out_path)
+
+    with open(out_path, "rb") as f:
+        assert f.read() == b"gtts-audio"
+
+
+def test_synthesize_narration_raises_when_key_missing_and_gtts_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "ELEVENLABS_API_KEY", "")
+
+    def _fake_gtts(text, out_path):
+        raise narration_module.NarrationError("gTTS synthesis failed: no network")
+
+    monkeypatch.setattr(narration_module, "_synthesize_via_gtts", _fake_gtts)
+
+    with pytest.raises(narration_module.NarrationError, match="ELEVENLABS_API_KEY"):
         narration_module.synthesize_narration("hello", str(tmp_path / "out.mp3"))
 
 
@@ -37,7 +60,7 @@ def test_synthesize_narration_writes_audio_from_fake_client(monkeypatch, tmp_pat
         assert f.read() == b"chunk1chunk2"
 
 
-def test_synthesize_narration_wraps_client_errors(monkeypatch, tmp_path):
+def test_synthesize_narration_falls_back_to_gtts_when_elevenlabs_errors(monkeypatch, tmp_path):
     class _FakeTTS:
         def convert(self, **kwargs):
             raise RuntimeError("api down")
@@ -48,6 +71,37 @@ def test_synthesize_narration_wraps_client_errors(monkeypatch, tmp_path):
 
     monkeypatch.setattr(config, "ELEVENLABS_API_KEY", "fake-key")
     monkeypatch.setattr(narration_module, "_get_elevenlabs_client_class", lambda: _FakeClient)
+
+    def _fake_gtts(text, out_path):
+        with open(out_path, "wb") as f:
+            f.write(b"gtts-audio")
+        return out_path
+
+    monkeypatch.setattr(narration_module, "_synthesize_via_gtts", _fake_gtts)
+
+    out_path = str(tmp_path / "out.mp3")
+    narration_module.synthesize_narration("hi", out_path)
+
+    with open(out_path, "rb") as f:
+        assert f.read() == b"gtts-audio"
+
+
+def test_synthesize_narration_raises_when_elevenlabs_and_gtts_both_fail(monkeypatch, tmp_path):
+    class _FakeTTS:
+        def convert(self, **kwargs):
+            raise RuntimeError("api down")
+
+    class _FakeClient:
+        def __init__(self, api_key):
+            self.text_to_speech = _FakeTTS()
+
+    monkeypatch.setattr(config, "ELEVENLABS_API_KEY", "fake-key")
+    monkeypatch.setattr(narration_module, "_get_elevenlabs_client_class", lambda: _FakeClient)
+
+    def _fake_gtts(text, out_path):
+        raise narration_module.NarrationError("gTTS synthesis failed: no network")
+
+    monkeypatch.setattr(narration_module, "_synthesize_via_gtts", _fake_gtts)
 
     with pytest.raises(narration_module.NarrationError, match="api down"):
         narration_module.synthesize_narration("hi", str(tmp_path / "out.mp3"))

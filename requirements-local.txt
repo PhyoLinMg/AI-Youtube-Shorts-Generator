@@ -6,6 +6,7 @@ faster-whisper>=1.0.0
 openai>=1.0.0
 google-genai>=1.0.0
 elevenlabs>=1.0.0
+gTTS>=2.5.0  # fallback narration TTS if ElevenLabs errors or is unconfigured
 # opencv-python is a base dependency now (shorts_generator/requirements.txt) —
 # both modes need it for the hook-card frame picker.
 # torch is only needed if you want CUDA Whisper. CPU works without it.

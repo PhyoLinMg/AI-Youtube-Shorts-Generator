@@ -1,6 +1,7 @@
 """ElevenLabs narrator voice for thread bridges -- see thread_builder.py for
 where "thesis" and "bridge" text comes from. Renders each line as audio via
-ElevenLabs, then composites it onto a plain title card matching the
+ElevenLabs (falling back to gTTS if ElevenLabs is unreachable, misconfigured,
+or errors), then composites it onto a plain title card matching the
 channel's existing hook-card typography (Anton font, white text on a
 translucent black box -- see hook_card.py) so it drops into the same
 ffmpeg-concat assembly as the live-footage clips (see thread_assembler.py).
@@ -34,8 +35,18 @@ def _get_elevenlabs_client_class() -> Type:
     return ElevenLabs
 
 
-def synthesize_narration(text: str, out_path: str, voice_id: str = DEFAULT_VOICE_ID) -> str:
-    """Call ElevenLabs TTS and write the audio to out_path (mp3)."""
+def _get_gtts_class() -> Type:
+    try:
+        from gtts import gTTS
+    except ImportError as e:
+        raise NarrationError(
+            "gtts is required for narration fallback. Install it with:\n"
+            "    pip install gTTS"
+        ) from e
+    return gTTS
+
+
+def _synthesize_via_elevenlabs(text: str, out_path: str, voice_id: str) -> str:
     client_cls = _get_elevenlabs_client_class()
     client = client_cls(api_key=require_elevenlabs_key())
     try:
@@ -51,6 +62,31 @@ def synthesize_narration(text: str, out_path: str, voice_id: str = DEFAULT_VOICE
     except Exception as e:
         raise NarrationError(f"ElevenLabs synthesis failed: {e}") from e
     return out_path
+
+
+def _synthesize_via_gtts(text: str, out_path: str) -> str:
+    gtts_cls = _get_gtts_class()
+    try:
+        gtts_cls(text=text, lang="en").save(out_path)
+    except Exception as e:
+        raise NarrationError(f"gTTS synthesis failed: {e}") from e
+    return out_path
+
+
+def synthesize_narration(text: str, out_path: str, voice_id: str = DEFAULT_VOICE_ID) -> str:
+    """Call ElevenLabs TTS and write the audio to out_path (mp3). Falls back
+    to gTTS (no key, no network dependency on ElevenLabs specifically) if
+    ElevenLabs is unreachable, misconfigured, or errors."""
+    try:
+        return _synthesize_via_elevenlabs(text, out_path, voice_id)
+    except Exception as elevenlabs_error:
+        print(f"[narration] ElevenLabs synthesis failed, falling back to gTTS: {elevenlabs_error}", flush=True)
+        try:
+            return _synthesize_via_gtts(text, out_path)
+        except Exception as gtts_error:
+            raise NarrationError(
+                f"ElevenLabs synthesis failed ({elevenlabs_error}); gTTS fallback also failed ({gtts_error})"
+            ) from gtts_error
 
 
 def _wrap_text(text: str, max_chars_per_line: int = 28) -> str:
