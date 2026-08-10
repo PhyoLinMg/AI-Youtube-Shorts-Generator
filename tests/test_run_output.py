@@ -479,14 +479,14 @@ def test_summarize_run_returns_expected_shape_for_source_only_folder(tmp_path):
 
 
 def test_list_runs_excludes_threads_directory(tmp_path):
-    """resolve_thread_output_dir() creates output/_Threads/<slug>/ as a
+    """resolve_thread_run_dir() creates output/_Threads/<slug>/ as a
     sibling of per-episode run folders -- list_runs() must not surface it
     as a bogus run row on the dashboard's History tab."""
     real_run = tmp_path / "Video_A"
     real_run.mkdir()
     _touch(str(real_run / "full_source.mp4"), 1000.0)
 
-    threads_dir = tmp_path / "_Threads" / "some-thesis-slug"
+    threads_dir = tmp_path / "_Threads" / "episode_a_x_episode_b"
     threads_dir.mkdir(parents=True)
     _touch(str(threads_dir / "thread.mp4"), 2000.0)
 
