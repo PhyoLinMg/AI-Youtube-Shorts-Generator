@@ -196,12 +196,15 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
     )
 
 
-def resolve_thread_output_dir(thesis: str, base_dir: Optional[str] = None) -> str:
-    """A thread's output lives outside any single episode's RunPaths tree --
-    it draws footage from two existing episode runs, so it gets its own
-    output/_Threads/<slug>/ folder keyed by the thread's own thesis text."""
+def resolve_thread_run_dir(title_a: str, title_b: str, base_dir: Optional[str] = None) -> str:
+    """A thread run's output lives outside any single episode's RunPaths
+    tree -- it draws footage from two existing episode runs, so it gets its
+    own output/_Threads/<slug>/ folder. Slugged from both episode titles
+    (fixed by the caller up front, see generate_threads in pipeline.py) --
+    not from a thesis, since one run can now produce more than one
+    thesis (see thread_builder.select_thread_pairs)."""
     base_dir = base_dir or LOCAL_OUTPUT_DIR
-    slug = sanitize_title(thesis)
+    slug = f"{sanitize_title(title_a)}_x_{sanitize_title(title_b)}"
     root = os.path.join(base_dir, "_Threads", slug)
     os.makedirs(root, exist_ok=True)
     return root
@@ -284,10 +287,10 @@ def list_runs(base_dir: Optional[str] = None) -> List[RunSummary]:
         return []
     runs = []
     for name in os.listdir(base_dir):
-        # resolve_thread_output_dir() (see above) creates output/_Threads/
-        # as a sibling of per-episode run folders, keyed by thread slug, not
-        # by episode title -- it has no full_source.mp4/Shorts shape of its
-        # own and isn't a run the History tab should list.
+        # resolve_thread_run_dir() (see above) creates output/_Threads/ as a
+        # sibling of per-episode run folders, keyed by both episode titles,
+        # not a single episode's own title -- it has no full_source.mp4/
+        # Shorts shape of its own and isn't a run the History tab should list.
         if name == "_Threads":
             continue
         root = os.path.join(base_dir, name)
