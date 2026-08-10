@@ -99,6 +99,7 @@ def _run_thread_job() -> None:
     upfront like _run_job does."""
     def _on_output_dir(out_dir: str) -> None:
         with _job_lock:
+            job.status = "running"
             job.progress_log = os.path.join(out_dir, "progress.log")
             job.shorts_dir = out_dir
 
