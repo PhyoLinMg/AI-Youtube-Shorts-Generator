@@ -193,7 +193,7 @@ def main() -> int:
 
     try:
         if args.clip_type == "thread":
-            result = generate_threads(args.url, args.url_b, num_clips=args.num_clips)
+            result = generate_threads(url_a=args.url, url_b=args.url_b, num_clips=args.num_clips)
         elif args.clip_type == "chapters":
             result = generate_chapters(
                 youtube_url=args.url,
