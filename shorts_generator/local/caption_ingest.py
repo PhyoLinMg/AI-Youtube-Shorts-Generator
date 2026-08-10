@@ -104,8 +104,27 @@ def _parse_srv1(xml_text: str, target_segment_seconds: float = DEFAULT_SEGMENT_S
 def ingest_captions(youtube_url: str, base_dir: Optional[str] = None) -> Dict:
     """Add one episode to the corpus from its auto-captions only. Writes
     full_source.json + source_url.txt (see corpus.list_corpus_run_dirs --
-    both are required for corpus eligibility) but never full_source.mp4."""
+    both are required for corpus eligibility) but never full_source.mp4.
+
+    Idempotent: if this URL's run dir already has a full_source.json --
+    whether from a prior full pipeline run (real Whisper transcript,
+    possibly with full_source.mp4 still on disk) or a prior caption-only
+    ingest -- the fetch is skipped entirely and the existing transcript is
+    reused as-is. Without this guard, re-ingesting an already-fully-
+    processed episode would silently downgrade its real transcript to
+    lower-fidelity YouTube auto-captions."""
     paths: RunPaths = resolve_output_dir(youtube_url, base_dir=base_dir)
+
+    if os.path.exists(paths.source_json):
+        print(f"[caption_ingest] {youtube_url!r} already in the corpus at {paths.root} -- skipping caption fetch", flush=True)
+        with open(paths.source_json, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        return {
+            "run_dir": paths.root,
+            "title": os.path.basename(paths.root),
+            "duration": existing.get("duration", 0.0),
+            "segment_count": len(existing.get("segments", [])),
+        }
 
     duration = _fetch_duration(youtube_url)
     xml_text = _fetch_srv1_captions(youtube_url)

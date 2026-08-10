@@ -93,6 +93,28 @@ def test_ingest_captions_raises_when_no_captions_available(tmp_path, monkeypatch
         ingest_captions("https://www.youtube.com/watch?v=nocaps", base_dir=str(tmp_path))
 
 
+def test_ingest_captions_skips_fetch_when_already_ingested(tmp_path, monkeypatch):
+    run_dir = os.path.join(str(tmp_path), "already")
+    os.makedirs(run_dir, exist_ok=True)
+    existing = {"duration": 555.0, "segments": [{"start": 0.0, "end": 1.0, "text": "already here"}]}
+    with open(os.path.join(run_dir, "full_source.json"), "w", encoding="utf-8") as f:
+        json.dump(existing, f)
+    with open(os.path.join(run_dir, "source_url.txt"), "w", encoding="utf-8") as f:
+        f.write("https://www.youtube.com/watch?v=already")
+
+    def _fail(*a, **k):
+        pytest.fail("fetch functions should not be called when the episode is already ingested")
+
+    monkeypatch.setattr(caption_ingest_module, "_fetch_duration", _fail)
+    monkeypatch.setattr(caption_ingest_module, "_fetch_srv1_captions", _fail)
+
+    result = ingest_captions("https://www.youtube.com/watch?v=already", base_dir=str(tmp_path))
+
+    assert result["run_dir"] == run_dir
+    assert result["duration"] == 555.0
+    assert result["segment_count"] == 1
+
+
 def test_fetch_duration_parses_yt_dlp_stdout(monkeypatch):
     def _fake_run(cmd, **kwargs):
         assert cmd[:3] == ["yt-dlp", "--skip-download", "--print"]
