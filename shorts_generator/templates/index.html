@@ -526,79 +526,92 @@
       <h2 class="eyebrow">Footage</h2>
       <form id="run-form">
         <fieldset>
-          <label for="url">YouTube URL</label>
-          <input type="text" id="url" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
+          <label for="clip_type">Clip type</label>
+          <select id="clip_type" name="clip_type">
+            <option value="shorts" selected>Shorts</option>
+            <option value="thread">Thread (local corpus)</option>
+          </select>
 
-          <div class="row">
-            <div>
-              <label for="mode">Mode</label>
-              <select id="mode" name="mode">
-                <option value="api">api</option>
-                <option value="local">local</option>
-              </select>
-            </div>
-            <div>
-              <label for="num_clips">Num clips</label>
-              <input type="number" id="num_clips" name="num_clips" value="3" min="1">
-            </div>
-          </div>
+          <p id="thread-note" style="opacity:0.7; font-size:0.9em;" hidden>
+            Builds a two-episode same-topic compilation from clips already in the local corpus (output/ folder) — no URL needed.
+            Run the pipeline in --mode local on two or more videos covering the same topic first, then build a thread.
+          </p>
 
-          <div class="row">
-            <div>
-              <label for="aspect_ratio">Aspect ratio</label>
-              <input type="text" id="aspect_ratio" name="aspect_ratio" value="9:16">
-            </div>
-            <div>
-              <label for="format">Download resolution</label>
-              <select id="format" name="format">
-                <option value="360">360</option>
-                <option value="480">480</option>
-                <option value="720">720</option>
-                <option value="1080" selected>1080</option>
-              </select>
-            </div>
-          </div>
+          <div id="shorts-fields">
+            <label for="url">YouTube URL</label>
+            <input type="text" id="url" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
 
-          <div class="row">
-            <div>
-              <label for="language">Language (blank = auto-detect)</label>
-              <input type="text" id="language" name="language" placeholder="en">
+            <div class="row">
+              <div>
+                <label for="mode">Mode</label>
+                <select id="mode" name="mode">
+                  <option value="api">api</option>
+                  <option value="local">local</option>
+                </select>
+              </div>
+              <div>
+                <label for="num_clips">Num clips</label>
+                <input type="number" id="num_clips" name="num_clips" value="3" min="1">
+              </div>
             </div>
-            <div>
-              <label for="framing">Framing (local mode only)</label>
-              <select id="framing" name="framing">
-                <option value="locked">locked</option>
-                <option value="adaptive">adaptive</option>
-              </select>
-            </div>
-          </div>
 
-          <div class="row">
-            <div>
-              <label for="filename_style">Clip filenames</label>
-              <select id="filename_style" name="filename_style">
-                <option value="specific" selected>specific (title1.mp4)</option>
-                <option value="generic">generic (video1.mp4)</option>
-              </select>
+            <div class="row">
+              <div>
+                <label for="aspect_ratio">Aspect ratio</label>
+                <input type="text" id="aspect_ratio" name="aspect_ratio" value="9:16">
+              </div>
+              <div>
+                <label for="format">Download resolution</label>
+                <select id="format" name="format">
+                  <option value="360">360</option>
+                  <option value="480">480</option>
+                  <option value="720">720</option>
+                  <option value="1080" selected>1080</option>
+                </select>
+              </div>
             </div>
-          </div>
 
-          <div class="row">
-            <div class="checkbox-row">
-              <label><input type="checkbox" id="captions" name="captions" checked> Burn captions</label>
+            <div class="row">
+              <div>
+                <label for="language">Language (blank = auto-detect)</label>
+                <input type="text" id="language" name="language" placeholder="en">
+              </div>
+              <div>
+                <label for="framing">Framing (local mode only)</label>
+                <select id="framing" name="framing">
+                  <option value="locked">locked</option>
+                  <option value="adaptive">adaptive</option>
+                </select>
+              </div>
             </div>
-            <div class="checkbox-row">
-              <label><input type="checkbox" id="word_highlight" name="word_highlight" checked> Word highlight</label>
+
+            <div class="row">
+              <div>
+                <label for="filename_style">Clip filenames</label>
+                <select id="filename_style" name="filename_style">
+                  <option value="specific" selected>specific (title1.mp4)</option>
+                  <option value="generic">generic (video1.mp4)</option>
+                </select>
+              </div>
             </div>
-            <div class="checkbox-row">
-              <label><input type="checkbox" id="hook_card" name="hook_card" checked> Hook card</label>
+
+            <div class="row">
+              <div class="checkbox-row">
+                <label><input type="checkbox" id="captions" name="captions" checked> Burn captions</label>
+              </div>
+              <div class="checkbox-row">
+                <label><input type="checkbox" id="word_highlight" name="word_highlight" checked> Word highlight</label>
+              </div>
+              <div class="checkbox-row">
+                <label><input type="checkbox" id="hook_card" name="hook_card" checked> Hook card</label>
+              </div>
+              <div class="checkbox-row">
+                <label><input type="checkbox" id="end_card" name="end_card"> End card</label>
+              </div>
             </div>
-            <div class="checkbox-row">
-              <label><input type="checkbox" id="end_card" name="end_card"> End card</label>
-            </div>
+            <label for="caption_fade_duration">Caption fade (s)</label>
+            <input type="number" id="caption_fade_duration" name="caption_fade_duration" value="0.3" step="0.1" min="0">
           </div>
-          <label for="caption_fade_duration">Caption fade (s)</label>
-          <input type="number" id="caption_fade_duration" name="caption_fade_duration" value="0.3" step="0.1" min="0">
 
           <button type="submit" id="submit-btn">Generate shorts</button>
         </fieldset>
@@ -635,9 +648,23 @@
     const resultsEl = document.getElementById("results");
     const resultsPanel = document.getElementById("results-panel");
     const errorBanner = document.getElementById("error-banner");
+    const clipTypeSelect = document.getElementById("clip_type");
+    const shortsFields = document.getElementById("shorts-fields");
+    const threadNote = document.getElementById("thread-note");
+    const urlInput = document.getElementById("url");
 
     const STATUS_LABEL = { idle: "STANDBY", starting: "STARTING", running: "REC", done: "DONE", failed: "FAILED" };
     const STATUS_DOT = { idle: "", starting: "is-rec", running: "is-rec", done: "is-ok", failed: "is-warn" };
+
+    function updateClipTypeVisibility() {
+      const isThread = clipTypeSelect.value === "thread";
+      shortsFields.hidden = isThread;
+      threadNote.hidden = !isThread;
+      urlInput.required = !isThread;
+      submitBtn.textContent = isThread ? "Build thread" : "Generate shorts";
+    }
+    clipTypeSelect.addEventListener("change", updateClipTypeVisibility);
+    updateClipTypeVisibility();
 
     let offset = 0;
 
@@ -970,9 +997,54 @@
       shorts.forEach((s, idx) => container.appendChild(buildShortCard(s, idx, runName, onDeleted)));
     }
 
+    function buildThreadCard(t) {
+      const card = document.createElement("div");
+      card.className = "card frame" + (t.download_url ? "" : " failed");
+
+      const titleEl = document.createElement("div");
+      titleEl.className = "card-title";
+      titleEl.textContent = t.shared_question || "Thread";
+      card.appendChild(titleEl);
+
+      if (t.thesis) appendLabeledText(card, "Thesis", "pitch", t.thesis);
+      if (t.bridge) appendLabeledText(card, "Bridge", "pitch", t.bridge);
+      if (t.episode_a && t.episode_a.title) appendLabeledText(card, "Episode A", "reason", t.episode_a.title);
+      if (t.episode_b && t.episode_b.title) appendLabeledText(card, "Episode B", "reason", t.episode_b.title);
+
+      if (t.download_url) {
+        const videoFrame = document.createElement("div");
+        videoFrame.className = "video-frame frame";
+        const video = document.createElement("video");
+        video.controls = true;
+        video.src = t.download_url;
+        videoFrame.appendChild(video);
+        card.appendChild(videoFrame);
+
+        const link = document.createElement("a");
+        link.className = "download";
+        link.href = t.download_url;
+        link.setAttribute("download", "");
+        link.textContent = "Download";
+        card.appendChild(link);
+      } else {
+        const statusEl = document.createElement("div");
+        statusEl.className = "card-status";
+        statusEl.textContent = "Failed";
+        card.appendChild(statusEl);
+      }
+      return card;
+    }
+
     function renderResults(result, runName) {
-      resultsPanel.hidden = !result || !result.shorts || result.shorts.length === 0;
-      if (!result || !result.shorts) {
+      const hasShorts = result && Array.isArray(result.shorts) && result.shorts.length > 0;
+      const hasThread = result && result.thread;
+      resultsPanel.hidden = !hasShorts && !hasThread;
+      if (hasThread) {
+        resultsEl.innerHTML = "";
+        resultsEl.appendChild(buildThreadCard(result.thread));
+        return;
+      }
+      if (!hasShorts) {
         resultsEl.innerHTML = "";
         return;
       }

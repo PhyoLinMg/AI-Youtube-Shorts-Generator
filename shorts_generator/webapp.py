@@ -18,7 +18,7 @@ from typing import Any, Optional, Tuple
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
 from .config import LOCAL_OUTPUT_DIR
-from .pipeline import generate_shorts
+from .pipeline import generate_shorts, generate_threads
 from .run_output import list_runs, resolve_output_dir, summarize_run
 
 app = Flask(__name__)
@@ -28,7 +28,12 @@ app = Flask(__name__)
 class Job:
     status: str = "idle"  # "idle" | "starting" | "running" | "done" | "failed"
     url: str = ""
+    clip_type: str = "shorts"  # "shorts" | "thread"
     progress_log: Optional[str] = None
+    # For clip_type="thread" this holds the thread's own output/_Threads/<slug>
+    # dir (see resolve_thread_output_dir), reused as the download route's
+    # serve-from directory -- but _run_name_from_shorts_dir must not be
+    # applied to it (there's no per-episode run name for a thread; see /status).
     shorts_dir: Optional[str] = None
     result: Optional[dict] = None
     error: Optional[str] = None
@@ -78,6 +83,38 @@ def _run_job(
         with _job_lock:
             job.result = result
             job.status = "done"
+    except Exception as e:
+        traceback.print_exc(file=sys.stderr)
+        with _job_lock:
+            job.error = str(e)
+            job.status = "failed"
+
+
+def _run_thread_job() -> None:
+    """Draws from the existing local corpus -- no url, no per-run RunPaths
+    (see resolve_thread_output_dir in run_output.py). The thread's own
+    output dir isn't known until generate_threads() has already scanned the
+    corpus and picked a thesis to slug, so job.progress_log/shorts_dir are
+    set via the on_output_dir callback partway through the call instead of
+    upfront like _run_job does."""
+    def _on_output_dir(out_dir: str) -> None:
+        with _job_lock:
+            job.progress_log = os.path.join(out_dir, "progress.log")
+            job.shorts_dir = out_dir
+
+    try:
+        result = generate_threads(on_output_dir=_on_output_dir)
+        with _job_lock:
+            if result is None:
+                job.error = (
+                    "No same-topic episode pair found in the local corpus -- "
+                    "run the pipeline on two or more videos covering the same "
+                    "topic first (any mode), then retry."
+                )
+                job.status = "failed"
+            else:
+                job.result = result
+                job.status = "done"
     except Exception as e:
         traceback.print_exc(file=sys.stderr)
         with _job_lock:
@@ -135,6 +172,25 @@ def _serialize_result(result: dict, shorts_dir: Optional[str]) -> dict:
     return {"shorts": shorts}
 
 
+def _serialize_thread_result(result: dict, out_dir: Optional[str]) -> dict:
+    """Thread results have a different shape than shorts/chapters (one clip,
+    no score/hook fields) -- see generate_threads' return in pipeline.py."""
+    clip_url = result.get("clip_url")
+    if clip_url and not _clip_file_exists(out_dir, clip_url):
+        clip_url = None
+    return {
+        "thread": {
+            "shared_question": result.get("shared_question"),
+            "thesis": result.get("thesis"),
+            "bridge": result.get("bridge"),
+            "episode_a": result.get("episode_a"),
+            "episode_b": result.get("episode_b"),
+            "download_url": _clip_display_url(out_dir, clip_url),
+            "clip_filename": _clip_filename_for_delete(clip_url),
+        }
+    }
+
+
 def _run_name_from_shorts_dir(shorts_dir: Optional[str]) -> Optional[str]:
     if not shorts_dir:
         return None
@@ -160,6 +216,25 @@ def index():
 
 @app.route("/run", methods=["POST"])
 def start_run():
+    clip_type = request.form.get("clip_type", "shorts")
+
+    if clip_type == "thread":
+        # No url, no per-episode flags -- generate_threads() draws from the
+        # existing local corpus (see pipeline.py).
+        with _job_lock:
+            if job.status in ("starting", "running"):
+                return jsonify({"error": "a run is already in progress"}), 409
+            job.status = "starting"
+            job.url = ""
+            job.clip_type = "thread"
+            job.progress_log = None
+            job.shorts_dir = None
+            job.result = None
+            job.error = None
+
+        threading.Thread(target=_run_thread_job, daemon=True).start()
+        return jsonify({"status": "starting"}), 202
+
     url = request.form.get("url", "").strip()
     if not url:
         return jsonify({"error": "url is required"}), 400
@@ -187,6 +262,7 @@ def start_run():
             return jsonify({"error": "a run is already in progress"}), 409
         job.status = "starting"
         job.url = url
+        job.clip_type = "shorts"
         job.progress_log = None
         job.shorts_dir = None
         job.result = None
@@ -201,6 +277,7 @@ def status():
     offset = int(request.args.get("offset", 0))
     with _job_lock:
         current_status = job.status
+        clip_type = job.clip_type
         progress_log = job.progress_log
         shorts_dir = job.shorts_dir
         result = job.result
@@ -215,12 +292,26 @@ def status():
             new_offset = f.tell()
         log_text = chunk.decode("utf-8", errors="replace")
 
+    if result and clip_type == "thread":
+        serialized_result = _serialize_thread_result(result, shorts_dir)
+        # A thread has no per-episode run folder (shorts_dir is _Threads/<slug>
+        # here, not output/<Title>/Shorts) -- there's no History-tab run to
+        # name, and _run_name_from_shorts_dir(shorts_dir) would wrongly
+        # resolve to "_Threads".
+        run_name = None
+    elif result:
+        serialized_result = _serialize_result(result, shorts_dir)
+        run_name = _run_name_from_shorts_dir(shorts_dir)
+    else:
+        serialized_result = None
+        run_name = None
+
     return jsonify({
         "status": current_status,
         "log": log_text,
         "offset": new_offset,
-        "result": _serialize_result(result, shorts_dir) if result else None,
-        "run_name": _run_name_from_shorts_dir(shorts_dir) if result else None,
+        "result": serialized_result,
+        "run_name": run_name,
         "error": error,
     })
 

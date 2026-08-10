@@ -899,6 +899,47 @@ def test_generate_threads_assembles_and_writes_result(tmp_path, monkeypatch):
     ]
 
 
+def test_generate_threads_calls_on_output_dir_before_the_slow_work(tmp_path, monkeypatch):
+    # out_dir isn't known until after the corpus scan resolves a thesis, so
+    # a caller that wants to tail progress.log live (the dashboard) needs to
+    # be told the path as soon as it's known -- before acquire_clip/TTS/
+    # ffmpeg run, not after generate_threads() already returned.
+    episode_a_dir = tmp_path / "Episode_A"
+    episode_b_dir = tmp_path / "Episode_B"
+    episode_a_dir.mkdir()
+    episode_b_dir.mkdir()
+    (episode_a_dir / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+    (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
+
+    fake_thread = {
+        "shared_question": "Does X cause Y?",
+        "thesis": "Two guests disagree about X causing Y.",
+        "bridge": "Here's the other side.",
+        "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
+        "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
+    }
+    monkeypatch.setattr(pipeline_module, "build_thread", lambda base_dir=None, llm_fn=None: fake_thread)
+
+    calls = []
+
+    def _fake_acquire_clip(run_dir, source_url, cached_duration, start_time, end_time, out_path):
+        # on_output_dir must already have fired by the time the slow work starts
+        assert calls, "on_output_dir was not called before acquire_clip"
+        open(out_path, "wb").write(b"clip")
+        return {"clip_path": out_path}
+
+    monkeypatch.setattr(pipeline_module, "acquire_clip", _fake_acquire_clip)
+    monkeypatch.setattr(pipeline_module, "synthesize_narration", lambda text, out_path, **k: open(out_path, "wb").write(b"audio") or out_path)
+    monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
+    monkeypatch.setattr(pipeline_module, "assemble_thread", lambda segment_paths, out_path: open(out_path, "wb").write(b"final") or out_path)
+
+    result = pipeline_module.generate_threads(base_dir=str(tmp_path), on_output_dir=calls.append)
+
+    assert result is not None
+    assert calls == [result["output_dir"]]
+    assert os.path.isfile(os.path.join(result["output_dir"], "progress.log"))
+
+
 def test_generate_threads_tolerates_missing_duration_key(tmp_path, monkeypatch):
     # thread_builder.py already tolerates a null/missing "duration" in
     # full_source.json via .get("duration", 0.0) -- generate_threads
