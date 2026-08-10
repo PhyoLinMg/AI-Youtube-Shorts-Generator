@@ -128,8 +128,8 @@ def ingest_captions(youtube_url: str, base_dir: Optional[str] = None) -> Dict:
         try:
             with open(paths.source_json, "r", encoding="utf-8") as f:
                 existing = json.load(f)
-            if not isinstance(existing, dict) or not isinstance(existing.get("segments"), list):
-                print(f"[caption_ingest] cached transcript has an unexpected shape, re-fetching: {paths.source_json}", flush=True)
+            if not isinstance(existing, dict) or not isinstance(existing.get("segments"), list) or not existing.get("segments"):
+                print(f"[caption_ingest] cached transcript has an unexpected shape or no segments, re-fetching: {paths.source_json}", flush=True)
                 existing = None
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
             print(f"[caption_ingest] cached transcript is corrupted, re-fetching: {paths.source_json} ({e})", flush=True)

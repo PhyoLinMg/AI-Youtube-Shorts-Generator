@@ -150,6 +150,22 @@ def test_ingest_captions_refetches_when_cached_transcript_has_wrong_shape(tmp_pa
     assert result["segment_count"] > 0
 
 
+def test_ingest_captions_refetches_when_cached_segments_list_is_empty(tmp_path, monkeypatch):
+    run_dir = os.path.join(str(tmp_path), "emptyseg")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "full_source.json"), "w", encoding="utf-8") as f:
+        json.dump({"duration": 120.0, "segments": []}, f)
+
+    monkeypatch.setattr(caption_ingest_module, "_fetch_duration", lambda url: 77.0)
+    monkeypatch.setattr(caption_ingest_module, "_fetch_srv1_captions", lambda url, lang="en": SAMPLE_SRV1)
+
+    result = ingest_captions("https://www.youtube.com/watch?v=emptyseg", base_dir=str(tmp_path))
+
+    assert result["run_dir"] == run_dir
+    assert result["duration"] == 77.0
+    assert result["segment_count"] > 0
+
+
 def test_fetch_duration_parses_yt_dlp_stdout(monkeypatch):
     def _fake_run(cmd, **kwargs):
         assert cmd[:3] == ["yt-dlp", "--skip-download", "--print"]
