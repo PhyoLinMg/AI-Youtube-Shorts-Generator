@@ -13,7 +13,7 @@ import sys
 import threading
 import traceback
 from dataclasses import asdict, dataclass
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
@@ -90,13 +90,13 @@ def _run_job(
             job.status = "failed"
 
 
-def _run_thread_job() -> None:
-    """Draws from the existing local corpus -- no url, no per-run RunPaths
-    (see resolve_thread_output_dir in run_output.py). The thread's own
-    output dir isn't known until generate_threads() has already scanned the
-    corpus and picked a thesis to slug, so job.progress_log/shorts_dir are
-    set via the on_output_dir callback partway through the call instead of
-    upfront like _run_job does."""
+def _run_thread_job(url_a: str, url_b: str, num_clips: int) -> None:
+    """Ingests url_a/url_b caption-only (no video download) and builds up
+    to num_clips distinct shared-question threads between them -- see
+    generate_threads in pipeline.py. Like _run_job, the output dir isn't
+    known until generate_threads has resolved it from the two episode
+    titles, so job.progress_log/shorts_dir are set via the on_output_dir
+    callback."""
     def _on_output_dir(out_dir: str) -> None:
         with _job_lock:
             job.status = "running"
@@ -104,13 +104,13 @@ def _run_thread_job() -> None:
             job.shorts_dir = out_dir
 
     try:
-        result = generate_threads(on_output_dir=_on_output_dir)
+        result = generate_threads(url_a, url_b, num_clips=num_clips, on_output_dir=_on_output_dir)
         with _job_lock:
-            if result is None:
+            if not result:
                 job.error = (
-                    "No same-topic episode pair found in the local corpus -- "
-                    "run the pipeline on two or more videos covering the same "
-                    "topic first (any mode), then retry."
+                    "No shared-question thread found between these two episodes -- "
+                    "try a different pair, or make sure both URLs genuinely cover the "
+                    "same topic."
                 )
                 job.status = "failed"
             else:
@@ -173,23 +173,31 @@ def _serialize_result(result: dict, shorts_dir: Optional[str]) -> dict:
     return {"shorts": shorts}
 
 
-def _serialize_thread_result(result: dict, out_dir: Optional[str]) -> dict:
-    """Thread results have a different shape than shorts/chapters (one clip,
-    no score/hook fields) -- see generate_threads' return in pipeline.py."""
-    clip_url = result.get("clip_url")
-    if clip_url and not _clip_file_exists(out_dir, clip_url):
-        clip_url = None
-    return {
-        "thread": {
-            "shared_question": result.get("shared_question"),
-            "thesis": result.get("thesis"),
-            "bridge": result.get("bridge"),
-            "episode_a": result.get("episode_a"),
-            "episode_b": result.get("episode_b"),
+def _serialize_thread_results(results: List[Dict], out_dir: Optional[str]) -> Dict:
+    """Thread results have a different shape than shorts/chapters (multiple
+    two-source clips, no score/hook fields) -- see generate_threads' return
+    in pipeline.py. One entry per grounded shared-question pair (up to the
+    requested num_clips, possibly fewer -- see select_thread_pairs)."""
+    threads = []
+    for r in results:
+        clip_url = r.get("clip_url")
+        if clip_url and not _clip_file_exists(out_dir, clip_url):
+            # Clip was generated but its file has since been deleted -- drop
+            # it instead of re-rendering it as a "Failed" card, which it isn't.
+            continue
+        episode_a_clip = (r.get("episode_a") or {}).get("clip_url")
+        episode_b_clip = (r.get("episode_b") or {}).get("clip_url")
+        threads.append({
+            "shared_question": r.get("shared_question"),
+            "thesis": r.get("thesis"),
+            "bridge": r.get("bridge"),
+            "episode_a": r.get("episode_a"),
+            "episode_b": r.get("episode_b"),
             "download_url": _clip_display_url(out_dir, clip_url),
-            "clip_filename": _clip_filename_for_delete(clip_url),
-        }
-    }
+            "episode_a_download_url": _clip_display_url(out_dir, episode_a_clip),
+            "episode_b_download_url": _clip_display_url(out_dir, episode_b_clip),
+        })
+    return {"threads": threads}
 
 
 def _run_name_from_shorts_dir(shorts_dir: Optional[str]) -> Optional[str]:
@@ -220,8 +228,15 @@ def start_run():
     clip_type = request.form.get("clip_type", "shorts")
 
     if clip_type == "thread":
-        # No url, no per-episode flags -- generate_threads() draws from the
-        # existing local corpus (see pipeline.py).
+        url_a = request.form.get("url_a", "").strip()
+        url_b = request.form.get("url_b", "").strip()
+        if not url_a or not url_b:
+            return jsonify({"error": "url_a and url_b are both required for clip_type=thread"}), 400
+        try:
+            num_clips = int(request.form.get("num_clips", 2))
+        except (TypeError, ValueError) as e:
+            return jsonify({"error": f"invalid input: {e}"}), 400
+
         with _job_lock:
             if job.status in ("starting", "running"):
                 return jsonify({"error": "a run is already in progress"}), 409
@@ -233,7 +248,7 @@ def start_run():
             job.result = None
             job.error = None
 
-        threading.Thread(target=_run_thread_job, daemon=True).start()
+        threading.Thread(target=_run_thread_job, args=(url_a, url_b, num_clips), daemon=True).start()
         return jsonify({"status": "starting"}), 202
 
     url = request.form.get("url", "").strip()
@@ -294,11 +309,11 @@ def status():
         log_text = chunk.decode("utf-8", errors="replace")
 
     if result and clip_type == "thread":
-        serialized_result = _serialize_thread_result(result, shorts_dir)
-        # A thread has no per-episode run folder (shorts_dir is _Threads/<slug>
-        # here, not output/<Title>/Shorts) -- there's no History-tab run to
-        # name, and _run_name_from_shorts_dir(shorts_dir) would wrongly
-        # resolve to "_Threads".
+        serialized_result = _serialize_thread_results(result, shorts_dir)
+        # A thread run has no per-episode run folder (shorts_dir is
+        # _Threads/<slug> here, not output/<Title>/Shorts) -- there's no
+        # History-tab run to name, and _run_name_from_shorts_dir(shorts_dir)
+        # would wrongly resolve to "_Threads".
         run_name = None
     elif result:
         serialized_result = _serialize_result(result, shorts_dir)

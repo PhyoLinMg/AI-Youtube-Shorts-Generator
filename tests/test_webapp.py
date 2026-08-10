@@ -98,76 +98,94 @@ def test_run_starts_a_job_and_reaches_done(client, monkeypatch, tmp_path):
     assert webapp.job.progress_log == fake_paths.progress_log
 
 
-def test_run_thread_starts_a_job_with_no_url_and_reaches_done(client, monkeypatch, tmp_path):
-    out_dir = str(tmp_path / "_Threads" / "some-thesis")
+def test_run_thread_requires_both_urls(client):
+    resp = client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a"})
+    assert resp.status_code == 400
+    assert "url_a and url_b" in resp.get_json()["error"]
+
+
+def test_run_thread_starts_a_job_and_reaches_done(client, monkeypatch, tmp_path):
+    out_dir = str(tmp_path / "_Threads" / "A_x_B")
     os.makedirs(out_dir, exist_ok=True)
-    fake_result = {
+    clip_path = os.path.join(out_dir, "clip_1.mp4")
+    clip_a_path = os.path.join(out_dir, "clip_1_a.mp4")
+    clip_b_path = os.path.join(out_dir, "clip_1_b.mp4")
+    for p in (clip_path, clip_a_path, clip_b_path):
+        open(p, "wb").write(b"data")
+
+    fake_results = [{
         "shared_question": "Does X cause Y?",
         "thesis": "Two guests disagree.",
         "bridge": "Here's the other side.",
-        "episode_a": {"title": "Episode A"},
-        "episode_b": {"title": "Episode B"},
+        "episode_a": {"title": "Episode A", "clip_url": clip_a_path},
+        "episode_b": {"title": "Episode B", "clip_url": clip_b_path},
         "output_dir": out_dir,
-        "clip_url": os.path.join(out_dir, "thread.mp4"),
-    }
-    open(fake_result["clip_url"], "wb").write(b"final")
+        "clip_url": clip_path,
+    }]
 
-    def _fake_generate_threads(base_dir=None, on_output_dir=None):
+    def _fake_generate_threads(url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None):
         if on_output_dir:
             on_output_dir(out_dir)
-        return fake_result
+        return fake_results
 
     monkeypatch.setattr(webapp, "generate_threads", _fake_generate_threads)
     monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
 
-    resp = client.post("/run", data={"clip_type": "thread"})
+    resp = client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b", "num_clips": "2"})
     assert resp.status_code == 202
     assert webapp.job.status == "done"
     assert webapp.job.clip_type == "thread"
-    assert webapp.job.result == fake_result
+    assert webapp.job.result == fake_results
     assert webapp.job.progress_log == os.path.join(out_dir, "progress.log")
 
 
 def test_run_thread_fails_with_a_helpful_message_when_no_pair_found(client, monkeypatch):
-    monkeypatch.setattr(webapp, "generate_threads", lambda base_dir=None, on_output_dir=None: None)
+    monkeypatch.setattr(webapp, "generate_threads", lambda url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None: [])
     monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
 
-    resp = client.post("/run", data={"clip_type": "thread"})
+    resp = client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b"})
     assert resp.status_code == 202
     assert webapp.job.status == "failed"
-    assert "no same-topic episode pair" in webapp.job.error.lower()
+    assert "no shared-question thread" in webapp.job.error.lower()
 
 
-def test_status_serializes_a_thread_result_and_omits_run_name(client, monkeypatch, tmp_path):
-    out_dir = str(tmp_path / "_Threads" / "some-thesis")
+def test_status_serializes_thread_results_and_omits_run_name(client, monkeypatch, tmp_path):
+    out_dir = str(tmp_path / "_Threads" / "A_x_B")
     os.makedirs(out_dir, exist_ok=True)
-    clip_path = os.path.join(out_dir, "thread.mp4")
-    open(clip_path, "wb").write(b"final")
+    clip_path = os.path.join(out_dir, "clip_1.mp4")
+    clip_a_path = os.path.join(out_dir, "clip_1_a.mp4")
+    clip_b_path = os.path.join(out_dir, "clip_1_b.mp4")
+    for p in (clip_path, clip_a_path, clip_b_path):
+        open(p, "wb").write(b"data")
 
-    def _fake_generate_threads(base_dir=None, on_output_dir=None):
+    def _fake_generate_threads(url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None):
         if on_output_dir:
             on_output_dir(out_dir)
-        return {
+        return [{
             "shared_question": "Does X cause Y?",
             "thesis": "Two guests disagree.",
             "bridge": "Here's the other side.",
-            "episode_a": {"title": "Episode A"},
-            "episode_b": {"title": "Episode B"},
+            "episode_a": {"title": "Episode A", "clip_url": clip_a_path},
+            "episode_b": {"title": "Episode B", "clip_url": clip_b_path},
             "output_dir": out_dir,
             "clip_url": clip_path,
-        }
+        }]
 
     monkeypatch.setattr(webapp, "generate_threads", _fake_generate_threads)
     monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
 
-    client.post("/run", data={"clip_type": "thread"})
+    client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b"})
     resp = client.get("/status")
     data = resp.get_json()
 
     assert data["status"] == "done"
     assert data["run_name"] is None
-    assert data["result"]["thread"]["thesis"] == "Two guests disagree."
-    assert data["result"]["thread"]["download_url"] == "/download/thread.mp4"
+    assert len(data["result"]["threads"]) == 1
+    thread = data["result"]["threads"][0]
+    assert thread["thesis"] == "Two guests disagree."
+    assert thread["download_url"] == "/download/clip_1.mp4"
+    assert thread["episode_a_download_url"] == "/download/clip_1_a.mp4"
+    assert thread["episode_b_download_url"] == "/download/clip_1_b.mp4"
 
 
 def test_run_rejects_malformed_input_without_wedging_job_state(client, monkeypatch, tmp_path):
