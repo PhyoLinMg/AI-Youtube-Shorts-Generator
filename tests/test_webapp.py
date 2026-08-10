@@ -188,6 +188,45 @@ def test_status_serializes_thread_results_and_omits_run_name(client, monkeypatch
     assert thread["episode_b_download_url"] == "/download/clip_1_b.mp4"
 
 
+def test_status_omits_a_source_clip_download_url_whose_file_is_missing(client, monkeypatch, tmp_path):
+    """episode_a/episode_b's own clip_url is checked for a backing file just
+    like the top-level clip_url is -- a missing clip_1_a.mp4 must not
+    surface as a dead download link even though the final clip_1.mp4 (and
+    the episode_b source clip) still exist."""
+    out_dir = str(tmp_path / "_Threads" / "A_x_B")
+    os.makedirs(out_dir, exist_ok=True)
+    clip_path = os.path.join(out_dir, "clip_1.mp4")
+    clip_a_path = os.path.join(out_dir, "clip_1_a.mp4")  # never created
+    clip_b_path = os.path.join(out_dir, "clip_1_b.mp4")
+    for p in (clip_path, clip_b_path):
+        open(p, "wb").write(b"data")
+
+    def _fake_generate_threads(url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None):
+        if on_output_dir:
+            on_output_dir(out_dir)
+        return [{
+            "shared_question": "Does X cause Y?",
+            "thesis": "Two guests disagree.",
+            "bridge": "Here's the other side.",
+            "episode_a": {"title": "Episode A", "clip_url": clip_a_path},
+            "episode_b": {"title": "Episode B", "clip_url": clip_b_path},
+            "output_dir": out_dir,
+            "clip_url": clip_path,
+        }]
+
+    monkeypatch.setattr(webapp, "generate_threads", _fake_generate_threads)
+    monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
+
+    client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b"})
+    resp = client.get("/status")
+    data = resp.get_json()
+
+    thread = data["result"]["threads"][0]
+    assert thread["download_url"] == "/download/clip_1.mp4"
+    assert thread["episode_a_download_url"] is None
+    assert thread["episode_b_download_url"] == "/download/clip_1_b.mp4"
+
+
 def test_run_rejects_malformed_input_without_wedging_job_state(client, monkeypatch, tmp_path):
     resp = client.post("/run", data={"url": "https://youtube.example/x", "num_clips": "not-a-number"})
     assert resp.status_code == 400

@@ -187,6 +187,12 @@ def _serialize_thread_results(results: List[Dict], out_dir: Optional[str]) -> Di
             continue
         episode_a_clip = (r.get("episode_a") or {}).get("clip_url")
         episode_b_clip = (r.get("episode_b") or {}).get("clip_url")
+        episode_a_download_url = (
+            _clip_display_url(out_dir, episode_a_clip) if _clip_file_exists(out_dir, episode_a_clip) else None
+        )
+        episode_b_download_url = (
+            _clip_display_url(out_dir, episode_b_clip) if _clip_file_exists(out_dir, episode_b_clip) else None
+        )
         threads.append({
             "shared_question": r.get("shared_question"),
             "thesis": r.get("thesis"),
@@ -194,8 +200,8 @@ def _serialize_thread_results(results: List[Dict], out_dir: Optional[str]) -> Di
             "episode_a": r.get("episode_a"),
             "episode_b": r.get("episode_b"),
             "download_url": _clip_display_url(out_dir, clip_url),
-            "episode_a_download_url": _clip_display_url(out_dir, episode_a_clip),
-            "episode_b_download_url": _clip_display_url(out_dir, episode_b_clip),
+            "episode_a_download_url": episode_a_download_url,
+            "episode_b_download_url": episode_b_download_url,
         })
     return {"threads": threads}
 
