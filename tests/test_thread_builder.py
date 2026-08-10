@@ -279,6 +279,63 @@ def test_select_thread_pairs_discards_pair_whose_span_overlaps_an_earlier_pick()
     assert result[0]["shared_question"] == "Question one?"
 
 
+def test_select_thread_pairs_accepts_pair_whose_span_only_touches_an_earlier_endpoint():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+    responses = [
+        json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
+        json.dumps({
+            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "clip_a": {"start_time": 0.0, "end_time": 20.0},
+            "clip_b": {"start_time": 0.0, "end_time": 20.0},
+        }),
+        # clip_a starts exactly where question one's clip_a ended (20.0) -- touching, not overlapping.
+        json.dumps({
+            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "clip_a": {"start_time": 20.0, "end_time": 40.0},
+            "clip_b": {"start_time": 40.0, "end_time": 60.0},
+        }),
+    ]
+
+    def llm_fn(prompt):
+        return responses.pop(0)
+
+    result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=2, llm_fn=llm_fn)
+
+    assert len(result) == 2
+
+
+def test_select_thread_pairs_discards_pair_when_only_episode_b_span_overlaps():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+    responses = [
+        json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
+        json.dumps({
+            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "clip_a": {"start_time": 0.0, "end_time": 20.0},
+            "clip_b": {"start_time": 0.0, "end_time": 20.0},
+        }),
+        # clip_a is clearly non-overlapping (40-60 vs 0-20); only clip_b overlaps (10-30 vs 0-20).
+        json.dumps({
+            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "clip_a": {"start_time": 40.0, "end_time": 60.0},
+            "clip_b": {"start_time": 10.0, "end_time": 30.0},
+        }),
+    ]
+
+    def llm_fn(prompt):
+        return responses.pop(0)
+
+    result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=2, llm_fn=llm_fn)
+
+    assert len(result) == 1
+    assert result[0]["shared_question"] == "Question one?"
+
+
 def test_select_thread_pairs_skips_ungroundable_question_and_continues():
     entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
     entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
@@ -303,13 +360,18 @@ def test_select_thread_pairs_skips_ungroundable_question_and_continues():
     assert result[0]["shared_question"] == "Question two?"
 
 
-def test_select_thread_pairs_stops_once_num_clips_reached():
+def test_select_thread_pairs_stops_once_num_clips_reached(monkeypatch):
     entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
     entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
     transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
     transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+
+    monkeypatch.setattr(
+        thread_builder, "find_same_topic_pairs",
+        lambda entry_a, entry_b, num_pairs, llm_fn: ["Question one?", "Question two?", "Question three?"],
+    )
+
     responses = [
-        json.dumps({"shared_questions": ["Question one?", "Question two?", "Question three?"]}),
         json.dumps({
             "grounded": True, "thesis": "t1", "bridge": "b1",
             "clip_a": {"start_time": 0.0, "end_time": 20.0}, "clip_b": {"start_time": 0.0, "end_time": 20.0},
