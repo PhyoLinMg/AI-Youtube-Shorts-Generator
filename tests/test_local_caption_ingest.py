@@ -115,6 +115,41 @@ def test_ingest_captions_skips_fetch_when_already_ingested(tmp_path, monkeypatch
     assert result["segment_count"] == 1
 
 
+def test_ingest_captions_refetches_when_cached_transcript_is_corrupted(tmp_path, monkeypatch):
+    run_dir = os.path.join(str(tmp_path), "corrupt")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "full_source.json"), "w", encoding="utf-8") as f:
+        f.write("{not valid json")
+
+    monkeypatch.setattr(caption_ingest_module, "_fetch_duration", lambda url: 42.0)
+    monkeypatch.setattr(caption_ingest_module, "_fetch_srv1_captions", lambda url, lang="en": SAMPLE_SRV1)
+
+    result = ingest_captions("https://www.youtube.com/watch?v=corrupt", base_dir=str(tmp_path))
+
+    assert result["run_dir"] == run_dir
+    assert result["duration"] == 42.0
+    assert result["segment_count"] > 0
+    with open(os.path.join(run_dir, "full_source.json"), "r", encoding="utf-8") as f:
+        transcript = json.load(f)
+    assert transcript["duration"] == 42.0
+
+
+def test_ingest_captions_refetches_when_cached_transcript_has_wrong_shape(tmp_path, monkeypatch):
+    run_dir = os.path.join(str(tmp_path), "wrongshape")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "full_source.json"), "w", encoding="utf-8") as f:
+        json.dump({"duration": 10.0, "segments": "not-a-list"}, f)
+
+    monkeypatch.setattr(caption_ingest_module, "_fetch_duration", lambda url: 99.0)
+    monkeypatch.setattr(caption_ingest_module, "_fetch_srv1_captions", lambda url, lang="en": SAMPLE_SRV1)
+
+    result = ingest_captions("https://www.youtube.com/watch?v=wrongshape", base_dir=str(tmp_path))
+
+    assert result["run_dir"] == run_dir
+    assert result["duration"] == 99.0
+    assert result["segment_count"] > 0
+
+
 def test_fetch_duration_parses_yt_dlp_stdout(monkeypatch):
     def _fake_run(cmd, **kwargs):
         assert cmd[:3] == ["yt-dlp", "--skip-download", "--print"]

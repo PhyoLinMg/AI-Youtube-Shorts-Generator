@@ -112,19 +112,36 @@ def ingest_captions(youtube_url: str, base_dir: Optional[str] = None) -> Dict:
     ingest -- the fetch is skipped entirely and the existing transcript is
     reused as-is. Without this guard, re-ingesting an already-fully-
     processed episode would silently downgrade its real transcript to
-    lower-fidelity YouTube auto-captions."""
+    lower-fidelity YouTube auto-captions.
+
+    A cached full_source.json that's corrupt or the wrong shape (this
+    module's own write below is a plain open()+json.dump(), not the
+    atomic .part+os.replace() rename pipeline.py uses, so a truncated
+    file from an interrupted run is a real possibility) is treated the
+    same as no cache at all -- fall through to a fresh fetch, matching
+    the cache-read patterns in pipeline.py/corpus.py, rather than raising
+    or returning a degenerate 0-segment "success"."""
     paths: RunPaths = resolve_output_dir(youtube_url, base_dir=base_dir)
 
     if os.path.exists(paths.source_json):
-        print(f"[caption_ingest] {youtube_url!r} already in the corpus at {paths.root} -- skipping caption fetch", flush=True)
-        with open(paths.source_json, "r", encoding="utf-8") as f:
-            existing = json.load(f)
-        return {
-            "run_dir": paths.root,
-            "title": os.path.basename(paths.root),
-            "duration": existing.get("duration", 0.0),
-            "segment_count": len(existing.get("segments", [])),
-        }
+        existing = None
+        try:
+            with open(paths.source_json, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if not isinstance(existing, dict) or not isinstance(existing.get("segments"), list):
+                print(f"[caption_ingest] cached transcript has an unexpected shape, re-fetching: {paths.source_json}", flush=True)
+                existing = None
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+            print(f"[caption_ingest] cached transcript is corrupted, re-fetching: {paths.source_json} ({e})", flush=True)
+
+        if existing is not None:
+            print(f"[caption_ingest] {youtube_url!r} already in the corpus at {paths.root} -- skipping caption fetch", flush=True)
+            return {
+                "run_dir": paths.root,
+                "title": os.path.basename(paths.root),
+                "duration": existing.get("duration", 0.0),
+                "segment_count": len(existing.get("segments", [])),
+            }
 
     duration = _fetch_duration(youtube_url)
     xml_text = _fetch_srv1_captions(youtube_url)
