@@ -853,15 +853,13 @@ def test_generate_chapters_does_not_clobber_a_prior_generate_shorts_result(tmp_p
     assert "chapters" in chapters_result
 
 
-def test_generate_threads_returns_none_when_build_thread_returns_none(tmp_path, monkeypatch):
-    monkeypatch.setattr(pipeline_module, "build_thread", lambda base_dir=None, llm_fn=None: None)
-
-    result = pipeline_module.generate_threads(base_dir=str(tmp_path))
-
-    assert result is None
+def _fake_ingest_captions(entries):
+    def _ingest(url, base_dir=None):
+        return entries[url]
+    return _ingest
 
 
-def test_generate_threads_assembles_and_writes_result(tmp_path, monkeypatch):
+def test_generate_threads_returns_empty_list_when_no_shared_questions(tmp_path, monkeypatch):
     episode_a_dir = tmp_path / "Episode_A"
     episode_b_dir = tmp_path / "Episode_B"
     episode_a_dir.mkdir()
@@ -869,41 +867,71 @@ def test_generate_threads_assembles_and_writes_result(tmp_path, monkeypatch):
     (episode_a_dir / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
     (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
 
-    fake_thread = {
-        "shared_question": "Does X cause Y?",
-        "thesis": "Two guests disagree about X causing Y.",
-        "bridge": "Here's the other side.",
-        "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
-        "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
-    }
-    monkeypatch.setattr(pipeline_module, "build_thread", lambda base_dir=None, llm_fn=None: fake_thread)
+    monkeypatch.setattr(pipeline_module, "ingest_captions", _fake_ingest_captions({
+        "https://example.com/a": {"run_dir": str(episode_a_dir), "title": "Episode A", "duration": 100.0, "segment_count": 0},
+        "https://example.com/b": {"run_dir": str(episode_b_dir), "title": "Episode B", "duration": 200.0, "segment_count": 0},
+    }))
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: "an abstract")
+    monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: [])
+
+    result = pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=2, base_dir=str(tmp_path))
+
+    assert result == []
+
+
+def test_generate_threads_assembles_and_writes_results_for_each_pair(tmp_path, monkeypatch):
+    episode_a_dir = tmp_path / "Episode_A"
+    episode_b_dir = tmp_path / "Episode_B"
+    episode_a_dir.mkdir()
+    episode_b_dir.mkdir()
+    (episode_a_dir / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+    (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
+
+    monkeypatch.setattr(pipeline_module, "ingest_captions", _fake_ingest_captions({
+        "https://example.com/a": {"run_dir": str(episode_a_dir), "title": "Episode A", "duration": 100.0, "segment_count": 0},
+        "https://example.com/b": {"run_dir": str(episode_b_dir), "title": "Episode B", "duration": 200.0, "segment_count": 0},
+    }))
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: "an abstract")
+
+    fake_pairs = [
+        {
+            "shared_question": "Does X cause Y?", "thesis": "t1", "bridge": "b1",
+            "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
+            "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
+        },
+        {
+            "shared_question": "Does A cause B?", "thesis": "t2", "bridge": "b2",
+            "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 40.0, "end_time": 60.0},
+            "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 35.0, "end_time": 55.0},
+        },
+    ]
+    monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: fake_pairs)
     monkeypatch.setattr(pipeline_module, "acquire_clip", lambda run_dir, source_url, cached_duration, start_time, end_time, out_path: open(out_path, "wb").write(b"clip") or {"clip_path": out_path})
     monkeypatch.setattr(pipeline_module, "synthesize_narration", lambda text, out_path, **k: open(out_path, "wb").write(b"audio") or out_path)
     monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
     assemble_calls = []
     monkeypatch.setattr(pipeline_module, "assemble_thread", lambda segment_paths, out_path: (assemble_calls.append(segment_paths), open(out_path, "wb").write(b"final"))[1] or out_path)
 
-    result = pipeline_module.generate_threads(base_dir=str(tmp_path))
+    result = pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=2, base_dir=str(tmp_path))
 
-    assert result is not None
-    assert result["shared_question"] == "Does X cause Y?"
-    assert result["clip_url"].endswith("thread.mp4")
-    assert os.path.isfile(os.path.join(result["output_dir"], "thread_result.json"))
-    # intro card, clip A, bridge card, clip B, in that order
-    out_dir = result["output_dir"]
+    assert len(result) == 2
+    out_dir = result[0]["output_dir"]
+    assert result[0]["clip_url"] == os.path.join(out_dir, "clip_1.mp4")
+    assert result[1]["clip_url"] == os.path.join(out_dir, "clip_2.mp4")
+    assert result[0]["episode_a"]["clip_url"] == os.path.join(out_dir, "clip_1_a.mp4")
+    assert result[0]["episode_b"]["clip_url"] == os.path.join(out_dir, "clip_1_b.mp4")
+    assert result[1]["episode_a"]["clip_url"] == os.path.join(out_dir, "clip_2_a.mp4")
     assert assemble_calls[0] == [
-        os.path.join(out_dir, "intro_card.mp4"),
-        os.path.join(out_dir, "clip_a.mp4"),
-        os.path.join(out_dir, "bridge_card.mp4"),
-        os.path.join(out_dir, "clip_b.mp4"),
+        os.path.join(out_dir, "intro_card_1.mp4"), os.path.join(out_dir, "clip_1_a.mp4"),
+        os.path.join(out_dir, "bridge_card_1.mp4"), os.path.join(out_dir, "clip_1_b.mp4"),
     ]
+    assert os.path.isfile(os.path.join(out_dir, "thread_results.json"))
+    with open(os.path.join(out_dir, "thread_results.json")) as f:
+        written = json.load(f)
+    assert len(written) == 2
 
 
 def test_generate_threads_calls_on_output_dir_before_the_slow_work(tmp_path, monkeypatch):
-    # out_dir isn't known until after the corpus scan resolves a thesis, so
-    # a caller that wants to tail progress.log live (the dashboard) needs to
-    # be told the path as soon as it's known -- before acquire_clip/TTS/
-    # ffmpeg run, not after generate_threads() already returned.
     episode_a_dir = tmp_path / "Episode_A"
     episode_b_dir = tmp_path / "Episode_B"
     episode_a_dir.mkdir()
@@ -911,19 +939,22 @@ def test_generate_threads_calls_on_output_dir_before_the_slow_work(tmp_path, mon
     (episode_a_dir / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
     (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
 
-    fake_thread = {
-        "shared_question": "Does X cause Y?",
-        "thesis": "Two guests disagree about X causing Y.",
-        "bridge": "Here's the other side.",
+    monkeypatch.setattr(pipeline_module, "ingest_captions", _fake_ingest_captions({
+        "https://example.com/a": {"run_dir": str(episode_a_dir), "title": "Episode A", "duration": 100.0, "segment_count": 0},
+        "https://example.com/b": {"run_dir": str(episode_b_dir), "title": "Episode B", "duration": 200.0, "segment_count": 0},
+    }))
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: "an abstract")
+
+    fake_pairs = [{
+        "shared_question": "Does X cause Y?", "thesis": "t1", "bridge": "b1",
         "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
         "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
-    }
-    monkeypatch.setattr(pipeline_module, "build_thread", lambda base_dir=None, llm_fn=None: fake_thread)
+    }]
+    monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: fake_pairs)
 
     calls = []
 
     def _fake_acquire_clip(run_dir, source_url, cached_duration, start_time, end_time, out_path):
-        # on_output_dir must already have fired by the time the slow work starts
         assert calls, "on_output_dir was not called before acquire_clip"
         open(out_path, "wb").write(b"clip")
         return {"clip_path": out_path}
@@ -933,38 +964,7 @@ def test_generate_threads_calls_on_output_dir_before_the_slow_work(tmp_path, mon
     monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
     monkeypatch.setattr(pipeline_module, "assemble_thread", lambda segment_paths, out_path: open(out_path, "wb").write(b"final") or out_path)
 
-    result = pipeline_module.generate_threads(base_dir=str(tmp_path), on_output_dir=calls.append)
+    result = pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=1, base_dir=str(tmp_path), on_output_dir=calls.append)
 
-    assert result is not None
-    assert calls == [result["output_dir"]]
-    assert os.path.isfile(os.path.join(result["output_dir"], "progress.log"))
-
-
-def test_generate_threads_tolerates_missing_duration_key(tmp_path, monkeypatch):
-    # thread_builder.py already tolerates a null/missing "duration" in
-    # full_source.json via .get("duration", 0.0) -- generate_threads
-    # re-reads the same file and must degrade the same way, not KeyError
-    # right after thread_builder's own defense let a thread through.
-    episode_a_dir = tmp_path / "Episode_A"
-    episode_b_dir = tmp_path / "Episode_B"
-    episode_a_dir.mkdir()
-    episode_b_dir.mkdir()
-    (episode_a_dir / "full_source.json").write_text(json.dumps({"segments": []}))  # no "duration" key
-    (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
-
-    fake_thread = {
-        "shared_question": "Does X cause Y?",
-        "thesis": "Two guests disagree about X causing Y.",
-        "bridge": "Here's the other side.",
-        "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
-        "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
-    }
-    monkeypatch.setattr(pipeline_module, "build_thread", lambda base_dir=None, llm_fn=None: fake_thread)
-    monkeypatch.setattr(pipeline_module, "acquire_clip", lambda run_dir, source_url, cached_duration, start_time, end_time, out_path: open(out_path, "wb").write(b"clip") or {"clip_path": out_path})
-    monkeypatch.setattr(pipeline_module, "synthesize_narration", lambda text, out_path, **k: open(out_path, "wb").write(b"audio") or out_path)
-    monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
-    monkeypatch.setattr(pipeline_module, "assemble_thread", lambda segment_paths, out_path: open(out_path, "wb").write(b"final") or out_path)
-
-    result = pipeline_module.generate_threads(base_dir=str(tmp_path))
-
-    assert result is not None
+    assert calls == [result[0]["output_dir"]]
+    assert os.path.isfile(os.path.join(result[0]["output_dir"], "progress.log"))
