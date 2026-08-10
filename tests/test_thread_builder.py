@@ -83,6 +83,46 @@ def test_pick_thread_clips_clamps_end_time_to_episode_duration():
     assert result["clip_a"]["end_time"] == 20.0
 
 
+def test_pick_thread_clips_includes_avoid_ranges_in_prompt_when_given():
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    seen_prompts = []
+
+    def llm_fn(prompt):
+        seen_prompts.append(prompt)
+        return json.dumps({
+            "grounded": True, "thesis": "t", "bridge": "b",
+            "clip_a": {"start_time": 5.0, "end_time": 25.0},
+            "clip_b": {"start_time": 2.0, "end_time": 20.0},
+        })
+
+    thread_builder.pick_thread_clips(
+        episode_a, episode_b, "q?", llm_fn,
+        avoid_ranges_a=[(0.0, 10.0)], avoid_ranges_b=[(50.0, 60.0)],
+    )
+
+    assert "0.0s-10.0s" in seen_prompts[0]
+    assert "50.0s-60.0s" in seen_prompts[0]
+
+
+def test_pick_thread_clips_prompt_has_no_avoid_block_when_none_given():
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    seen_prompts = []
+
+    def llm_fn(prompt):
+        seen_prompts.append(prompt)
+        return json.dumps({
+            "grounded": True, "thesis": "t", "bridge": "b",
+            "clip_a": {"start_time": 5.0, "end_time": 25.0},
+            "clip_b": {"start_time": 2.0, "end_time": 20.0},
+        })
+
+    thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn)
+
+    assert "already-used" not in seen_prompts[0]
+
+
 def test_build_thread_returns_none_when_no_same_topic_pair(tmp_path, monkeypatch):
     monkeypatch.setattr(
         thread_builder, "build_corpus",

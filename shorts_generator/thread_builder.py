@@ -6,7 +6,7 @@ in the two chosen full transcripts.
 """
 import json
 import math
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .corpus import build_corpus
 from .highlights import LLMFn, _parse_json_loose, build_transcript_text, call_muapi_llm
@@ -52,7 +52,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 THREAD_PICK_SYSTEM_PROMPT = """You are editing a short video that puts two podcast guests' answers to the same question side by side.
 
 Shared question both episodes are answering: {shared_question}
-
+{avoid_block}
 You will be given the full transcript of TWO episodes, each labeled with absolute timestamps. Find, in EACH transcript, one span where the speaker directly answers or responds to the shared question above.
 
 Rules:
@@ -196,12 +196,37 @@ def find_same_topic_pairs(entry_a: Dict, entry_b: Dict, num_pairs: int, llm_fn: 
     return _sanitize_topic_picks_multi(parsed, num_pairs)
 
 
-def pick_thread_clips(episode_a: Dict, episode_b: Dict, shared_question: str, llm_fn: LLMFn) -> Optional[Dict]:
+def _format_avoid_block(
+    avoid_ranges_a: Optional[List[Tuple[float, float]]],
+    avoid_ranges_b: Optional[List[Tuple[float, float]]],
+) -> str:
+    if not avoid_ranges_a and not avoid_ranges_b:
+        return ""
+    lines = ["Spans already used by an earlier clip in this same thread run -- pick a DIFFERENT span, do not reuse or overlap any of these:"]
+    if avoid_ranges_a:
+        ranges_text = ", ".join(f"{s:.1f}s-{e:.1f}s" for s, e in avoid_ranges_a)
+        lines.append(f"- Episode A already-used spans: {ranges_text}")
+    if avoid_ranges_b:
+        ranges_text = ", ".join(f"{s:.1f}s-{e:.1f}s" for s, e in avoid_ranges_b)
+        lines.append(f"- Episode B already-used spans: {ranges_text}")
+    return "\n".join(lines)
+
+
+def pick_thread_clips(
+    episode_a: Dict, episode_b: Dict, shared_question: str, llm_fn: LLMFn,
+    avoid_ranges_a: Optional[List[Tuple[float, float]]] = None,
+    avoid_ranges_b: Optional[List[Tuple[float, float]]] = None,
+) -> Optional[Dict]:
     """Stage B. episode_a/episode_b must each have a "transcript" key (full
     {duration, segments} shape). Returns None if the model can't ground a
-    clip answering shared_question in BOTH transcripts."""
+    clip answering shared_question in BOTH transcripts. avoid_ranges_a/b,
+    if given, are (start_time, end_time) spans already used by an earlier
+    accepted pick in this same thread run (see select_thread_pairs) -- told
+    to the model as a soft steer; the caller still enforces non-overlap
+    itself as a hard backstop, since the model can ignore this."""
     prompt = THREAD_PICK_SYSTEM_PROMPT.format(
         shared_question=shared_question,
+        avoid_block=_format_avoid_block(avoid_ranges_a, avoid_ranges_b),
         transcript_a=build_transcript_text(episode_a["transcript"]),
         transcript_b=build_transcript_text(episode_b["transcript"]),
     )
