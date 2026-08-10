@@ -317,13 +317,14 @@ def test_select_thread_pairs_discards_pair_when_only_episode_b_span_overlaps():
         json.dumps({
             "grounded": True, "thesis": "t1", "bridge": "b1",
             "clip_a": {"start_time": 0.0, "end_time": 20.0},
-            "clip_b": {"start_time": 0.0, "end_time": 20.0},
+            "clip_b": {"start_time": 50.0, "end_time": 70.0},
         }),
-        # clip_a is clearly non-overlapping (40-60 vs 0-20); only clip_b overlaps (10-30 vs 0-20).
+        # clip_a is clearly non-overlapping vs used_ranges_a=[(0,20)] (30-50 vs 0-20).
+        # clip_b overlaps vs used_ranges_b=[(50,70)] (60-80 vs 50-70).
         json.dumps({
             "grounded": True, "thesis": "t2", "bridge": "b2",
-            "clip_a": {"start_time": 40.0, "end_time": 60.0},
-            "clip_b": {"start_time": 10.0, "end_time": 30.0},
+            "clip_a": {"start_time": 30.0, "end_time": 50.0},
+            "clip_b": {"start_time": 60.0, "end_time": 80.0},
         }),
     ]
 
