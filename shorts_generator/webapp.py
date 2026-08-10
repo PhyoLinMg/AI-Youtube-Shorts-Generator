@@ -30,8 +30,8 @@ class Job:
     url: str = ""
     clip_type: str = "shorts"  # "shorts" | "thread"
     progress_log: Optional[str] = None
-    # For clip_type="thread" this holds the thread's own output/_Threads/<slug>
-    # dir (see resolve_thread_output_dir), reused as the download route's
+    # For clip_type="thread" this holds the thread run's own output/_Threads/<slug>
+    # dir (see resolve_thread_run_dir), reused as the download route's
     # serve-from directory -- but _run_name_from_shorts_dir must not be
     # applied to it (there's no per-episode run name for a thread; see /status).
     shorts_dir: Optional[str] = None

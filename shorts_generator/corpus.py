@@ -124,8 +124,8 @@ def list_corpus_run_dirs(base_dir: Optional[str] = None) -> List[str]:
 def build_corpus(base_dir: Optional[str] = None, llm_fn: Optional[LLMFn] = None) -> List[Dict]:
     """[{"run_dir", "title", "source_url", "abstract"}] for every eligible
     run, computing/reusing each abstract as needed. Does NOT load full
-    transcripts for the caller -- thread_builder.build_thread loads the
-    full transcript only for the two episodes actually picked."""
+    transcripts for the caller -- callers load the full transcript only for
+    the episodes actually needed (see pipeline.generate_threads)."""
     entries = []
     for run_dir in list_corpus_run_dirs(base_dir):
         try:
