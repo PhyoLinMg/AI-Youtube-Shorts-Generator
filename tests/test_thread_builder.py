@@ -123,165 +123,6 @@ def test_pick_thread_clips_prompt_has_no_avoid_block_when_none_given():
     assert "already-used" not in seen_prompts[0]
 
 
-def test_build_thread_returns_none_when_no_same_topic_pair(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        thread_builder, "build_corpus",
-        lambda base_dir=None, llm_fn=None: [
-            _corpus_entry(0, "Ep A", "unrelated topic one", "/tmp/a"),
-            _corpus_entry(1, "Ep B", "unrelated topic two", "/tmp/b"),
-        ],
-    )
-    llm_fn = lambda prompt: json.dumps({"no_match": True, "episode_a_index": None, "episode_b_index": None, "shared_question": ""})
-
-    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
-
-
-def test_build_thread_returns_none_when_corpus_has_fewer_than_two_episodes(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        thread_builder, "build_corpus",
-        lambda base_dir=None, llm_fn=None: [_corpus_entry(0, "Only Ep", "abstract", "/tmp/a")],
-    )
-    llm_fn = lambda prompt: pytest.fail("llm_fn should not be called for topic gate with < 2 episodes")
-
-    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
-
-
-def test_build_thread_returns_full_shape_on_qualifying_pair(tmp_path, monkeypatch):
-    run_dir_a = tmp_path / "a"
-    run_dir_b = tmp_path / "b"
-    run_dir_a.mkdir()
-    run_dir_b.mkdir()
-    transcript_a = {"duration": 100.0, "segments": [{"start": 0.0, "end": 30.0, "text": "hello from a"}]}
-    transcript_b = {"duration": 100.0, "segments": [{"start": 0.0, "end": 30.0, "text": "hello from b"}]}
-    (run_dir_a / "full_source.json").write_text(json.dumps(transcript_a))
-    (run_dir_b / "full_source.json").write_text(json.dumps(transcript_b))
-
-    monkeypatch.setattr(
-        thread_builder, "build_corpus",
-        lambda base_dir=None, llm_fn=None: [
-            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
-            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
-        ],
-    )
-
-    responses = [
-        json.dumps({
-            "no_match": False, "episode_a_index": 0, "episode_b_index": 1,
-            "shared_question": "Does remote work increase or decrease productivity?",
-        }),
-        json.dumps({
-            "grounded": True,
-            "thesis": "Two guests, one question.",
-            "bridge": "Here is the other side.",
-            "clip_a": {"start_time": 5.0, "end_time": 25.0},
-            "clip_b": {"start_time": 2.0, "end_time": 20.0},
-        }),
-    ]
-
-    def llm_fn(prompt):
-        return responses.pop(0)
-
-    result = thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn)
-
-    assert result == {
-        "shared_question": "Does remote work increase or decrease productivity?",
-        "thesis": "Two guests, one question.",
-        "bridge": "Here is the other side.",
-        "episode_a": {
-            "run_dir": str(run_dir_a), "title": "Ep A", "source_url": "https://example.com/0",
-            "start_time": 5.0, "end_time": 25.0,
-        },
-        "episode_b": {
-            "run_dir": str(run_dir_b), "title": "Ep B", "source_url": "https://example.com/1",
-            "start_time": 2.0, "end_time": 20.0,
-        },
-    }
-
-
-def _topic_gate_llm_response():
-    return json.dumps({
-        "no_match": False, "episode_a_index": 0, "episode_b_index": 1,
-        "shared_question": "Does remote work increase or decrease productivity?",
-    })
-
-
-def test_build_thread_returns_none_when_picked_run_dir_missing_full_source_json(tmp_path, monkeypatch):
-    run_dir_a = tmp_path / "a"
-    run_dir_b = tmp_path / "b"
-    run_dir_a.mkdir()
-    run_dir_b.mkdir()
-    # run_dir_a has no full_source.json at all -- the open() should fail
-    # and build_thread should refuse rather than raise.
-    (run_dir_b / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
-
-    monkeypatch.setattr(
-        thread_builder, "build_corpus",
-        lambda base_dir=None, llm_fn=None: [
-            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
-            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
-        ],
-    )
-    llm_fn = lambda prompt: _topic_gate_llm_response()
-
-    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
-
-
-def test_build_thread_returns_none_when_full_source_json_is_unparseable(tmp_path, monkeypatch):
-    run_dir_a = tmp_path / "a"
-    run_dir_b = tmp_path / "b"
-    run_dir_a.mkdir()
-    run_dir_b.mkdir()
-    (run_dir_a / "full_source.json").write_text("{not valid json")
-    (run_dir_b / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
-
-    monkeypatch.setattr(
-        thread_builder, "build_corpus",
-        lambda base_dir=None, llm_fn=None: [
-            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
-            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
-        ],
-    )
-    llm_fn = lambda prompt: _topic_gate_llm_response()
-
-    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
-
-
-def test_build_thread_returns_none_when_transcript_shape_is_malformed(tmp_path, monkeypatch):
-    run_dir_a = tmp_path / "a"
-    run_dir_b = tmp_path / "b"
-    run_dir_a.mkdir()
-    run_dir_b.mkdir()
-    # Valid JSON, but a segment missing "start"/"text" -- build_corpus never
-    # validates transcript shape, only that the file parses as JSON, so this
-    # sails through build_corpus and must be caught by build_thread itself.
-    (run_dir_a / "full_source.json").write_text(json.dumps({
-        "duration": 100.0,
-        "segments": [{"end": 10.0}],
-    }))
-    (run_dir_b / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
-
-    monkeypatch.setattr(
-        thread_builder, "build_corpus",
-        lambda base_dir=None, llm_fn=None: [
-            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
-            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
-        ],
-    )
-    responses = [
-        _topic_gate_llm_response(),
-        json.dumps({
-            "grounded": True, "thesis": "t", "bridge": "b",
-            "clip_a": {"start_time": 5.0, "end_time": 25.0},
-            "clip_b": {"start_time": 2.0, "end_time": 20.0},
-        }),
-    ]
-
-    def llm_fn(prompt):
-        return responses.pop(0)
-
-    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
-
-
 def test_find_same_topic_pairs_returns_up_to_num_pairs_questions():
     entry_a = _corpus_entry(0, "Ep A", "discusses remote work and also housing policy", "/tmp/a")
     entry_b = _corpus_entry(1, "Ep B", "discusses remote work and also housing policy", "/tmp/b")
@@ -337,31 +178,32 @@ def test_find_same_topic_pairs_returns_empty_list_when_num_pairs_less_than_one()
     assert thread_builder.find_same_topic_pairs(entry_a, entry_b, num_pairs=0, llm_fn=llm_fn) == []
 
 
-def test_build_thread_returns_none_when_transcript_duration_is_null(tmp_path, monkeypatch):
-    run_dir_a = tmp_path / "a"
-    run_dir_b = tmp_path / "b"
-    run_dir_a.mkdir()
-    run_dir_b.mkdir()
-    # "duration" key present but literally null -- transcript.get("duration",
-    # 0.0) returns None (not the default), which used to blow up the
-    # `if duration > 0:` comparison inside _sanitize_clip_span.
-    (run_dir_a / "full_source.json").write_text(json.dumps({
-        "duration": None,
-        "segments": [{"start": 0.0, "end": 30.0, "text": "hello"}],
-    }))
-    (run_dir_b / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+def _transcript(duration, texts_with_times):
+    segments = [{"start": s, "end": e, "text": t} for s, e, t in texts_with_times]
+    return {"duration": duration, "segments": segments}
 
-    monkeypatch.setattr(
-        thread_builder, "build_corpus",
-        lambda base_dir=None, llm_fn=None: [
-            _corpus_entry(0, "Ep A", "argues remote work increases productivity", str(run_dir_a)),
-            _corpus_entry(1, "Ep B", "argues remote work decreases productivity", str(run_dir_b)),
-        ],
-    )
+
+def test_select_thread_pairs_returns_empty_list_when_no_shared_questions():
+    entry_a = _corpus_entry(0, "Ep A", "unrelated topic one", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "unrelated topic two", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({"shared_questions": []})
+
+    result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=2, llm_fn=llm_fn)
+
+    assert result == []
+
+
+def test_select_thread_pairs_returns_one_grounded_pair():
+    entry_a = _corpus_entry(0, "Ep A", "argues remote work increases productivity", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "argues remote work decreases productivity", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
     responses = [
-        _topic_gate_llm_response(),
+        json.dumps({"shared_questions": ["Does remote work increase or decrease productivity?"]}),
         json.dumps({
-            "grounded": True, "thesis": "t", "bridge": "b",
+            "grounded": True, "thesis": "Two guests, one question.", "bridge": "Here is the other side.",
             "clip_a": {"start_time": 5.0, "end_time": 25.0},
             "clip_b": {"start_time": 2.0, "end_time": 20.0},
         }),
@@ -370,4 +212,130 @@ def test_build_thread_returns_none_when_transcript_duration_is_null(tmp_path, mo
     def llm_fn(prompt):
         return responses.pop(0)
 
-    assert thread_builder.build_thread(base_dir=str(tmp_path), llm_fn=llm_fn) is None
+    result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=1, llm_fn=llm_fn)
+
+    assert result == [{
+        "shared_question": "Does remote work increase or decrease productivity?",
+        "thesis": "Two guests, one question.",
+        "bridge": "Here is the other side.",
+        "episode_a": {"run_dir": "/tmp/a", "title": "Ep A", "source_url": "https://example.com/0", "start_time": 5.0, "end_time": 25.0},
+        "episode_b": {"run_dir": "/tmp/b", "title": "Ep B", "source_url": "https://example.com/1", "start_time": 2.0, "end_time": 20.0},
+    }]
+
+
+def test_select_thread_pairs_returns_multiple_grounded_pairs_for_multiple_questions():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+    responses = [
+        json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
+        json.dumps({
+            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "clip_a": {"start_time": 0.0, "end_time": 20.0},
+            "clip_b": {"start_time": 0.0, "end_time": 20.0},
+        }),
+        json.dumps({
+            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "clip_a": {"start_time": 40.0, "end_time": 60.0},
+            "clip_b": {"start_time": 40.0, "end_time": 60.0},
+        }),
+    ]
+
+    def llm_fn(prompt):
+        return responses.pop(0)
+
+    result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=2, llm_fn=llm_fn)
+
+    assert [r["shared_question"] for r in result] == ["Question one?", "Question two?"]
+
+
+def test_select_thread_pairs_discards_pair_whose_span_overlaps_an_earlier_pick():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+    responses = [
+        json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
+        json.dumps({
+            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "clip_a": {"start_time": 0.0, "end_time": 20.0},
+            "clip_b": {"start_time": 0.0, "end_time": 20.0},
+        }),
+        # Question two's clip_a overlaps question one's accepted clip_a (0-20 vs 10-30) -- must be discarded.
+        json.dumps({
+            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "clip_a": {"start_time": 10.0, "end_time": 30.0},
+            "clip_b": {"start_time": 40.0, "end_time": 60.0},
+        }),
+    ]
+
+    def llm_fn(prompt):
+        return responses.pop(0)
+
+    result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=2, llm_fn=llm_fn)
+
+    assert len(result) == 1
+    assert result[0]["shared_question"] == "Question one?"
+
+
+def test_select_thread_pairs_skips_ungroundable_question_and_continues():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+    responses = [
+        json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
+        json.dumps({"grounded": False, "thesis": "", "bridge": "", "clip_a": {}, "clip_b": {}}),
+        json.dumps({
+            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "clip_a": {"start_time": 0.0, "end_time": 20.0},
+            "clip_b": {"start_time": 0.0, "end_time": 20.0},
+        }),
+    ]
+
+    def llm_fn(prompt):
+        return responses.pop(0)
+
+    result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=2, llm_fn=llm_fn)
+
+    assert len(result) == 1
+    assert result[0]["shared_question"] == "Question two?"
+
+
+def test_select_thread_pairs_stops_once_num_clips_reached():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+    responses = [
+        json.dumps({"shared_questions": ["Question one?", "Question two?", "Question three?"]}),
+        json.dumps({
+            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "clip_a": {"start_time": 0.0, "end_time": 20.0}, "clip_b": {"start_time": 0.0, "end_time": 20.0},
+        }),
+    ]
+
+    def llm_fn(prompt):
+        if not responses:
+            pytest.fail("select_thread_pairs must stop calling pick_thread_clips once num_clips is reached")
+        return responses.pop(0)
+
+    result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=1, llm_fn=llm_fn)
+
+    assert len(result) == 1
+
+
+def test_select_thread_pairs_tolerates_malformed_transcript_segment_shape():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    # Segment missing "text"/"start" -- build_transcript_text (called inside
+    # pick_thread_clips) will raise; select_thread_pairs must catch that per
+    # question and return whatever it has ([] here), not propagate.
+    transcript_a = {"duration": 100.0, "segments": [{"end": 10.0}]}
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+    llm_fn = lambda prompt: json.dumps({"shared_questions": ["Question one?"]})
+
+    result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=1, llm_fn=llm_fn)
+
+    assert result == []

@@ -1,14 +1,15 @@
-"""Two-stage picker for thread compilation: first a hard same-topic gate
-across the whole local corpus (refuses outright if no pair shares a genuine
-question -- see docs/superpowers/specs/2026-08-09-thread-compilation-design.md),
-then, only for a qualifying pair, exact clip spans + narration text grounded
-in the two chosen full transcripts.
+"""Two-stage picker for thread compilation: first a multi-question same-topic
+gate over a FIXED pair of episodes (see docs/superpowers/specs/2026-08-09-
+thread-compilation-design.md for the hard same-topic requirement, and
+2026-08-10-thread-two-url-multi-clip-design.md for why the pair is fixed by
+the caller instead of scanned from the whole corpus), then, for each
+qualifying shared question, exact clip spans + narration text grounded in
+the two chosen full transcripts.
 """
 import json
 import math
 from typing import Dict, List, Optional, Tuple
 
-from .corpus import build_corpus
 from .highlights import LLMFn, _parse_json_loose, build_transcript_text, call_muapi_llm
 
 SAME_TOPIC_SYSTEM_PROMPT = """You are a strict fact-checker deciding whether two podcast episodes can be combined into a single short video built around ONE shared question.
@@ -160,23 +161,6 @@ def _sanitize_clip_pick(raw: object, duration_a: float, duration_b: float) -> Op
     return {"thesis": thesis, "bridge": bridge, "clip_a": clip_a, "clip_b": clip_b}
 
 
-def find_same_topic_pair(corpus: List[Dict], llm_fn: LLMFn) -> Optional[Dict]:
-    """Stage A. Returns None -- the expected, correct result whenever no
-    pair shares a genuine question -- or {"episode_a_index",
-    "episode_b_index", "shared_question"} for a qualifying pair."""
-    if len(corpus) < 2:
-        return None
-    abstracts_block = "\n".join(
-        f"{i}. {entry['title']}: {entry['abstract']}" for i, entry in enumerate(corpus)
-    )
-    prompt = SAME_TOPIC_SYSTEM_PROMPT.format(abstracts_block=abstracts_block)
-    try:
-        parsed = _parse_json_loose(llm_fn(prompt))
-    except Exception:
-        return None
-    return _sanitize_topic_pick(parsed, corpus_len=len(corpus))
-
-
 def find_same_topic_pairs(entry_a: Dict, entry_b: Dict, num_pairs: int, llm_fn: LLMFn) -> List[str]:
     """Stage A, fixed-pair variant (see select_thread_pairs). Given exactly
     two corpus entries (each needing "abstract"), returns up to num_pairs
@@ -241,60 +225,70 @@ def pick_thread_clips(
     )
 
 
-def build_thread(base_dir: Optional[str] = None, llm_fn: Optional[LLMFn] = None) -> Optional[Dict]:
-    """Full stage A + B pipeline. Returns None whenever the corpus doesn't
-    support a genuine same-topic pairing today -- this is success (nothing
-    to build), not a failure to retry or work around."""
-    llm_fn = llm_fn or call_muapi_llm
-    corpus = build_corpus(base_dir=base_dir, llm_fn=llm_fn)
+def _overlaps_any(span: Tuple[float, float], ranges: List[Tuple[float, float]]) -> bool:
+    start, end = span
+    return any(start < r_end and end > r_start for r_start, r_end in ranges)
 
-    pick = find_same_topic_pair(corpus, llm_fn)
-    if pick is None:
-        print("[thread_builder] no same-topic pair found in corpus -- refusing to build a thread", flush=True)
-        return None
 
-    entry_a = corpus[pick["episode_a_index"]]
-    entry_b = corpus[pick["episode_b_index"]]
-    try:
-        with open(f"{entry_a['run_dir']}/full_source.json", "r", encoding="utf-8") as f:
-            transcript_a = json.load(f)
-        with open(f"{entry_b['run_dir']}/full_source.json", "r", encoding="utf-8") as f:
-            transcript_b = json.load(f)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        print(f"[thread_builder] failed to load full transcript for picked pair: {e} -- refusing to build a thread", flush=True)
-        return None
+def select_thread_pairs(
+    entry_a: Dict, entry_b: Dict, transcript_a: Dict, transcript_b: Dict,
+    num_clips: int, llm_fn: LLMFn,
+) -> List[Dict]:
+    """Multi-pair picker for a FIXED pair of episodes (see
+    pipeline.generate_threads, which ingests entry_a/entry_b and their
+    transcripts up front). entry_a/entry_b need "run_dir", "title",
+    "source_url", "abstract"; transcript_a/transcript_b are the full
+    {duration, segments} shape.
 
-    # build_corpus only validates that full_source.json parses as JSON, not
-    # that it has the {duration, segments: [{start, end, text}, ...]} shape
-    # pick_thread_clips/build_transcript_text assume -- a present-but-null
-    # "duration" or a segment missing "start"/"text" is valid JSON but
-    # malformed shape, and would otherwise raise (TypeError/KeyError/
-    # AttributeError) past this point instead of refusing like every other
-    # "corpus doesn't support a pairing" case in this module.
-    try:
-        clips = pick_thread_clips(
-            {**entry_a, "transcript": transcript_a},
-            {**entry_b, "transcript": transcript_b},
-            pick["shared_question"],
-            llm_fn,
-        )
-    except Exception as e:
-        print(f"[thread_builder] malformed transcript shape for picked pair: {e} -- refusing to build a thread", flush=True)
-        return None
-    if clips is None:
-        print("[thread_builder] no groundable clip pair for the shared question -- refusing to build a thread", flush=True)
-        return None
+    Returns up to num_clips grounded, non-overlapping thread dicts, each
+    shaped like {"shared_question", "thesis", "bridge", "episode_a",
+    "episode_b"} where episode_a/b carry run_dir/title/source_url plus the
+    picked start_time/end_time. Returns [] rather than raising whenever
+    fewer than num_clips (including zero) are groundable -- refuse rather
+    than force, same philosophy as the old whole-corpus build_thread."""
+    if num_clips < 1:
+        return []
 
-    return {
-        "shared_question": pick["shared_question"],
-        "thesis": clips["thesis"],
-        "bridge": clips["bridge"],
-        "episode_a": {
-            "run_dir": entry_a["run_dir"], "title": entry_a["title"], "source_url": entry_a["source_url"],
-            **clips["clip_a"],
-        },
-        "episode_b": {
-            "run_dir": entry_b["run_dir"], "title": entry_b["title"], "source_url": entry_b["source_url"],
-            **clips["clip_b"],
-        },
-    }
+    shared_questions = find_same_topic_pairs(entry_a, entry_b, num_clips, llm_fn)
+    if not shared_questions:
+        print("[thread_builder] no same-topic questions found between the two episodes -- refusing to build a thread", flush=True)
+        return []
+
+    results: List[Dict] = []
+    used_ranges_a: List[Tuple[float, float]] = []
+    used_ranges_b: List[Tuple[float, float]] = []
+
+    for shared_question in shared_questions:
+        if len(results) >= num_clips:
+            break
+        try:
+            clips = pick_thread_clips(
+                {**entry_a, "transcript": transcript_a},
+                {**entry_b, "transcript": transcript_b},
+                shared_question, llm_fn,
+                avoid_ranges_a=used_ranges_a, avoid_ranges_b=used_ranges_b,
+            )
+        except Exception as e:
+            print(f"[thread_builder] skipping {shared_question!r}: {e}", flush=True)
+            continue
+        if clips is None:
+            print(f"[thread_builder] no groundable clip pair for {shared_question!r} -- skipping", flush=True)
+            continue
+
+        span_a = (clips["clip_a"]["start_time"], clips["clip_a"]["end_time"])
+        span_b = (clips["clip_b"]["start_time"], clips["clip_b"]["end_time"])
+        if _overlaps_any(span_a, used_ranges_a) or _overlaps_any(span_b, used_ranges_b):
+            print(f"[thread_builder] discarding {shared_question!r}: span reused from an earlier pick", flush=True)
+            continue
+
+        used_ranges_a.append(span_a)
+        used_ranges_b.append(span_b)
+        results.append({
+            "shared_question": shared_question,
+            "thesis": clips["thesis"],
+            "bridge": clips["bridge"],
+            "episode_a": {"run_dir": entry_a["run_dir"], "title": entry_a["title"], "source_url": entry_a["source_url"], **clips["clip_a"]},
+            "episode_b": {"run_dir": entry_b["run_dir"], "title": entry_b["title"], "source_url": entry_b["source_url"], **clips["clip_b"]},
+        })
+
+    return results
