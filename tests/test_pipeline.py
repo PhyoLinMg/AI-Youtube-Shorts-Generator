@@ -426,6 +426,7 @@ def test_generate_shorts_uses_provided_paths_without_resolving(tmp_path, monkeyp
     monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
     monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
     monkeypatch.setattr(local_clipper_module, "crop_highlights_local", Mock(return_value=[]))
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: None)
 
     result = pipeline_module.generate_shorts(
         "https://youtube.example/x",
@@ -447,11 +448,120 @@ def test_generate_shorts_persists_source_url(tmp_path, monkeypatch):
     monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
     monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
     monkeypatch.setattr(local_clipper_module, "crop_highlights_local", lambda *a, **k: [{"clip_url": "/tmp/out/Short-01.mp4"}])
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: None)
 
     pipeline_module.generate_shorts("https://www.youtube.com/watch?v=xyz", mode="local", num_clips=1)
 
     with open(paths.source_url_txt) as f:
         assert f.read().strip() == "https://www.youtube.com/watch?v=xyz"
+
+
+def test_generate_shorts_caches_topic_abstract_for_local_mode(tmp_path, monkeypatch):
+    # Eager abstract caching lets a future topic search skip a fresh LLM
+    # call for every episode already processed -- see corpus.py.
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(pipeline_module, "resolve_output_dir", lambda url: paths)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(local_clipper_module, "crop_highlights_local", lambda *a, **k: [])
+
+    calls = []
+    monkeypatch.setattr(
+        pipeline_module, "get_abstract_cached",
+        lambda run_dir, transcript, llm_fn=None: calls.append((run_dir, transcript, llm_fn)),
+    )
+
+    pipeline_module.generate_shorts("https://www.youtube.com/watch?v=xyz", mode="local", num_clips=1)
+
+    from shorts_generator.local.llm import call_local_llm
+    assert calls == [(paths.root, _fake_transcript(), call_local_llm)]
+
+
+def test_generate_shorts_caches_topic_abstract_for_api_mode(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    with open(paths.source_video, "wb") as f:
+        f.write(b"cached mp4")
+    monkeypatch.setattr(pipeline_module, "resolve_output_dir", lambda url: paths)
+    monkeypatch.setattr(pipeline_module, "download_youtube", lambda url, fmt: "https://hosted.example/source.mp4")
+    monkeypatch.setattr(pipeline_module, "transcribe", lambda url, language=None: _fake_transcript())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(pipeline_module, "crop_highlights", Mock(return_value=[]))
+
+    calls = []
+    monkeypatch.setattr(
+        pipeline_module, "get_abstract_cached",
+        lambda run_dir, transcript, llm_fn=None: calls.append((run_dir, transcript, llm_fn)),
+    )
+
+    pipeline_module.generate_shorts("https://www.youtube.com/watch?v=xyz", mode="api", num_clips=1)
+
+    assert calls == [(paths.root, _fake_transcript(), pipeline_module.call_muapi_llm)]
+
+
+def test_generate_shorts_does_not_abort_when_abstract_caching_fails(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(pipeline_module, "resolve_output_dir", lambda url: paths)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(local_clipper_module, "crop_highlights_local", lambda *a, **k: [{"clip_url": "/tmp/out/Short-01.mp4"}])
+
+    def _raise(*a, **k):
+        raise RuntimeError("LLM unavailable")
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", _raise)
+
+    result = pipeline_module.generate_shorts("https://www.youtube.com/watch?v=xyz", mode="local", num_clips=1)
+
+    assert result["shorts"] == [{"clip_url": "/tmp/out/Short-01.mp4"}]
+
+
+def test_generate_shorts_writes_a_reusable_abstract_cache_file(tmp_path, monkeypatch):
+    # End-to-end check that _cache_topic_abstract's call actually lands a
+    # corpus_abstract.json at the path corpus.list_corpus_run_dirs/
+    # build_corpus read from -- the earlier tests all stub get_abstract_cached
+    # out entirely, so none of them prove a file reaches disk.
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(pipeline_module, "resolve_output_dir", lambda url: paths)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(pipeline_module, "get_highlights_cached", lambda transcript, num_clips, cache_path, llm_fn: _fake_highlights_result())
+    monkeypatch.setattr(local_clipper_module, "crop_highlights_local", lambda *a, **k: [])
+
+    import shorts_generator.local.llm as local_llm_module
+    llm_calls = []
+
+    def _stub_llm(prompt):
+        llm_calls.append(prompt)
+        return "a topical abstract"
+
+    monkeypatch.setattr(local_llm_module, "call_local_llm", _stub_llm)
+
+    pipeline_module.generate_shorts("https://www.youtube.com/watch?v=xyz", mode="local", num_clips=1)
+
+    abstract_cache_path = os.path.join(paths.root, "corpus_abstract.json")
+    assert os.path.isfile(abstract_cache_path)
+    assert len(llm_calls) == 1
+
+    # A transcript loaded fresh from full_source.json (as build_corpus does)
+    # must fingerprint identically to the in-memory one _cache_topic_abstract
+    # was given, or the eager cache is never actually hit later. transcribe_local
+    # is stubbed above (it doesn't write the real cache file in this test), so
+    # round-trip the transcript through JSON directly rather than relying on a
+    # file the pipeline never wrote.
+    reloaded_transcript = json.loads(json.dumps(_fake_transcript()))
+    from shorts_generator.corpus import get_abstract_cached
+    get_abstract_cached(paths.root, reloaded_transcript, llm_fn=_stub_llm)
+    assert len(llm_calls) == 1  # cache hit -- no second LLM call
 
 
 def test_run_api_recovers_from_corrupted_transcript_cache(tmp_path, monkeypatch):
@@ -809,6 +919,7 @@ def test_generate_chapters_writes_chapter_descriptions_and_result_json(tmp_path,
         local_clipper_module, "crop_chapters_local",
         Mock(return_value=[{"start_time": 0.0, "end_time": 300.0, "title": "Chapter", "summary": "s", "clip_url": os.path.join(paths.chapters_dir, "01_Chapter.mp4")}]),
     )
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: None)
 
     result = pipeline_module.generate_chapters("https://youtube.example/x", paths=paths)
 
@@ -816,6 +927,56 @@ def test_generate_chapters_writes_chapter_descriptions_and_result_json(tmp_path,
     assert os.path.exists(os.path.join(paths.chapters_dir, "chapters_description.txt"))
     assert os.path.exists(paths.chapters_result_json)
     assert os.path.exists(paths.progress_log)
+
+
+def test_generate_chapters_caches_topic_abstract(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_chapters_cached",
+        lambda transcript, num_chapters, cache_path, llm_fn: _fake_chapters_result(),
+    )
+    monkeypatch.setattr(local_clipper_module, "crop_chapters_local", Mock(return_value=[]))
+
+    calls = []
+    monkeypatch.setattr(
+        pipeline_module, "get_abstract_cached",
+        lambda run_dir, transcript, llm_fn=None: calls.append((run_dir, transcript, llm_fn)),
+    )
+
+    pipeline_module.generate_chapters("https://youtube.example/x", paths=paths)
+
+    from shorts_generator.local.llm import call_local_llm
+    assert calls == [(paths.root, _fake_transcript(), call_local_llm)]
+
+
+def test_generate_chapters_does_not_abort_when_abstract_caching_fails(tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt: "/tmp/source.mp4",
+    )
+    monkeypatch.setattr(local_transcriber_module, "transcribe_local", lambda path, language=None: _fake_transcript())
+    monkeypatch.setattr(
+        pipeline_module, "get_chapters_cached",
+        lambda transcript, num_chapters, cache_path, llm_fn: _fake_chapters_result(),
+    )
+    monkeypatch.setattr(
+        local_clipper_module, "crop_chapters_local",
+        Mock(return_value=[{"start_time": 0.0, "end_time": 300.0, "title": "Chapter", "summary": "s", "clip_url": os.path.join(paths.chapters_dir, "01_Chapter.mp4")}]),
+    )
+
+    def _raise(*a, **k):
+        raise RuntimeError("LLM unavailable")
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", _raise)
+
+    result = pipeline_module.generate_chapters("https://youtube.example/x", paths=paths)
+
+    assert len(result["chapters"]) == 1
 
 
 def test_generate_chapters_does_not_clobber_a_prior_generate_shorts_result(tmp_path, monkeypatch):
@@ -841,6 +1002,7 @@ def test_generate_chapters_does_not_clobber_a_prior_generate_shorts_result(tmp_p
         local_clipper_module, "crop_chapters_local",
         Mock(return_value=[{"start_time": 0.0, "end_time": 300.0, "title": "Chapter", "summary": "s", "clip_url": os.path.join(paths.chapters_dir, "01_Chapter.mp4")}]),
     )
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: None)
 
     pipeline_module.generate_chapters("https://youtube.example/x", paths=paths)
 

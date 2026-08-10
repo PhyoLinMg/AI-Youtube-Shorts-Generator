@@ -284,6 +284,21 @@ def _run_api(
     }
 
 
+def _cache_topic_abstract(run_dir: str, transcript: Dict, llm_fn) -> None:
+    """Best-effort: pre-compute this episode's corpus-search abstract right
+    after its transcript is ready (see corpus.get_abstract_cached), so a
+    later cross-episode topic search never pays a fresh LLM call for an
+    episode that's already been processed. Never aborts the run -- same
+    log-and-continue pattern as score_visual_hooks in _run_api. llm_fn only
+    matters on a cache miss (get_abstract_cached checks the cache first), so
+    api-mode and local-mode runs can end up with abstracts from different
+    providers across the corpus -- expected, not a bug."""
+    try:
+        get_abstract_cached(run_dir, transcript, llm_fn=llm_fn)
+    except Exception as e:
+        print(f"[pipeline] topic-abstract caching skipped: {e}", flush=True)
+
+
 def generate_shorts(
     youtube_url: str,
     num_clips: int = 3,
@@ -374,6 +389,12 @@ def generate_shorts(
                 filename_style=filename_style,
             )
 
+        if mode == "local":
+            from .local.llm import call_local_llm
+            _cache_topic_abstract(paths.root, result["transcript"], call_local_llm)
+        else:
+            _cache_topic_abstract(paths.root, result["transcript"], call_muapi_llm)
+
         write_descriptions(paths.shorts_dir, result["shorts"])
 
         with open(paths.result_json, "w", encoding="utf-8") as f:
@@ -426,6 +447,9 @@ def generate_chapters(
             youtube_url, num_chapters, download_format, language, captions, caption_fade_duration,
             paths, word_highlight=word_highlight,
         )
+
+        from .local.llm import call_local_llm
+        _cache_topic_abstract(paths.root, result["transcript"], call_local_llm)
 
         write_chapter_descriptions(paths.chapters_dir, result["chapters"])
 
