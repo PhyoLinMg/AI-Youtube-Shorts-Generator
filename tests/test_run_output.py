@@ -22,6 +22,20 @@ def test_sanitize_title_truncates_long_titles():
     assert len(result) == 100
 
 
+def test_short_slug_lowercases_hyphenates_and_truncates():
+    result = run_output.short_slug("Godfather of AI: We Have 2 Years Before Everything Changes!")
+    assert result == "godfather-of-ai-we-have-2"
+
+
+def test_short_slug_strips_unsafe_characters():
+    assert run_output.short_slug("A/B: Test?!") == "a-b-test"
+
+
+def test_short_slug_empty_input_falls_back_to_untitled():
+    assert run_output.short_slug("") == "untitled"
+    assert run_output.short_slug("???") == "untitled"
+
+
 def test_unique_short_filename_slugifies_title():
     used = set()
     assert run_output.unique_short_filename("My Great Clip", used) == "My_Great_Clip.mp4"

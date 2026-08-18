@@ -24,6 +24,7 @@ from .config import LOCAL_OUTPUT_DIR, SHORT_FILENAME_STYLE
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9 _-]")
 _WHITESPACE = re.compile(r"\s+")
 _UNDERSCORE_RUNS = re.compile(r"_+")
+_SHORT_SLUG_UNSAFE = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass
@@ -49,6 +50,16 @@ def sanitize_title(title: str, max_length: int = 100) -> str:
     cleaned = cleaned.strip("_-")
     cleaned = cleaned[:max_length].strip("_-")
     return cleaned or "untitled"
+
+
+def short_slug(title: str, max_length: int = 25) -> str:
+    """Aggressive, eyeball-friendly slug for thread folder names -- distinct
+    from sanitize_title() above, which stays spaced-and-capitalized for
+    single-episode output/<Title>/ folders and isn't changing."""
+    lowered = (title or "").lower()
+    slug = _SHORT_SLUG_UNSAFE.sub("-", lowered).strip("-")
+    slug = slug[:max_length].strip("-")
+    return slug or "untitled"
 
 
 def unique_short_filename(
