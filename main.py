@@ -238,6 +238,8 @@ def main() -> int:
         print(f"Threads built:   {len(result)} (requested {args.num_clips})")
         for i, t in enumerate(result, 1):
             print(f"\n#{i}  {t.get('shared_question')}")
+            print(f"     title:   {t.get('title')}")
+            print(f"     desc:    {t.get('description')}")
             print(f"     thesis:  {t.get('thesis')}")
             print(f"     bridge:  {t.get('bridge')}")
             ea, eb = t["episode_a"], t["episode_b"]

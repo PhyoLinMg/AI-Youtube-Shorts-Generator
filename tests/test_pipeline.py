@@ -1068,6 +1068,10 @@ def test_generate_threads_assembles_and_writes_results_for_each_pair(tmp_path, m
         },
     ]
     monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: fake_pairs)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt="720": open(target_path, "wb").write(b"full source") or target_path,
+    )
     monkeypatch.setattr(pipeline_module, "acquire_clip", lambda run_dir, source_url, cached_duration, start_time, end_time, out_path: open(out_path, "wb").write(b"clip") or {"clip_path": out_path})
     monkeypatch.setattr(pipeline_module, "synthesize_narration", lambda text, out_path, **k: open(out_path, "wb").write(b"audio") or out_path)
     monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
@@ -1113,6 +1117,10 @@ def test_generate_threads_calls_on_output_dir_before_the_slow_work(tmp_path, mon
         "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
     }]
     monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: fake_pairs)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt="720": open(target_path, "wb").write(b"full source") or target_path,
+    )
 
     calls = []
 
@@ -1130,3 +1138,97 @@ def test_generate_threads_calls_on_output_dir_before_the_slow_work(tmp_path, mon
 
     assert calls == [result[0]["output_dir"]]
     assert os.path.isfile(os.path.join(result[0]["output_dir"], "progress.log"))
+
+
+def _setup_thread_run(tmp_path, monkeypatch, num_pairs=2):
+    episode_a_dir = tmp_path / "Episode_A"
+    episode_b_dir = tmp_path / "Episode_B"
+    episode_a_dir.mkdir()
+    episode_b_dir.mkdir()
+    (episode_a_dir / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+    (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
+
+    monkeypatch.setattr(pipeline_module, "ingest_captions", _fake_ingest_captions({
+        "https://example.com/a": {"run_dir": str(episode_a_dir), "title": "Episode A", "duration": 100.0, "segment_count": 0},
+        "https://example.com/b": {"run_dir": str(episode_b_dir), "title": "Episode B", "duration": 200.0, "segment_count": 0},
+    }))
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: "an abstract")
+
+    fake_pairs = [{
+        "shared_question": f"Question {i}?", "thesis": f"t{i}", "bridge": f"b{i}",
+        "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0 * i, "end_time": 10.0 * i + 5},
+        "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 10.0 * i, "end_time": 10.0 * i + 5},
+    } for i in range(1, num_pairs + 1)]
+    monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: fake_pairs)
+    monkeypatch.setattr(pipeline_module, "acquire_clip", lambda run_dir, source_url, cached_duration, start_time, end_time, out_path: open(out_path, "wb").write(b"clip") or {"clip_path": out_path})
+    monkeypatch.setattr(pipeline_module, "synthesize_narration", lambda text, out_path, **k: open(out_path, "wb").write(b"audio") or out_path)
+    monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
+    monkeypatch.setattr(pipeline_module, "assemble_thread", lambda segment_paths, out_path: open(out_path, "wb").write(b"final") or out_path)
+    return episode_a_dir, episode_b_dir
+
+
+def test_generate_threads_downloads_full_source_once_and_deletes_after_all_clips(tmp_path, monkeypatch):
+    episode_a_dir, episode_b_dir = _setup_thread_run(tmp_path, monkeypatch, num_pairs=2)
+
+    download_calls = []
+
+    def _fake_download(url, target_path, fmt="720"):
+        download_calls.append((url, target_path))
+        open(target_path, "wb").write(b"full source")
+        return target_path
+
+    monkeypatch.setattr(local_downloader_module, "download_youtube_local", _fake_download)
+
+    pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=2, base_dir=str(tmp_path))
+
+    # One download per episode, not one per clip, even though num_clips=2.
+    assert len(download_calls) == 2
+    assert {c[0] for c in download_calls} == {"https://example.com/a", "https://example.com/b"}
+
+    # Downloaded once all clips are cut and assembled, the full videos are
+    # removed rather than left on disk.
+    assert not os.path.exists(episode_a_dir / "full_source.mp4")
+    assert not os.path.exists(episode_b_dir / "full_source.mp4")
+
+
+def test_generate_threads_cleans_up_partial_download_when_one_episode_fails(tmp_path, monkeypatch):
+    """A downloads fine, B's download raises -- A's now-orphaned
+    full_source.mp4 must still be removed, not leaked, even though the
+    overall run fails."""
+    episode_a_dir, episode_b_dir = _setup_thread_run(tmp_path, monkeypatch, num_pairs=1)
+
+    def _fake_download(url, target_path, fmt="720"):
+        if "/b" in url:
+            raise RuntimeError("simulated network failure for B")
+        open(target_path, "wb").write(b"full source")
+        return target_path
+
+    monkeypatch.setattr(local_downloader_module, "download_youtube_local", _fake_download)
+
+    with pytest.raises(RuntimeError, match="simulated network failure for B"):
+        pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=1, base_dir=str(tmp_path))
+
+    assert not os.path.exists(episode_a_dir / "full_source.mp4")
+    assert not os.path.exists(episode_b_dir / "full_source.mp4")
+
+
+def test_generate_threads_does_not_download_or_delete_preexisting_full_source(tmp_path, monkeypatch):
+    episode_a_dir, episode_b_dir = _setup_thread_run(tmp_path, monkeypatch, num_pairs=1)
+    # Simulate a full_source.mp4 already on disk from a prior Shorts/chapters
+    # run on the same URL -- it should be reused, not re-downloaded, and
+    # must survive this thread run's cleanup since we didn't create it.
+    (episode_a_dir / "full_source.mp4").write_bytes(b"preexisting")
+    (episode_b_dir / "full_source.mp4").write_bytes(b"preexisting")
+
+    def _fail_if_called(url, target_path, fmt="720"):
+        raise AssertionError(f"download_youtube_local should not be called for {url!r}")
+
+    monkeypatch.setattr(local_downloader_module, "download_youtube_local", _fail_if_called)
+    # acquire_clip is patched by _setup_thread_run to always succeed
+    # regardless of whether full_source.mp4 exists, so this only exercises
+    # generate_threads' own download-then-cleanup bookkeeping.
+
+    pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=1, base_dir=str(tmp_path))
+
+    assert (episode_a_dir / "full_source.mp4").read_bytes() == b"preexisting"
+    assert (episode_b_dir / "full_source.mp4").read_bytes() == b"preexisting"

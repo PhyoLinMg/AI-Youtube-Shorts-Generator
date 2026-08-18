@@ -17,9 +17,16 @@ import tempfile
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional
 
+from .. import config
 from ..run_output import RunPaths, resolve_output_dir, write_source_url
 
 DEFAULT_SEGMENT_SECONDS = 12.0
+
+
+def _cookie_args() -> List[str]:
+    if not config.YT_DLP_COOKIES_FROM_BROWSER:
+        return []
+    return ["--cookies-from-browser", config.YT_DLP_COOKIES_FROM_BROWSER]
 
 
 def _fetch_duration(youtube_url: str) -> float:
@@ -29,7 +36,7 @@ def _fetch_duration(youtube_url: str) -> float:
     # itself does (outros, music), so the cues' own timestamps are not a
     # safe stand-in for this.
     result = subprocess.run(
-        ["yt-dlp", "--skip-download", "--print", "duration", youtube_url],
+        ["yt-dlp", *_cookie_args(), "--skip-download", "--print", "duration", youtube_url],
         capture_output=True, text=True, check=True,
     )
     stdout = result.stdout.strip()
@@ -46,7 +53,7 @@ def _fetch_srv1_captions(youtube_url: str, lang: str = "en") -> str:
         out_template = os.path.join(tmp_dir, "captions.%(ext)s")
         subprocess.run(
             [
-                "yt-dlp", "--skip-download", "--write-auto-sub",
+                "yt-dlp", *_cookie_args(), "--skip-download", "--write-auto-sub",
                 "--sub-lang", lang, "--sub-format", "srv1",
                 "-o", out_template, youtube_url,
             ],

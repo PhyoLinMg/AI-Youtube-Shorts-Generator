@@ -80,6 +80,43 @@ def test_chunk_segments_clips_and_shifts_straddling_segment():
     assert chunks[0]["words"][-1]["end"] == 2.0
 
 
+def test_chunk_segments_trims_overlap_between_source_segments():
+    # Real-world trigger: YouTube auto-captions (caption-only thread
+    # ingest, see caption_ingest.py) aren't always strictly sequential --
+    # two consecutive segments overlapping by a couple seconds otherwise
+    # produces two caption chunks both covering the same wall-clock
+    # window, rendering stacked/duplicated text on screen at once.
+    segments = [
+        {"start": 0.0, "end": 5.0, "text": "alpha beta gamma"},
+        {"start": 3.0, "end": 8.0, "text": "delta epsilon zeta"},
+    ]
+
+    chunks = _chunk_segments(segments, clip_start=0.0, clip_end=100.0, max_words=7)
+
+    assert len(chunks) == 2
+    assert chunks[0]["text"] == "alpha beta gamma"
+    assert chunks[0]["start"] == 0.0
+    assert chunks[0]["end"] == 3.0  # trimmed from 5.0 down to the next chunk's start
+    assert chunks[1]["text"] == "delta epsilon zeta"
+    assert chunks[1]["start"] == 3.0  # never shifted
+    assert chunks[1]["end"] == 8.0
+
+
+def test_chunk_segments_drops_chunk_fully_swallowed_by_overlap():
+    # If the overlap is severe enough that trimming would collapse the
+    # earlier chunk to zero/negative duration, drop it entirely rather than
+    # emit a Dialogue line with no visible window.
+    segments = [
+        {"start": 0.0, "end": 5.0, "text": "alpha beta gamma"},
+        {"start": 0.0, "end": 8.0, "text": "delta epsilon zeta"},
+    ]
+
+    chunks = _chunk_segments(segments, clip_start=0.0, clip_end=100.0, max_words=7)
+
+    assert len(chunks) == 1
+    assert chunks[0]["text"] == "delta epsilon zeta"
+
+
 def test_chunk_cut_segments_offsets_second_span_after_first():
     transcript_segments = [
         {"start": 0.0, "end": 2.0, "text": "alpha beta"},

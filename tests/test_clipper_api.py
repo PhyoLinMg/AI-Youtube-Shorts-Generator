@@ -498,3 +498,60 @@ def test_caption_failure_preserves_a_successful_hook_card(tmp_path, synthetic_cl
     assert os.path.exists(results[0]["clip_url"])
     assert results[0]["captions_error"] == "no overlapping transcript"
     assert "hook_card_error" not in results[0]
+
+
+def test_results_preserve_input_order_even_when_slowest_finishes_first(monkeypatch):
+    """crop_highlights fans out across a thread pool (see CROP_PARALLELISM),
+    but pipeline._trim_to_num_clips slices successes[:num_clips] assuming
+    that order matches highlight rank -- so results must come back in input
+    order regardless of which worker finishes first."""
+    import time
+
+    highlights = [
+        {"title": f"Clip {i}", "start_time": float(i), "end_time": float(i) + 3.0}
+        for i in range(4)
+    ]
+    # First highlight sleeps longest, so completion order is the reverse of
+    # input order -- a naive as_completed()-based collection would fail this.
+    delays = {0: 0.3, 1: 0.2, 2: 0.1, 3: 0.0}
+
+    def _slow_crop_clip(source_url, start_time, end_time, aspect_ratio="9:16"):
+        time.sleep(delays[int(start_time)])
+        return f"https://hosted.example/short_{int(start_time)}.mp4"
+
+    monkeypatch.setattr(clipper, "crop_clip", _slow_crop_clip)
+
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        highlights,
+        aspect_ratio="9:16",
+        captions=False,
+        hook_card=False,
+        end_card=False,
+    )
+
+    assert [r["title"] for r in results] == [h["title"] for h in highlights]
+
+
+def test_malformed_highlight_degrades_to_one_failed_entry(monkeypatch):
+    """A highlight missing start_time/end_time (e.g. malformed LLM JSON)
+    must fail just that entry, not raise out of the serial filename/plan
+    pre-pass and kill every other highlight in the batch."""
+    monkeypatch.setattr(clipper, "crop_clip", lambda *a, **k: "https://hosted.example/short.mp4")
+
+    highlights = [
+        {"title": "Broken"},  # no start_time/end_time at all
+        _highlight(),
+    ]
+    results = clipper.crop_highlights(
+        "https://source.example/video.mp4",
+        highlights,
+        captions=False,
+        hook_card=False,
+        end_card=False,
+    )
+
+    assert len(results) == 2
+    assert results[0]["clip_url"] is None
+    assert "error" in results[0]
+    assert results[1]["clip_url"] == "https://hosted.example/short.mp4"

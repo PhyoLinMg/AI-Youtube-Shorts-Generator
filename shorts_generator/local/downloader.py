@@ -10,6 +10,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 from typing import Optional
 
+from .. import config
+
 
 def _import_ytdlp():
     try:
@@ -94,6 +96,8 @@ def download_youtube_local(video_url: str, target_path: str, fmt: str = "720") -
         "no_warnings": True,
         "noprogress": True,
     }
+    if config.YT_DLP_COOKIES_FROM_BROWSER:
+        ydl_opts["cookiesfrombrowser"] = (config.YT_DLP_COOKIES_FROM_BROWSER,)
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(video_url, download=True)

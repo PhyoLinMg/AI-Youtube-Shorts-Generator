@@ -168,7 +168,11 @@ def test_ingest_captions_refetches_when_cached_segments_list_is_empty(tmp_path, 
 
 def test_fetch_duration_parses_yt_dlp_stdout(monkeypatch):
     def _fake_run(cmd, **kwargs):
-        assert cmd[:3] == ["yt-dlp", "--skip-download", "--print"]
+        # Cookie args (see config.YT_DLP_COOKIES_FROM_BROWSER) are inserted
+        # before --skip-download when configured, so check membership/order
+        # rather than a fixed prefix.
+        assert cmd[0] == "yt-dlp"
+        assert cmd[-4:] == ["--skip-download", "--print", "duration", "https://example.com/x"]
         return subprocess.CompletedProcess(cmd, 0, stdout="7250\n", stderr="")
 
     monkeypatch.setattr(caption_ingest_module.subprocess, "run", _fake_run)

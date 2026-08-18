@@ -15,15 +15,24 @@ nothing to do with the cached transcript's timestamps, and captions burned
 from that stale transcript looked plausible but described different audio
 entirely. A duration mismatch is fatal, never a warning to route around.
 """
-import json
 import os
 import subprocess
 import tempfile
+import time
 from typing import Dict, List
 
+from .. import config
 from ..captions import CaptionError, burn_captions
 from .clipper import crop_clip_local
 from .transcriber import transcribe_local
+
+# Signed googlevideo CDN URLs intermittently 403 (short-lived/IP-bound
+# tokens, edge throttling) independent of yt-dlp's own auth -- a fixed
+# retry count matches the pattern already used for muapi.py's transient
+# HTTP errors rather than surfacing a one-off network flake as a hard
+# pipeline failure.
+DOWNLOAD_SECTION_RETRIES = 3
+DOWNLOAD_SECTION_RETRY_DELAY_SECONDS = 3.0
 
 PAD_SECONDS = 3.0
 # Heuristic, not proof of content identity: two different uploads of the
@@ -39,9 +48,23 @@ class SourceMismatchError(RuntimeError):
     cached transcript's duration -- see module docstring."""
 
 
+def _cookie_args() -> List[str]:
+    if not config.YT_DLP_COOKIES_FROM_BROWSER:
+        return []
+    return ["--cookies-from-browser", config.YT_DLP_COOKIES_FROM_BROWSER]
+
+
+def _probe_local_duration(video_path: str) -> float:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", video_path],
+        capture_output=True, text=True, check=True,
+    )
+    return float(result.stdout.strip())
+
+
 def _probe_source_duration(source_url: str) -> float:
     result = subprocess.run(
-        ["yt-dlp", "--skip-download", "--print", "duration", source_url],
+        ["yt-dlp", *_cookie_args(), "--skip-download", "--print", "duration", source_url],
         capture_output=True, text=True, check=True,
     )
     stdout = result.stdout.strip()
@@ -57,23 +80,65 @@ def _probe_source_duration(source_url: str) -> float:
 def _download_padded_section(source_url: str, start_time: float, end_time: float, out_path: str) -> None:
     padded_start = max(0.0, start_time - PAD_SECONDS)
     padded_end = end_time + PAD_SECONDS
-    webm_path = out_path + ".webm"
+    download_stem = out_path + ".download"
+    downloaded_path = None
     try:
-        subprocess.run(
-            [
-                "yt-dlp",
-                "--download-sections", f"*{padded_start}-{padded_end}",
-                "-f", "bv*[height<=720]+ba/b[height<=720]",
-                "--force-keyframes-at-cuts",
-                "-o", webm_path,
-                source_url,
-            ],
-            check=True,
-        )
+        last_error = None
+        for attempt in range(1, DOWNLOAD_SECTION_RETRIES + 1):
+            try:
+                subprocess.run(
+                    [
+                        "yt-dlp",
+                        *_cookie_args(),
+                        "--download-sections", f"*{padded_start}-{padded_end}",
+                        "-f", "bv*[height<=720]+ba/b[height<=720]",
+                        "--force-keyframes-at-cuts",
+                        "-o", download_stem + ".%(ext)s",
+                        source_url,
+                    ],
+                    check=True, capture_output=True, text=True,
+                )
+                last_error = None
+                break
+            except subprocess.CalledProcessError as e:
+                last_error = e
+                if attempt < DOWNLOAD_SECTION_RETRIES:
+                    print(
+                        f"[thread_source] yt-dlp --download-sections attempt {attempt}/"
+                        f"{DOWNLOAD_SECTION_RETRIES} failed for {source_url!r}, retrying: "
+                        f"{e.stderr.strip().splitlines()[-1] if e.stderr else e}",
+                        flush=True,
+                    )
+                    time.sleep(DOWNLOAD_SECTION_RETRY_DELAY_SECONDS)
+        if last_error is not None:
+            # Bare CalledProcessError.__str__ omits stderr, so a failure here
+            # otherwise reaches progress.log as just "exit status 1" with no
+            # way to tell a YouTube bot-check/429 apart from a signed CDN URL
+            # 403 or any other cause -- surface the tail of yt-dlp's own stderr.
+            stderr_tail = (
+                "\n".join(last_error.stderr.strip().splitlines()[-15:])
+                if last_error.stderr else "(no stderr captured)"
+            )
+            raise RuntimeError(
+                f"yt-dlp --download-sections failed for {source_url!r} after "
+                f"{DOWNLOAD_SECTION_RETRIES} attempts: {stderr_tail}"
+            ) from last_error
+        # --force-keyframes-at-cuts re-encodes the cut via yt-dlp's own
+        # ffmpeg merge step, which can change the container (observed:
+        # source webm -> merged mkv) regardless of the outtmpl extension
+        # requested above -- so the actual output extension isn't known
+        # ahead of time and has to be discovered after the fact.
+        for ext in (".mkv", ".webm", ".mp4"):
+            candidate = download_stem + ext
+            if os.path.exists(candidate):
+                downloaded_path = candidate
+                break
+        if downloaded_path is None:
+            raise RuntimeError(f"yt-dlp did not produce an output file at {download_stem}.*")
         subprocess.run(
             [
                 "ffmpeg", "-y", "-loglevel", "error",
-                "-i", webm_path,
+                "-i", downloaded_path,
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                 "-c:a", "aac", "-b:a", "192k",
                 out_path,
@@ -84,8 +149,8 @@ def _download_padded_section(source_url: str, start_time: float, end_time: float
         # Self-sufficient cleanup: don't rely on the caller wrapping this in
         # a TemporaryDirectory. Runs whether the yt-dlp step, the ffmpeg
         # transcode step, or neither failed.
-        if os.path.exists(webm_path):
-            os.remove(webm_path)
+        if downloaded_path and os.path.exists(downloaded_path):
+            os.remove(downloaded_path)
 
 
 def _find_word_start(segments: List[Dict], min_time: float) -> float:
@@ -99,26 +164,17 @@ def _find_word_start(segments: List[Dict], min_time: float) -> float:
     return min_time
 
 
-def _crop_and_caption(
-    source_path: str,
+def _caption_in_place(
+    out_path: str,
     start_time: float,
     end_time: float,
-    aspect_ratio: str,
-    out_path: str,
     segments: List[Dict],
     log_label: str,
 ) -> Dict:
-    """Crop [start_time, end_time] out of source_path to out_path, then try
-    to burn captions onto it -- matching the established crop_highlights_local
-    / crop_chapters_local pattern (local/clipper.py): a caption failure is
-    logged and leaves the uncaptioned-but-valid clip in place at out_path
-    rather than raising, and any partial .captioned.mp4 is cleaned up. On
-    success the caption result is atomically swapped into out_path.
-    """
-    crop_clip_local(
-        source_path, start_time, end_time, aspect_ratio, out_path,
-        framing="locked", cut_segments=[{"start_time": start_time, "end_time": end_time}],
-    )
+    """Burn captions onto an already-cropped clip at out_path, in place --
+    a caption failure is logged and leaves the uncaptioned-but-valid clip in
+    place rather than raising, and any partial .captioned.mp4 is cleaned up.
+    On success the caption result is atomically swapped into out_path."""
     result = {"clip_path": out_path}
     captioned_path = out_path + ".captioned.mp4"
     try:
@@ -135,6 +191,40 @@ def _crop_and_caption(
     return result
 
 
+def _crop_and_caption_fresh(
+    source_path: str,
+    start_time: float,
+    end_time: float,
+    aspect_ratio: str,
+    out_path: str,
+    log_label: str,
+) -> Dict:
+    """Crop [start_time, end_time] out of source_path to out_path, then
+    caption it using a FRESH Whisper transcription of the cropped clip
+    itself -- real per-word timestamps, measured from the actual clip audio,
+    rather than whatever transcript the caller has cached.
+
+    This matters specifically for the full_source.mp4 fast path: thread-mode
+    episodes are ingested caption-only (YouTube auto-captions via
+    yt-dlp --write-auto-sub, see caption_ingest.py) to avoid downloading
+    full videos just to check topic overlap. YouTube's auto-captions only
+    give segment-level timing -- captions.py estimates each word's position
+    within a segment proportionally by character count, which can visibly
+    drift from where the word is actually spoken. Re-transcribing the short
+    (already-cut) clip fresh costs one small-model Whisper call, not a
+    second download, and gets the same real-word-timestamp accuracy the
+    re-download fallback path below has always had.
+    """
+    crop_clip_local(
+        source_path, start_time, end_time, aspect_ratio, out_path,
+        framing="locked", cut_segments=[{"start_time": start_time, "end_time": end_time}],
+    )
+    fresh_transcript = transcribe_local(out_path, model_size="small")
+    return _caption_in_place(
+        out_path, 0.0, fresh_transcript["duration"], fresh_transcript["segments"], log_label,
+    )
+
+
 def acquire_clip(
     run_dir: str,
     source_url: str,
@@ -146,18 +236,26 @@ def acquire_clip(
 ) -> Dict:
     """Cut, reframe, and caption one episode's clip for a thread.
 
-    Returns {"clip_path": out_path}. Raises SourceMismatchError if a
-    re-download's live source duration doesn't match cached_duration.
+    Returns {"clip_path": out_path}. Raises SourceMismatchError if the
+    source at full_source.mp4 (or a re-download) doesn't match
+    cached_duration -- see module docstring for why this check is fatal,
+    never a warning to route around, regardless of which path produced
+    the local file (pre-existing from a prior run, downloaded ahead of
+    the whole thread by the caller, or downloaded here as a fallback).
     """
     full_source = os.path.join(run_dir, "full_source.mp4")
-    full_transcript_path = os.path.join(run_dir, "full_source.json")
 
     if os.path.exists(full_source):
-        with open(full_transcript_path, "r", encoding="utf-8") as f:
-            transcript = json.load(f)
-        return _crop_and_caption(
-            full_source, start_time, end_time, aspect_ratio, out_path,
-            transcript["segments"], "full_source",
+        on_disk_duration = _probe_local_duration(full_source)
+        if abs(on_disk_duration - cached_duration) > DURATION_MISMATCH_TOLERANCE_SECONDS:
+            raise SourceMismatchError(
+                f"full_source.mp4 duration ({on_disk_duration:.1f}s) does not match cached "
+                f"transcript duration ({cached_duration:.1f}s) for {run_dir} -- "
+                "refusing to caption a possibly-wrong source. Confirm source_url.txt "
+                "points at the same upload that was originally transcribed."
+            )
+        return _crop_and_caption_fresh(
+            full_source, start_time, end_time, aspect_ratio, out_path, "full_source",
         )
 
     full_duration = _probe_source_duration(source_url)
@@ -178,7 +276,10 @@ def acquire_clip(
         relative_start = _find_word_start(fresh_transcript["segments"], start_time - padded_start)
         relative_end = min(end_time - padded_start, fresh_transcript["duration"])
 
-        return _crop_and_caption(
+        crop_clip_local(
             padded_path, relative_start, relative_end, aspect_ratio, out_path,
-            fresh_transcript["segments"], "re-acquired",
+            framing="locked", cut_segments=[{"start_time": relative_start, "end_time": relative_end}],
+        )
+        return _caption_in_place(
+            out_path, relative_start, relative_end, fresh_transcript["segments"], "re-acquired",
         )

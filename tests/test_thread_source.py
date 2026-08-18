@@ -46,6 +46,13 @@ def test_acquire_clip_cuts_directly_when_full_source_present(tmp_path, monkeypat
         thread_source_module, "burn_captions",
         lambda src, segs, start, end, out, **k: open(out, "wb").write(b"captioned"),
     )
+    monkeypatch.setattr(thread_source_module, "_probe_local_duration", lambda path: 100.0)
+    monkeypatch.setattr(
+        thread_source_module, "transcribe_local",
+        lambda path, model_size=None: {"duration": 7.0, "segments": [
+            {"start": 0.0, "end": 7.0, "text": "hello world", "words": [{"start": 0.0, "end": 1.0, "word": "hello"}]}
+        ]},
+    )
 
     def _fail(*a, **k):
         pytest.fail("network re-acquisition should not run when full_source.mp4 is present")
@@ -60,6 +67,29 @@ def test_acquire_clip_cuts_directly_when_full_source_present(tmp_path, monkeypat
 
     assert result == {"clip_path": out_path}
     assert calls["crop_args"][0][:3] == (str(run_dir / "full_source.mp4"), 1.0, 8.0)
+
+
+def test_acquire_clip_raises_on_duration_mismatch_when_full_source_present(tmp_path, monkeypatch):
+    """The fast path (full_source.mp4 already on disk, whether pre-existing
+    or downloaded ahead of time by a caller) must apply the same
+    duration-mismatch guard as the slow re-download path -- see the module
+    docstring's incident: a mismatched source must never be captioned."""
+    run_dir = tmp_path / "episode"
+    run_dir.mkdir()
+    (run_dir / "full_source.mp4").write_bytes(b"fake video bytes")
+    (run_dir / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+
+    monkeypatch.setattr(thread_source_module, "_probe_local_duration", lambda path: 250.0)
+
+    def _fail_if_called(*a, **k):
+        pytest.fail("cropping should not run on a duration mismatch")
+    monkeypatch.setattr(thread_source_module, "crop_clip_local", _fail_if_called)
+
+    with pytest.raises(SourceMismatchError):
+        acquire_clip(
+            str(run_dir), "https://example.com/video", cached_duration=100.0,
+            start_time=1.0, end_time=8.0, out_path=str(tmp_path / "clip.mp4"),
+        )
 
 
 def test_acquire_clip_raises_on_duration_mismatch_before_downloading(tmp_path, monkeypatch):
@@ -143,6 +173,13 @@ def test_acquire_clip_keeps_uncaptioned_clip_when_burn_captions_fails(tmp_path, 
 
     monkeypatch.setattr(thread_source_module, "crop_clip_local", _fake_crop)
     monkeypatch.setattr(thread_source_module, "burn_captions", _fail_captions)
+    monkeypatch.setattr(thread_source_module, "_probe_local_duration", lambda path: 100.0)
+    monkeypatch.setattr(
+        thread_source_module, "transcribe_local",
+        lambda path, model_size=None: {"duration": 7.0, "segments": [
+            {"start": 0.0, "end": 7.0, "text": "hello world", "words": [{"start": 0.0, "end": 1.0, "word": "hello"}]}
+        ]},
+    )
 
     result = acquire_clip(
         str(run_dir), "https://example.com/video", cached_duration=100.0,
@@ -188,14 +225,17 @@ def test_probe_source_duration_raises_clear_error_on_empty_output(monkeypatch):
 
 def test_download_padded_section_cleans_up_webm_when_ffmpeg_fails(tmp_path, monkeypatch):
     out_path = str(tmp_path / "padded.mp4")
-    webm_path = out_path + ".webm"
+    # yt-dlp's own re-encode (--force-keyframes-at-cuts) can land the
+    # download under any of a few extensions -- see thread_source.py's
+    # download_stem + {.mkv,.webm,.mp4} discovery loop.
+    downloaded_path = out_path + ".download.webm"
     calls = {"n": 0}
 
     def _fake_run(cmd, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            # simulate yt-dlp actually producing the intermediate .webm
-            with open(webm_path, "wb") as f:
+            # simulate yt-dlp actually producing the intermediate download
+            with open(downloaded_path, "wb") as f:
                 f.write(b"fake webm bytes")
             return subprocess.CompletedProcess(cmd, 0)
         raise subprocess.CalledProcessError(1, cmd)
@@ -207,4 +247,4 @@ def test_download_padded_section_cleans_up_webm_when_ffmpeg_fails(tmp_path, monk
             "https://example.com/video", 10.0, 20.0, out_path,
         )
 
-    assert not os.path.exists(webm_path)
+    assert not os.path.exists(downloaded_path)

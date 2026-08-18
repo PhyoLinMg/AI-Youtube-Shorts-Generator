@@ -301,6 +301,36 @@ def test_write_descriptions_falls_back_on_missing_fields(tmp_path):
     assert content == "short 01 - Untitled\nhook: 0  self-contained: no\n\n"
 
 
+def test_write_thread_descriptions_formats_one_block_per_clip(tmp_path):
+    threads = [
+        {"clip_url": "clip_1.mp4", "title": "Title One #Shorts", "description": "Watch clip one."},
+        {"clip_url": "clip_2.mp4", "title": "Title Two #Shorts", "description": "Watch clip two."},
+    ]
+    path = run_output.write_thread_descriptions(str(tmp_path), threads)
+    content = Path(path).read_text()
+    assert content == (
+        "clip 1 (clip_1.mp4)\nTitle: Title One #Shorts\nDescription: Watch clip one.\n\n"
+        "clip 2 (clip_2.mp4)\nTitle: Title Two #Shorts\nDescription: Watch clip two.\n"
+    )
+
+
+def test_write_thread_descriptions_skips_ungrounded_threads_without_renumbering(tmp_path):
+    threads = [
+        {"clip_url": None, "shared_question": "no clip made"},
+        {"clip_url": "clip_2.mp4", "title": "Title Two #Shorts", "description": "Watch clip two."},
+    ]
+    path = run_output.write_thread_descriptions(str(tmp_path), threads)
+    content = Path(path).read_text()
+    assert content == "clip 2 (clip_2.mp4)\nTitle: Title Two #Shorts\nDescription: Watch clip two.\n"
+
+
+def test_write_thread_descriptions_falls_back_to_shared_question(tmp_path):
+    threads = [{"clip_url": "clip_1.mp4", "shared_question": "Does X cause Y?", "description": "d"}]
+    path = run_output.write_thread_descriptions(str(tmp_path), threads)
+    content = Path(path).read_text()
+    assert content == "clip 1 (clip_1.mp4)\nTitle: Does X cause Y?\nDescription: d\n"
+
+
 def test_write_descriptions_includes_hook_grade_line(tmp_path):
     shorts = [{
         "clip_url": "Short-01.mp4",

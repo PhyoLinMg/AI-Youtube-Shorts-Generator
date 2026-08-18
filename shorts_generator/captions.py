@@ -159,7 +159,28 @@ def _chunk_segments(
                 "words": kept,
             })
 
-    return chunks
+    return _deoverlap_chunks(chunks)
+
+
+def _deoverlap_chunks(chunks: List[Dict]) -> List[Dict]:
+    """Guard against overlapping Dialogue lines rendering stacked on screen
+    at once -- source segments aren't always non-overlapping (YouTube
+    auto-captions in particular: srv1 is cleaner than vtt/json3's rolling-
+    karaoke re-sends, per caption_ingest.py's docstring, but individual
+    cues can still overlap by a second or more on some videos), and that
+    overlap otherwise flows straight through into two caption chunks both
+    covering the same wall-clock window. Trims the EARLIER chunk's end to
+    the next chunk's start (never shifts a chunk's start, which would
+    desync its word-highlight timing from the actual speech) and drops any
+    chunk a trim collapses to zero or negative duration."""
+    out: List[Dict] = []
+    for c in chunks:
+        if out and c["start"] < out[-1]["end"]:
+            out[-1]["end"] = c["start"]
+            if out[-1]["end"] <= out[-1]["start"]:
+                out.pop()
+        out.append(c)
+    return out
 
 
 def _chunk_cut_segments(

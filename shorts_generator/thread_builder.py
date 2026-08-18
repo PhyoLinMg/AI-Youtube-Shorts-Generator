@@ -59,10 +59,13 @@ You will be given the full transcript of TWO episodes, each labeled with absolut
 Rules:
 - start_time must land on the exact line where the speaker begins answering the shared question -- never on preamble, a host's question, or unrelated chat before it.
 - end_time must land where that specific answer finishes -- never mid-sentence, never trailing into the next unrelated topic.
-- Duration per clip: 15-40 seconds. If the answer runs longer, pick the single most complete self-contained span within it.
-- Write a "thesis" -- one sentence a narrator would say BEFORE either clip plays, naming the shared question and hinting that the two answers differ or agree in an interesting way. This must state the actual tension or agreement, not a vague tease.
-- Write a "bridge" -- one sentence a narrator would say BETWEEN the two clips, explicitly connecting what episode A's speaker just said to what episode B's speaker is about to say.
-- If you cannot find a genuine on-topic answer in BOTH transcripts, set "grounded" to false and leave the clip fields empty -- do not force a loose match.
+- Duration per clip: 12-22 seconds. If the answer runs longer, pick the single most complete self-contained span within it -- do not use extra length just because it's available.
+- The whole video (thesis + clip A + bridge + clip B) must land in the 45-60 second range, so both narration lines and both clips need to be tight.
+- Write a "thesis" -- ONE punchy sentence (max ~12 words) a narrator would say BEFORE either clip plays. This is the scroll-stopping HOOK -- it must grab the viewer in the first 1-3 seconds. Name the shared question and hint at the tension or disagreement between the two answers, but do NOT reveal what either speaker actually said, which side they land on, or any number/percentage/statistic from either transcript. Stay mysterious -- the viewer has to watch both clips to find out. No throat-clearing, no setup, no filler words.
+- Write a "bridge" -- ONE punchy sentence (max ~12 words) a narrator would say BETWEEN the two clips, pivoting from what episode A's speaker just said to what episode B's speaker is about to say -- without giving away episode B's actual answer or any number/percentage/statistic from either transcript. Same energy as the thesis: fast, sharp, zero filler, still mysterious.
+- Write a "title" -- max 100 characters TOTAL, including 1-2 trailing hashtags (e.g. "#Shorts #ai"). Aggressive clickbait style (curiosity gap, "vs", stakes) that hooks a scroller without revealing the outcome or either speaker's actual position. Accurate to the shared question, never spoils the answer. Do NOT include any number, percentage, or statistic pulled from either transcript -- a number IS the spoiler.
+- Write a "description" -- max 200 characters, Shorts-optimized, original copy (not a transcript line). Builds curiosity around the shared question and the fact the two guests clash or agree on it, without spoiling what either one says. Do NOT quote or paraphrase either speaker's specific claim, and do NOT include any number, percentage, statistic, or named finding from either transcript -- if you catch yourself writing a digit, cut it and rephrase around the question instead. End with a short watch-through CTA (e.g. "Watch both takes"). No emojis, no spoilers.
+- If you cannot find a genuine on-topic answer in BOTH transcripts, set "grounded" to false and leave the clip/title/description fields empty -- do not force a loose match.
 
 Episode A transcript:
 {transcript_a}
@@ -71,10 +74,10 @@ Episode B transcript:
 {transcript_b}
 
 Respond ONLY with valid JSON (no markdown, no explanation):
-{{"grounded": bool, "thesis": "string", "bridge": "string", "clip_a": {{"start_time": float, "end_time": float}}, "clip_b": {{"start_time": float, "end_time": float}}}}"""
+{{"grounded": bool, "thesis": "string", "bridge": "string", "title": "string", "description": "string", "clip_a": {{"start_time": float, "end_time": float}}, "clip_b": {{"start_time": float, "end_time": float}}}}"""
 
 MIN_CLIP_SECONDS = 8.0
-MAX_CLIP_SECONDS = 60.0
+MAX_CLIP_SECONDS = 25.0  # keeps thesis+clip_a+bridge+clip_b inside the 45-60s target
 
 
 def _coerce_float_or_none(value: object) -> Optional[float]:
@@ -148,17 +151,23 @@ def _sanitize_clip_pick(raw: object, duration_a: float, duration_b: float) -> Op
         return None
     raw_thesis = raw.get("thesis")
     raw_bridge = raw.get("bridge")
+    raw_title = raw.get("title")
+    raw_description = raw.get("description")
     if not isinstance(raw_thesis, str) or not isinstance(raw_bridge, str):
+        return None
+    if not isinstance(raw_title, str) or not isinstance(raw_description, str):
         return None
     thesis = raw_thesis.strip()
     bridge = raw_bridge.strip()
-    if not thesis or not bridge:
+    title = raw_title.strip()[:100]
+    description = raw_description.strip()[:200]
+    if not thesis or not bridge or not title or not description:
         return None
     clip_a = _sanitize_clip_span(raw.get("clip_a"), duration_a)
     clip_b = _sanitize_clip_span(raw.get("clip_b"), duration_b)
     if clip_a is None or clip_b is None:
         return None
-    return {"thesis": thesis, "bridge": bridge, "clip_a": clip_a, "clip_b": clip_b}
+    return {"thesis": thesis, "bridge": bridge, "title": title, "description": description, "clip_a": clip_a, "clip_b": clip_b}
 
 
 def find_same_topic_pairs(entry_a: Dict, entry_b: Dict, num_pairs: int, llm_fn: LLMFn) -> List[str]:
@@ -241,9 +250,10 @@ def select_thread_pairs(
     {duration, segments} shape.
 
     Returns up to num_clips grounded, non-overlapping thread dicts, each
-    shaped like {"shared_question", "thesis", "bridge", "episode_a",
-    "episode_b"} where episode_a/b carry run_dir/title/source_url plus the
-    picked start_time/end_time. Returns [] rather than raising whenever
+    shaped like {"shared_question", "thesis", "bridge", "title",
+    "description", "episode_a", "episode_b"} where episode_a/b carry
+    run_dir/title/source_url plus the picked start_time/end_time. Returns
+    [] rather than raising whenever
     fewer than num_clips (including zero) are groundable -- refuse rather
     than force, same philosophy as the old whole-corpus build_thread."""
     if num_clips < 1:
@@ -287,6 +297,8 @@ def select_thread_pairs(
             "shared_question": shared_question,
             "thesis": clips["thesis"],
             "bridge": clips["bridge"],
+            "title": clips["title"],
+            "description": clips["description"],
             "episode_a": {"run_dir": entry_a["run_dir"], "title": entry_a["title"], "source_url": entry_a["source_url"], **clips["clip_a"]},
             "episode_b": {"run_dir": entry_b["run_dir"], "title": entry_b["title"], "source_url": entry_b["source_url"], **clips["clip_b"]},
         })

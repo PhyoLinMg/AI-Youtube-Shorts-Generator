@@ -12,9 +12,13 @@ one highlight to "no score" rather than blocking the pipeline, exactly like
 highlights.detect_content_type already degrades on LLM failure.
 """
 import json
+import os
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List
+
+from .config import VISUAL_HOOK_PARALLELISM
 
 VisionLLMFn = Callable[[str, List[str]], str]
 
@@ -73,28 +77,43 @@ def call_muapi_vision_llm(prompt: str, image_paths: List[str]) -> str:
     raise RuntimeError("no MuAPI vision endpoint available")
 
 
+def _score_one_highlight(i: int, h: Dict, source_video_path: str, tmp_dir: str, llm_fn: VisionLLMFn) -> Dict:
+    """Never raises: any per-highlight failure (frame extraction, vision
+    call, bad JSON) is logged and that highlight is returned unmodified --
+    one bad candidate must never abort the rest of the pipeline."""
+    # Frames land in a per-highlight subdir so concurrent workers never
+    # write the same hook_frame_*.jpg path at once.
+    highlight_dir = f"{tmp_dir}/{i}"
+    os.makedirs(highlight_dir, exist_ok=True)
+    try:
+        entry = dict(h)
+        frame_paths = _extract_hook_frames(source_video_path, float(h["start_time"]), highlight_dir)
+        if not frame_paths:
+            raise RuntimeError("no frames extracted")
+        raw = llm_fn(VISUAL_HOOK_PROMPT, frame_paths)
+        entry.update(_parse_visual_hook_response(raw))
+        return entry
+    except Exception as e:
+        print(f"[visual_hook] {i} skipped: {e}", flush=True)
+        return h
+
+
 def score_visual_hooks(
     source_video_path: str, highlights: List[Dict], llm_fn: VisionLLMFn,
 ) -> List[Dict]:
-    """Attach visual_hook_score/visual_hook_reason to each highlight.
-
-    Never raises: any per-highlight failure (frame extraction, vision call,
-    bad JSON) is logged and that highlight is returned unmodified -- one bad
-    candidate must never abort the rest of the pipeline."""
+    """Attach visual_hook_score/visual_hook_reason to each highlight, in
+    parallel (up to VISUAL_HOOK_PARALLELISM at a time) -- each highlight's
+    frame extraction + vision call is independent of the others. Result
+    order matches input order regardless of completion order."""
     import tempfile
 
-    out = []
+    if not highlights:
+        return []
+
     with tempfile.TemporaryDirectory() as tmp_dir:
-        for i, h in enumerate(highlights, 1):
-            try:
-                entry = dict(h)
-                frame_paths = _extract_hook_frames(source_video_path, float(h["start_time"]), tmp_dir)
-                if not frame_paths:
-                    raise RuntimeError("no frames extracted")
-                raw = llm_fn(VISUAL_HOOK_PROMPT, frame_paths)
-                entry.update(_parse_visual_hook_response(raw))
-            except Exception as e:
-                print(f"[visual_hook] {i} skipped: {e}", flush=True)
-                entry = h
-            out.append(entry)
-    return out
+        n = len(highlights)
+        with ThreadPoolExecutor(max_workers=min(VISUAL_HOOK_PARALLELISM, n)) as pool:
+            return list(pool.map(
+                lambda args: _score_one_highlight(args[0], args[1], source_video_path, tmp_dir, llm_fn),
+                zip(range(1, n + 1), highlights),
+            ))

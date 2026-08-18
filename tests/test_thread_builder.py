@@ -43,6 +43,8 @@ def test_pick_thread_clips_returns_clips_and_narration_on_valid_response():
         "grounded": True,
         "thesis": "Two guests, one question.",
         "bridge": "Here is the other side.",
+        "title": "They Disagree On This #Shorts",
+        "description": "Two guests. One question. Watch both takes.",
         "clip_a": {"start_time": 5.0, "end_time": 25.0},
         "clip_b": {"start_time": 2.0, "end_time": 20.0},
     })
@@ -52,6 +54,8 @@ def test_pick_thread_clips_returns_clips_and_narration_on_valid_response():
     assert result == {
         "thesis": "Two guests, one question.",
         "bridge": "Here is the other side.",
+        "title": "They Disagree On This #Shorts",
+        "description": "Two guests. One question. Watch both takes.",
         "clip_a": {"start_time": 5.0, "end_time": 25.0},
         "clip_b": {"start_time": 2.0, "end_time": 20.0},
     }
@@ -61,7 +65,7 @@ def test_pick_thread_clips_rejects_span_shorter_than_8_seconds():
     episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
     episode_b = _episode(100.0, [(0.0, 30.0, "world")])
     llm_fn = lambda prompt: json.dumps({
-        "grounded": True, "thesis": "t", "bridge": "b",
+        "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
         "clip_a": {"start_time": 5.0, "end_time": 7.0},
         "clip_b": {"start_time": 2.0, "end_time": 20.0},
     })
@@ -73,7 +77,7 @@ def test_pick_thread_clips_clamps_end_time_to_episode_duration():
     episode_a = _episode(20.0, [(0.0, 20.0, "hello")])
     episode_b = _episode(100.0, [(0.0, 30.0, "world")])
     llm_fn = lambda prompt: json.dumps({
-        "grounded": True, "thesis": "t", "bridge": "b",
+        "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
         "clip_a": {"start_time": 5.0, "end_time": 50.0},
         "clip_b": {"start_time": 2.0, "end_time": 20.0},
     })
@@ -204,6 +208,7 @@ def test_select_thread_pairs_returns_one_grounded_pair():
         json.dumps({"shared_questions": ["Does remote work increase or decrease productivity?"]}),
         json.dumps({
             "grounded": True, "thesis": "Two guests, one question.", "bridge": "Here is the other side.",
+            "title": "They Disagree On This #Shorts", "description": "Two guests. One question. Watch both takes.",
             "clip_a": {"start_time": 5.0, "end_time": 25.0},
             "clip_b": {"start_time": 2.0, "end_time": 20.0},
         }),
@@ -218,6 +223,8 @@ def test_select_thread_pairs_returns_one_grounded_pair():
         "shared_question": "Does remote work increase or decrease productivity?",
         "thesis": "Two guests, one question.",
         "bridge": "Here is the other side.",
+        "title": "They Disagree On This #Shorts",
+        "description": "Two guests. One question. Watch both takes.",
         "episode_a": {"run_dir": "/tmp/a", "title": "Ep A", "source_url": "https://example.com/0", "start_time": 5.0, "end_time": 25.0},
         "episode_b": {"run_dir": "/tmp/b", "title": "Ep B", "source_url": "https://example.com/1", "start_time": 2.0, "end_time": 20.0},
     }]
@@ -231,12 +238,12 @@ def test_select_thread_pairs_returns_multiple_grounded_pairs_for_multiple_questi
     responses = [
         json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
         json.dumps({
-            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "grounded": True, "thesis": "t1", "bridge": "b1", "title": "Title one #Shorts", "description": "d1",
             "clip_a": {"start_time": 0.0, "end_time": 20.0},
             "clip_b": {"start_time": 0.0, "end_time": 20.0},
         }),
         json.dumps({
-            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "grounded": True, "thesis": "t2", "bridge": "b2", "title": "Title two #Shorts", "description": "d2",
             "clip_a": {"start_time": 40.0, "end_time": 60.0},
             "clip_b": {"start_time": 40.0, "end_time": 60.0},
         }),
@@ -258,13 +265,13 @@ def test_select_thread_pairs_discards_pair_whose_span_overlaps_an_earlier_pick()
     responses = [
         json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
         json.dumps({
-            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "grounded": True, "thesis": "t1", "bridge": "b1", "title": "Title one #Shorts", "description": "d1",
             "clip_a": {"start_time": 0.0, "end_time": 20.0},
             "clip_b": {"start_time": 0.0, "end_time": 20.0},
         }),
         # Question two's clip_a overlaps question one's accepted clip_a (0-20 vs 10-30) -- must be discarded.
         json.dumps({
-            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "grounded": True, "thesis": "t2", "bridge": "b2", "title": "Title two #Shorts", "description": "d2",
             "clip_a": {"start_time": 10.0, "end_time": 30.0},
             "clip_b": {"start_time": 40.0, "end_time": 60.0},
         }),
@@ -287,13 +294,13 @@ def test_select_thread_pairs_accepts_pair_whose_span_only_touches_an_earlier_end
     responses = [
         json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
         json.dumps({
-            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "grounded": True, "thesis": "t1", "bridge": "b1", "title": "Title one #Shorts", "description": "d1",
             "clip_a": {"start_time": 0.0, "end_time": 20.0},
             "clip_b": {"start_time": 0.0, "end_time": 20.0},
         }),
         # clip_a starts exactly where question one's clip_a ended (20.0) -- touching, not overlapping.
         json.dumps({
-            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "grounded": True, "thesis": "t2", "bridge": "b2", "title": "Title two #Shorts", "description": "d2",
             "clip_a": {"start_time": 20.0, "end_time": 40.0},
             "clip_b": {"start_time": 40.0, "end_time": 60.0},
         }),
@@ -315,14 +322,14 @@ def test_select_thread_pairs_discards_pair_when_only_episode_b_span_overlaps():
     responses = [
         json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
         json.dumps({
-            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "grounded": True, "thesis": "t1", "bridge": "b1", "title": "Title one #Shorts", "description": "d1",
             "clip_a": {"start_time": 0.0, "end_time": 20.0},
             "clip_b": {"start_time": 50.0, "end_time": 70.0},
         }),
         # clip_a is clearly non-overlapping vs used_ranges_a=[(0,20)] (30-50 vs 0-20).
         # clip_b overlaps vs used_ranges_b=[(50,70)] (60-80 vs 50-70).
         json.dumps({
-            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "grounded": True, "thesis": "t2", "bridge": "b2", "title": "Title two #Shorts", "description": "d2",
             "clip_a": {"start_time": 30.0, "end_time": 50.0},
             "clip_b": {"start_time": 60.0, "end_time": 80.0},
         }),
@@ -346,7 +353,7 @@ def test_select_thread_pairs_skips_ungroundable_question_and_continues():
         json.dumps({"shared_questions": ["Question one?", "Question two?"]}),
         json.dumps({"grounded": False, "thesis": "", "bridge": "", "clip_a": {}, "clip_b": {}}),
         json.dumps({
-            "grounded": True, "thesis": "t2", "bridge": "b2",
+            "grounded": True, "thesis": "t2", "bridge": "b2", "title": "Title two #Shorts", "description": "d2",
             "clip_a": {"start_time": 0.0, "end_time": 20.0},
             "clip_b": {"start_time": 0.0, "end_time": 20.0},
         }),
@@ -374,7 +381,7 @@ def test_select_thread_pairs_stops_once_num_clips_reached(monkeypatch):
 
     responses = [
         json.dumps({
-            "grounded": True, "thesis": "t1", "bridge": "b1",
+            "grounded": True, "thesis": "t1", "bridge": "b1", "title": "Title one #Shorts", "description": "d1",
             "clip_a": {"start_time": 0.0, "end_time": 20.0}, "clip_b": {"start_time": 0.0, "end_time": 20.0},
         }),
     ]

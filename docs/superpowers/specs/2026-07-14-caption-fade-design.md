@@ -148,3 +148,16 @@ result dict (visible via `--output-json`).
   output file exists with the same duration/resolution as the input.
 - Manual: one real end-to-end `--mode local` run on a short sample video,
   eyeball the fade-in and readability.
+
+
+
+
+https://www.youtube.com/watch?v=_g4l7YkDQwA
+https://www.youtube.com/watch?v=giT0ytynSqg
+
+
+https://www.youtube.com/watch?v=zQ1POHiR8m8&t=2234s
+https://www.youtube.com/watch?v=NufB1LL_rCU&t=6383s
+
+
+the video duration is too long for a short. we have to shorten it quite a lot. 45s - 60s

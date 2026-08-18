@@ -29,6 +29,24 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
 LOCAL_LLM_TIMEOUT_SECONDS = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "180"))
 LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "base")
 LOCAL_WHISPER_DEVICE = os.getenv("LOCAL_WHISPER_DEVICE", "auto")  # auto / cpu / cuda
+
+# YouTube increasingly 429s / bot-checks unauthenticated yt-dlp requests.
+# Set to a browser name ("chrome", "firefox", ...) to pass
+# --cookies-from-browser through every yt-dlp call; empty (default) skips
+# auth entirely. Decrypting a browser's cookie store requires OS keychain
+# access, which isn't available in a sandboxed/headless shell -- only set
+# this when running somewhere with real Keychain/DBus access.
+YT_DLP_COOKIES_FROM_BROWSER = os.getenv("YT_DLP_COOKIES_FROM_BROWSER", "").strip()
+
+# Per-clip work (crop_clip API call + download + caption/hook-card burn, or
+# the local cut/reframe/caption pipeline) is independent per highlight, so
+# it fans out across a thread pool instead of running one clip at a time.
+# api mode is network/poll-wait dominated -> higher default parallelism is
+# safe. local mode's reframe pass is CPU-bound (OpenCV, single-threaded per
+# clip), so a large pool just oversubscribes cores -> lower default.
+CROP_PARALLELISM = int(os.getenv("CROP_PARALLELISM", "4"))
+CROP_PARALLELISM_LOCAL = int(os.getenv("CROP_PARALLELISM_LOCAL", "2"))
+VISUAL_HOOK_PARALLELISM = int(os.getenv("VISUAL_HOOK_PARALLELISM", "4"))
 LOCAL_OUTPUT_DIR = os.getenv("LOCAL_OUTPUT_DIR", "output")
 # "specific" -> slugified highlight title (e.g. my_big_moment.mp4)
 # "generic"  -> positional (video1.mp4, video2.mp4, ...)

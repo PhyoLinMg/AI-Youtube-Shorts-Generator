@@ -197,6 +197,8 @@ def _serialize_thread_results(results: List[Dict], out_dir: Optional[str]) -> Di
             "shared_question": r.get("shared_question"),
             "thesis": r.get("thesis"),
             "bridge": r.get("bridge"),
+            "title": r.get("title"),
+            "description": r.get("description"),
             "episode_a": r.get("episode_a"),
             "episode_b": r.get("episode_b"),
             "download_url": _clip_display_url(out_dir, clip_url),

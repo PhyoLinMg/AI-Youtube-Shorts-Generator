@@ -16,12 +16,13 @@ Two stages per highlight:
 """
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
 from ..captions import CaptionError, burn_captions, burn_captions_segments
-from ..config import LOCAL_OUTPUT_DIR
+from ..config import CROP_PARALLELISM_LOCAL, LOCAL_OUTPUT_DIR
 from ..hook_card import HookCardError, render_card_overlay, render_end_card_overlay
 from ..jump_cuts import excise_cut_segments, JumpCutError
 from ..run_output import unique_chapter_filename, unique_short_filename
@@ -738,6 +739,102 @@ def crop_clip_local(
     return out_path
 
 
+def _crop_one_highlight_local(
+    i: int,
+    n: int,
+    h: Dict,
+    out_path: str,
+    source_path: str,
+    aspect_ratio: str,
+    transcript_segments: Optional[List[Dict]],
+    captions: bool,
+    caption_fade_duration: float,
+    word_highlight: bool,
+    framing: str,
+    hook_card: bool,
+    end_card: bool,
+) -> Dict:
+    """Render one highlight end-to-end (cut, reframe, captions, cards).
+    Never raises -- any failure is caught and folded into the returned
+    entry, so one bad highlight can't abort the others when this runs
+    inside a thread-pool worker."""
+    print(f"[clip/local] {i}/{n}: {h.get('title', '(untitled)')}", flush=True)
+    try:
+        cut_segments = h.get("cut_segments") or [
+            {"start_time": float(h["start_time"]), "end_time": float(h["end_time"])}
+        ]
+        crop_errors: Dict = {}
+        crop_clip_local(
+            source_path,
+            float(h["start_time"]),
+            float(h["end_time"]),
+            aspect_ratio,
+            out_path,
+            framing=framing,
+            cut_segments=cut_segments,
+            errors=crop_errors,
+        )
+        entry = {**h, "clip_url": out_path, **crop_errors}
+        want_excision = len(cut_segments) > 1 and "excision_error" not in crop_errors
+
+        hook_text = str(h.get("on_screen_hook") or "").strip()
+        want_hook_card = hook_card and bool(hook_text)
+        end_card_text = str(h.get("end_card_text") or "").strip()
+        want_end_card = end_card and bool(end_card_text)
+
+        if captions and transcript_segments:
+            captioned_path = out_path + ".captioned.mp4"
+            try:
+                if want_excision:
+                    burn_captions_segments(
+                        out_path,
+                        transcript_segments,
+                        cut_segments,
+                        captioned_path,
+                        fade_seconds=caption_fade_duration,
+                        word_highlight=word_highlight,
+                    )
+                else:
+                    burn_captions(
+                        out_path,
+                        transcript_segments,
+                        float(h["start_time"]),
+                        float(h["end_time"]),
+                        captioned_path,
+                        fade_seconds=caption_fade_duration,
+                        word_highlight=word_highlight,
+                    )
+                os.replace(captioned_path, out_path)
+            except CaptionError as e:
+                print(f"[clip/local] {i} captions skipped: {e}", flush=True)
+                entry["captions_error"] = str(e)
+                if os.path.exists(captioned_path):
+                    os.remove(captioned_path)
+
+        if want_hook_card:
+            try:
+                card_path = out_path + ".card.mp4"
+                render_card_overlay(out_path, hook_text, card_path)
+                os.replace(card_path, out_path)
+            except HookCardError as e:
+                print(f"[clip/local] {i} hook-card overlay skipped: {e}", flush=True)
+                entry["hook_card_error"] = str(e)
+
+        if want_end_card:
+            try:
+                end_card_path = out_path + ".endcard.mp4"
+                render_end_card_overlay(out_path, end_card_text, end_card_path)
+                os.replace(end_card_path, out_path)
+            except HookCardError as e:
+                print(f"[clip/local] {i} end-card overlay skipped: {e}", flush=True)
+                entry["end_card_error"] = str(e)
+
+        return entry
+    except Exception as e:
+        print(f"[clip/local] {i} failed: {e}", flush=True)
+        return {**h, "clip_url": None, "error": str(e)}
+
+
 def crop_highlights_local(
     source_path: str,
     highlights: List[Dict],
@@ -752,90 +849,78 @@ def crop_highlights_local(
     end_card: bool = False,
     filename_style: Optional[str] = None,
 ) -> List[Dict]:
+    """Crop every highlight (in parallel, up to CROP_PARALLELISM_LOCAL at a
+    time -- each highlight is an independent cut/reframe/caption pipeline
+    over its own [start, end] span of the shared source file). Results
+    preserve input order regardless of completion order, since callers
+    (see pipeline._trim_to_num_clips) rely on that order matching highlight
+    rank. Parallelism defaults lower than the api-mode equivalent
+    (clipper.crop_highlights): _reframe_vertical is CPU-bound (OpenCV,
+    single-threaded per clip), so a large pool oversubscribes cores instead
+    of overlapping I/O wait."""
+    if not highlights:
+        return []
     out_dir = out_dir or LOCAL_OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
-    results: List[Dict] = []
+
     used_names: set = set()
-    for i, h in enumerate(highlights, 1):
-        out_path = os.path.join(
-            out_dir, unique_short_filename(h.get("title"), used_names, index=i, style=filename_style)
-        )
-        print(f"[clip/local] {i}/{len(highlights)}: {h.get('title', '(untitled)')}", flush=True)
-        try:
-            cut_segments = h.get("cut_segments") or [
-                {"start_time": float(h["start_time"]), "end_time": float(h["end_time"])}
-            ]
-            crop_errors: Dict = {}
-            crop_clip_local(
-                source_path,
-                float(h["start_time"]),
-                float(h["end_time"]),
-                aspect_ratio,
-                out_path,
-                framing=framing,
-                cut_segments=cut_segments,
-                errors=crop_errors,
-            )
-            entry = {**h, "clip_url": out_path, **crop_errors}
-            want_excision = len(cut_segments) > 1 and "excision_error" not in crop_errors
+    out_paths = [
+        os.path.join(out_dir, unique_short_filename(h.get("title"), used_names, index=i, style=filename_style))
+        for i, h in enumerate(highlights, 1)
+    ]
 
-            hook_text = str(h.get("on_screen_hook") or "").strip()
-            want_hook_card = hook_card and bool(hook_text)
-            end_card_text = str(h.get("end_card_text") or "").strip()
-            want_end_card = end_card and bool(end_card_text)
+    n = len(highlights)
+    with ThreadPoolExecutor(max_workers=min(CROP_PARALLELISM_LOCAL, n)) as pool:
+        return list(pool.map(
+            lambda args: _crop_one_highlight_local(
+                args[0], n, args[1], args[2], source_path, aspect_ratio, transcript_segments,
+                captions, caption_fade_duration, word_highlight, framing, hook_card, end_card,
+            ),
+            zip(range(1, n + 1), highlights, out_paths),
+        ))
 
-            if captions and transcript_segments:
-                captioned_path = out_path + ".captioned.mp4"
-                try:
-                    if want_excision:
-                        burn_captions_segments(
-                            out_path,
-                            transcript_segments,
-                            cut_segments,
-                            captioned_path,
-                            fade_seconds=caption_fade_duration,
-                            word_highlight=word_highlight,
-                        )
-                    else:
-                        burn_captions(
-                            out_path,
-                            transcript_segments,
-                            float(h["start_time"]),
-                            float(h["end_time"]),
-                            captioned_path,
-                            fade_seconds=caption_fade_duration,
-                            word_highlight=word_highlight,
-                        )
-                    os.replace(captioned_path, out_path)
-                except CaptionError as e:
-                    print(f"[clip/local] {i} captions skipped: {e}", flush=True)
-                    entry["captions_error"] = str(e)
-                    if os.path.exists(captioned_path):
-                        os.remove(captioned_path)
 
-            if want_hook_card:
-                try:
-                    card_path = out_path + ".card.mp4"
-                    render_card_overlay(out_path, hook_text, card_path)
-                    os.replace(card_path, out_path)
-                except HookCardError as e:
-                    print(f"[clip/local] {i} hook-card overlay skipped: {e}", flush=True)
-                    entry["hook_card_error"] = str(e)
+def _crop_one_chapter_local(
+    i: int,
+    n: int,
+    c: Dict,
+    out_path: str,
+    source_path: str,
+    transcript_segments: Optional[List[Dict]],
+    captions: bool,
+    caption_fade_duration: float,
+    word_highlight: bool,
+) -> Dict:
+    """Never raises -- see _crop_one_highlight_local."""
+    print(f"[chapter/local] {i}/{n}: {c.get('title', '(untitled)')}", flush=True)
+    try:
+        _cut_subclip(source_path, float(c["start_time"]), float(c["end_time"]), out_path)
+        entry = {**c, "clip_url": out_path}
 
-            if want_end_card:
-                try:
-                    end_card_path = out_path + ".endcard.mp4"
-                    render_end_card_overlay(out_path, end_card_text, end_card_path)
-                    os.replace(end_card_path, out_path)
-                except HookCardError as e:
-                    print(f"[clip/local] {i} end-card overlay skipped: {e}", flush=True)
-                    entry["end_card_error"] = str(e)
+        if captions and transcript_segments:
+            captioned_path = out_path + ".captioned.mp4"
+            try:
+                burn_captions(
+                    out_path,
+                    transcript_segments,
+                    float(c["start_time"]),
+                    float(c["end_time"]),
+                    captioned_path,
+                    fade_seconds=caption_fade_duration,
+                    word_highlight=word_highlight,
+                    bottom_margin_frac=CHAPTER_CAPTION_BOTTOM_MARGIN_FRAC,
+                )
+                os.replace(captioned_path, out_path)
+            except CaptionError as e:
+                print(f"[chapter/local] {i} captions skipped: {e}", flush=True)
+                entry["captions_error"] = str(e)
+                if os.path.exists(captioned_path):
+                    os.remove(captioned_path)
 
-            results.append(entry)
-        except Exception as e:
-            print(f"[clip/local] {i} failed: {e}", flush=True)
-            results.append({**h, "clip_url": None, "error": str(e)})
-    return results
+        return entry
+    except Exception as e:
+        print(f"[chapter/local] {i} failed: {e}", flush=True)
+        return {**c, "clip_url": None, "error": str(e)}
 
 
 def crop_chapters_local(
@@ -847,44 +932,30 @@ def crop_chapters_local(
     caption_fade_duration: float = 0.3,
     word_highlight: bool = True,
 ) -> List[Dict]:
-    """Trim every chapter to its own landscape mp4 -- no crop, no hook/end
-    card, no jump-cut excision (the whole selected span is kept intact by
-    design). Captions burn near the bottom edge via
-    CHAPTER_CAPTION_BOTTOM_MARGIN_FRAC instead of Shorts' 0.30.
+    """Trim every chapter to its own landscape mp4 (in parallel, up to
+    CROP_PARALLELISM_LOCAL at a time) -- no crop, no hook/end card, no
+    jump-cut excision (the whole selected span is kept intact by design).
+    Captions burn near the bottom edge via CHAPTER_CAPTION_BOTTOM_MARGIN_FRAC
+    instead of Shorts' 0.30. Result order matches input order regardless of
+    completion order.
     """
+    if not chapters:
+        return []
     out_dir = out_dir or LOCAL_OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
-    results: List[Dict] = []
+
     used_names: set = set()
-    for i, c in enumerate(chapters, 1):
-        out_path = os.path.join(out_dir, unique_chapter_filename(c.get("title"), i, used_names))
-        print(f"[chapter/local] {i}/{len(chapters)}: {c.get('title', '(untitled)')}", flush=True)
-        try:
-            _cut_subclip(source_path, float(c["start_time"]), float(c["end_time"]), out_path)
-            entry = {**c, "clip_url": out_path}
+    out_paths = [
+        os.path.join(out_dir, unique_chapter_filename(c.get("title"), i, used_names))
+        for i, c in enumerate(chapters, 1)
+    ]
 
-            if captions and transcript_segments:
-                captioned_path = out_path + ".captioned.mp4"
-                try:
-                    burn_captions(
-                        out_path,
-                        transcript_segments,
-                        float(c["start_time"]),
-                        float(c["end_time"]),
-                        captioned_path,
-                        fade_seconds=caption_fade_duration,
-                        word_highlight=word_highlight,
-                        bottom_margin_frac=CHAPTER_CAPTION_BOTTOM_MARGIN_FRAC,
-                    )
-                    os.replace(captioned_path, out_path)
-                except CaptionError as e:
-                    print(f"[chapter/local] {i} captions skipped: {e}", flush=True)
-                    entry["captions_error"] = str(e)
-                    if os.path.exists(captioned_path):
-                        os.remove(captioned_path)
-
-            results.append(entry)
-        except Exception as e:
-            print(f"[chapter/local] {i} failed: {e}", flush=True)
-            results.append({**c, "clip_url": None, "error": str(e)})
-    return results
+    n = len(chapters)
+    with ThreadPoolExecutor(max_workers=min(CROP_PARALLELISM_LOCAL, n)) as pool:
+        return list(pool.map(
+            lambda args: _crop_one_chapter_local(
+                args[0], n, args[1], args[2], source_path, transcript_segments,
+                captions, caption_fade_duration, word_highlight,
+            ),
+            zip(range(1, n + 1), chapters, out_paths),
+        ))
