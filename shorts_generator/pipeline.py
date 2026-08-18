@@ -25,7 +25,7 @@ from .local.llm import call_openai_vision_llm
 from .local.narration import render_narration_card, synthesize_narration
 from .local.thread_assembler import assemble_thread
 from .local.thread_source import acquire_clip
-from .run_output import RunPaths, capture_progress_log, resolve_output_dir, resolve_thread_run_dir, write_chapter_descriptions, write_descriptions, write_source_url, write_thread_descriptions
+from .run_output import RunPaths, archive_stale_thread_run, capture_progress_log, resolve_output_dir, resolve_thread_run_dir, sanitize_title, write_chapter_descriptions, write_descriptions, write_source_url, write_thread_descriptions
 from .thread_builder import select_thread_pairs
 from .transcriber import transcribe
 from .visual_hook import call_muapi_vision_llm, score_visual_hooks
@@ -509,6 +509,7 @@ def generate_threads(
         entry_b = future_b.result()
 
     out_dir = resolve_thread_run_dir(entry_a["title"], entry_b["title"], base_dir=base_dir)
+    archive_stale_thread_run(out_dir)
     if on_output_dir:
         on_output_dir(out_dir)
 
@@ -560,8 +561,11 @@ def generate_threads(
                 episode_a, episode_b = thread["episode_a"], thread["episode_b"]
                 print(f"[pipeline/local] clip {i}/{len(pairs)}: {thread['shared_question']!r}", flush=True)
 
-                clip_a_path = os.path.join(out_dir, f"clip_{i}_a.mp4")
-                clip_b_path = os.path.join(out_dir, f"clip_{i}_b.mp4")
+                thesis_dir = os.path.join(out_dir, "raw", f"thesis_{i}")
+                os.makedirs(thesis_dir, exist_ok=True)
+
+                clip_a_path = os.path.join(thesis_dir, f"clip_{i}_a.mp4")
+                clip_b_path = os.path.join(thesis_dir, f"clip_{i}_b.mp4")
                 print(f"[pipeline/local] acquiring clip A from {episode_a['title']!r}...", flush=True)
                 acquire_clip(
                     episode_a["run_dir"], episode_a["source_url"], cached_duration=transcript_a.get("duration") or 0.0,
@@ -573,19 +577,20 @@ def generate_threads(
                     start_time=episode_b["start_time"], end_time=episode_b["end_time"], out_path=clip_b_path,
                 )
 
-                intro_audio = os.path.join(out_dir, f"thesis_{i}.mp3")
-                bridge_audio = os.path.join(out_dir, f"bridge_{i}.mp3")
+                intro_audio = os.path.join(thesis_dir, f"thesis_{i}.mp3")
+                bridge_audio = os.path.join(thesis_dir, f"bridge_{i}.mp3")
                 print("[pipeline/local] synthesizing narration (thesis + bridge)...", flush=True)
                 synthesize_narration(thread["thesis"], intro_audio)
                 synthesize_narration(thread["bridge"], bridge_audio)
 
-                intro_card = os.path.join(out_dir, f"intro_card_{i}.mp4")
-                bridge_card = os.path.join(out_dir, f"bridge_card_{i}.mp4")
+                intro_card = os.path.join(thesis_dir, f"intro_card_{i}.mp4")
+                bridge_card = os.path.join(thesis_dir, f"bridge_card_{i}.mp4")
                 print("[pipeline/local] rendering narration cards...", flush=True)
                 render_narration_card(intro_audio, thread["thesis"], intro_card)
                 render_narration_card(bridge_audio, thread["bridge"], bridge_card)
 
-                final_path = os.path.join(out_dir, f"clip_{i}.mp4")
+                final_title = thread.get("title") or thread["shared_question"]
+                final_path = os.path.join(out_dir, f"thesis_{i}_{sanitize_title(final_title)}.mp4")
                 print("[pipeline/local] assembling final thread (intro -> clip A -> bridge -> clip B)...", flush=True)
                 assemble_thread([intro_card, clip_a_path, bridge_card, clip_b_path], final_path)
 

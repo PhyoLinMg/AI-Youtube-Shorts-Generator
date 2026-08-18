@@ -1057,12 +1057,12 @@ def test_generate_threads_assembles_and_writes_results_for_each_pair(tmp_path, m
 
     fake_pairs = [
         {
-            "shared_question": "Does X cause Y?", "thesis": "t1", "bridge": "b1",
+            "shared_question": "Does X cause Y?", "thesis": "t1", "bridge": "b1", "title": "Title One #Shorts",
             "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
             "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
         },
         {
-            "shared_question": "Does A cause B?", "thesis": "t2", "bridge": "b2",
+            "shared_question": "Does A cause B?", "thesis": "t2", "bridge": "b2", "title": "Title Two #Shorts",
             "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 40.0, "end_time": 60.0},
             "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 35.0, "end_time": 55.0},
         },
@@ -1082,14 +1082,14 @@ def test_generate_threads_assembles_and_writes_results_for_each_pair(tmp_path, m
 
     assert len(result) == 2
     out_dir = result[0]["output_dir"]
-    assert result[0]["clip_url"] == os.path.join(out_dir, "clip_1.mp4")
-    assert result[1]["clip_url"] == os.path.join(out_dir, "clip_2.mp4")
-    assert result[0]["episode_a"]["clip_url"] == os.path.join(out_dir, "clip_1_a.mp4")
-    assert result[0]["episode_b"]["clip_url"] == os.path.join(out_dir, "clip_1_b.mp4")
-    assert result[1]["episode_a"]["clip_url"] == os.path.join(out_dir, "clip_2_a.mp4")
+    assert result[0]["clip_url"] == os.path.join(out_dir, "thesis_1_Title_One_Shorts.mp4")
+    assert result[1]["clip_url"] == os.path.join(out_dir, "thesis_2_Title_Two_Shorts.mp4")
+    assert result[0]["episode_a"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_1", "clip_1_a.mp4")
+    assert result[0]["episode_b"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_1", "clip_1_b.mp4")
+    assert result[1]["episode_a"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_2", "clip_2_a.mp4")
     assert assemble_calls[0] == [
-        os.path.join(out_dir, "intro_card_1.mp4"), os.path.join(out_dir, "clip_1_a.mp4"),
-        os.path.join(out_dir, "bridge_card_1.mp4"), os.path.join(out_dir, "clip_1_b.mp4"),
+        os.path.join(out_dir, "raw", "thesis_1", "intro_card_1.mp4"), os.path.join(out_dir, "raw", "thesis_1", "clip_1_a.mp4"),
+        os.path.join(out_dir, "raw", "thesis_1", "bridge_card_1.mp4"), os.path.join(out_dir, "raw", "thesis_1", "clip_1_b.mp4"),
     ]
     assert os.path.isfile(os.path.join(out_dir, "thread_results.json"))
     with open(os.path.join(out_dir, "thread_results.json")) as f:
@@ -1232,3 +1232,47 @@ def test_generate_threads_does_not_download_or_delete_preexisting_full_source(tm
 
     assert (episode_a_dir / "full_source.mp4").read_bytes() == b"preexisting"
     assert (episode_b_dir / "full_source.mp4").read_bytes() == b"preexisting"
+
+
+def test_generate_threads_final_filename_falls_back_to_shared_question_when_title_missing(tmp_path, monkeypatch):
+    """_setup_thread_run's fake pairs (used by most of the tests below this
+    one) don't set a "title" key -- generate_threads must not crash on that,
+    and should fall back to shared_question for the final filename, same
+    fallback write_thread_descriptions already uses."""
+    _setup_thread_run(tmp_path, monkeypatch, num_pairs=1)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt="720": open(target_path, "wb").write(b"full source") or target_path,
+    )
+
+    result = pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=1, base_dir=str(tmp_path))
+
+    out_dir = result[0]["output_dir"]
+    assert result[0]["clip_url"] == os.path.join(out_dir, "thesis_1_Question_1.mp4")
+
+
+def test_generate_threads_archives_prior_same_slug_run_before_second_call(tmp_path, monkeypatch):
+    """Integration check that generate_threads actually wires up
+    archive_stale_thread_run (unit-tested on its own): calling it twice for
+    the same episode pair on the same day must not mix the two runs' files
+    -- the first run's thread_results.json (and everything else) should
+    land under raw/stale/<timestamp>/ before the second run writes."""
+    _setup_thread_run(tmp_path, monkeypatch, num_pairs=1)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt="720": open(target_path, "wb").write(b"full source") or target_path,
+    )
+
+    first = pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=1, base_dir=str(tmp_path))
+    out_dir = first[0]["output_dir"]
+
+    second = pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=1, base_dir=str(tmp_path))
+
+    assert second[0]["output_dir"] == out_dir
+    stale_root = os.path.join(out_dir, "raw", "stale")
+    assert os.path.isdir(stale_root)
+    archived_dirs = os.listdir(stale_root)
+    assert len(archived_dirs) == 1
+    assert os.path.isfile(os.path.join(stale_root, archived_dirs[0], "thread_results.json"))
+    # The fresh run's own final file must not have been swept into the archive.
+    assert os.path.isfile(second[0]["clip_url"])
