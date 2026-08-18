@@ -227,6 +227,46 @@ def test_status_omits_a_source_clip_download_url_whose_file_is_missing(client, m
     assert thread["episode_b_download_url"] == "/download/clip_1_b.mp4"
 
 
+def test_status_thread_source_clip_under_raw_subfolder_gets_relative_download_url(client, monkeypatch, tmp_path):
+    """episode_a/episode_b source clips now live under out_dir/raw/thesis_N/
+    (see run_output.py's new thread folder layout) -- the download URL must
+    carry that relative path, not collapse to a bare basename, or the link
+    404s and _clip_file_exists wrongly reports the file as missing."""
+    out_dir = str(tmp_path / "_Threads" / "2026-08-18_a_x_b")
+    raw_dir = os.path.join(out_dir, "raw", "thesis_1")
+    os.makedirs(raw_dir, exist_ok=True)
+    clip_path = os.path.join(out_dir, "thesis_1_Title.mp4")
+    clip_a_path = os.path.join(raw_dir, "clip_1_a.mp4")
+    clip_b_path = os.path.join(raw_dir, "clip_1_b.mp4")
+    for p in (clip_path, clip_a_path, clip_b_path):
+        open(p, "wb").write(b"data")
+
+    def _fake_generate_threads(url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None):
+        if on_output_dir:
+            on_output_dir(out_dir)
+        return [{
+            "shared_question": "Does X cause Y?",
+            "thesis": "Two guests disagree.",
+            "bridge": "Here's the other side.",
+            "episode_a": {"title": "Episode A", "clip_url": clip_a_path},
+            "episode_b": {"title": "Episode B", "clip_url": clip_b_path},
+            "output_dir": out_dir,
+            "clip_url": clip_path,
+        }]
+
+    monkeypatch.setattr(webapp, "generate_threads", _fake_generate_threads)
+    monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
+
+    client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b"})
+    resp = client.get("/status")
+    data = resp.get_json()
+
+    thread = data["result"]["threads"][0]
+    assert thread["download_url"] == "/download/thesis_1_Title.mp4"
+    assert thread["episode_a_download_url"] == "/download/raw/thesis_1/clip_1_a.mp4"
+    assert thread["episode_b_download_url"] == "/download/raw/thesis_1/clip_1_b.mp4"
+
+
 def test_run_rejects_malformed_input_without_wedging_job_state(client, monkeypatch, tmp_path):
     resp = client.post("/run", data={"url": "https://youtube.example/x", "num_clips": "not-a-number"})
     assert resp.status_code == 400

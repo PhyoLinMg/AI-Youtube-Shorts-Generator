@@ -123,12 +123,28 @@ def _run_thread_job(url_a: str, url_b: str, num_clips: int) -> None:
             job.status = "failed"
 
 
+def _relative_clip_path(base_dir: Optional[str], clip_url: str) -> str:
+    """Path to use in a /download/<path:name> URL and in _safe_join lookups
+    -- relative to base_dir when clip_url lives under it. Works whether
+    clip_url is flat (regular Shorts/Chapters clips, where this equals the
+    bare basename) or nested (thread clips under raw/thesis_N/), falling
+    back to the bare basename when it isn't under base_dir at all."""
+    if base_dir:
+        try:
+            rel = os.path.relpath(clip_url, base_dir)
+        except ValueError:
+            rel = None
+        if rel and rel != "." and not rel.startswith(".."):
+            return rel
+    return os.path.basename(clip_url)
+
+
 def _clip_display_url(shorts_dir: Optional[str], clip_url: Optional[str]) -> Optional[str]:
     if not clip_url:
         return None
     if clip_url.startswith("http://") or clip_url.startswith("https://"):
         return clip_url
-    return f"/download/{os.path.basename(clip_url)}"
+    return f"/download/{_relative_clip_path(shorts_dir, clip_url)}"
 
 
 def _clip_filename_for_delete(clip_url: Optional[str]) -> Optional[str]:
@@ -149,7 +165,7 @@ def _clip_file_exists(shorts_dir: Optional[str], clip_url: Optional[str]) -> boo
         return True
     if not shorts_dir:
         return False
-    target = _safe_join(shorts_dir, os.path.basename(clip_url))
+    target = _safe_join(shorts_dir, _relative_clip_path(shorts_dir, clip_url))
     return bool(target and os.path.isfile(target))
 
 
