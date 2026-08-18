@@ -9,6 +9,7 @@ it into both modes. It also owns listing and summarizing past runs
 """
 import os
 import re
+import shutil
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -225,6 +226,35 @@ def resolve_thread_run_dir(
     root = os.path.join(base_dir, "_Threads", slug)
     os.makedirs(root, exist_ok=True)
     return root
+
+
+def archive_stale_thread_run(out_dir: str, now: Optional[datetime] = None) -> Optional[str]:
+    """If out_dir already holds a completed thread run (a thread_results.json
+    from an earlier call that picked the same date+slug -- i.e. a same-day
+    re-run of the same episode pair), move everything currently in it into
+    raw/stale/<HHMMSS>/ before the new run writes anything, so the two
+    runs' files can't silently mix. Returns the stale dir it archived into,
+    or None if out_dir had no prior completed run to archive."""
+    results_json = os.path.join(out_dir, "thread_results.json")
+    if not os.path.isfile(results_json):
+        return None
+
+    timestamp = (now or datetime.now()).strftime("%H%M%S")
+    stale_dir = os.path.join(out_dir, "raw", "stale", timestamp)
+    os.makedirs(stale_dir, exist_ok=True)
+
+    for name in os.listdir(out_dir):
+        if name == "raw":
+            continue
+        shutil.move(os.path.join(out_dir, name), os.path.join(stale_dir, name))
+
+    raw_dir = os.path.join(out_dir, "raw")
+    for name in os.listdir(raw_dir):
+        if name == "stale":
+            continue
+        shutil.move(os.path.join(raw_dir, name), os.path.join(stale_dir, name))
+
+    return stale_dir
 
 
 def write_source_url(paths: RunPaths, youtube_url: str) -> None:

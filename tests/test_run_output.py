@@ -240,6 +240,48 @@ def test_resolve_thread_run_dir_defaults_now_to_current_time(tmp_path):
     assert os.path.basename(result).startswith(today + "_")
 
 
+def test_archive_stale_thread_run_returns_none_when_no_prior_run(tmp_path):
+    out_dir = tmp_path / "thread"
+    out_dir.mkdir()
+    assert run_output.archive_stale_thread_run(str(out_dir)) is None
+
+
+def test_archive_stale_thread_run_moves_prior_run_into_raw_stale(tmp_path):
+    out_dir = tmp_path / "thread"
+    (out_dir / "raw" / "thesis_1").mkdir(parents=True)
+    (out_dir / "thread_results.json").write_text("[]")
+    (out_dir / "descriptions.txt").write_text("d")
+    (out_dir / "thesis_1_Old_Title.mp4").write_bytes(b"old final")
+    (out_dir / "raw" / "thesis_1" / "clip_1_a.mp4").write_bytes(b"old raw")
+
+    fixed_now = datetime(2026, 8, 18, 14, 30, 22)
+    stale_dir = run_output.archive_stale_thread_run(str(out_dir), now=fixed_now)
+
+    assert stale_dir == str(out_dir / "raw" / "stale" / "143022")
+    assert not (out_dir / "thread_results.json").exists()
+    assert not (out_dir / "thesis_1_Old_Title.mp4").exists()
+    assert (Path(stale_dir) / "thread_results.json").exists()
+    assert (Path(stale_dir) / "thesis_1_Old_Title.mp4").exists()
+    assert (Path(stale_dir) / "thesis_1" / "clip_1_a.mp4").exists()
+    assert set(os.listdir(out_dir)) == {"raw"}
+    assert set(os.listdir(out_dir / "raw")) == {"stale"}
+
+
+def test_archive_stale_thread_run_keeps_earlier_stale_archives(tmp_path):
+    """A second same-day re-run must not clobber the first re-run's
+    archive -- both timestamps should coexist under raw/stale/."""
+    out_dir = tmp_path / "thread"
+    (out_dir / "raw" / "stale" / "090000").mkdir(parents=True)
+    (out_dir / "raw" / "stale" / "090000" / "old.mp4").write_bytes(b"first archive")
+    (out_dir / "thread_results.json").write_text("[]")
+
+    fixed_now = datetime(2026, 8, 18, 14, 30, 22)
+    run_output.archive_stale_thread_run(str(out_dir), now=fixed_now)
+
+    assert (out_dir / "raw" / "stale" / "090000" / "old.mp4").exists()
+    assert (out_dir / "raw" / "stale" / "143022" / "thread_results.json").exists()
+
+
 from pathlib import Path
 
 import pytest
