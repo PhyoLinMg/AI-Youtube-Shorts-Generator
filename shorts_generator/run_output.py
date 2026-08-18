@@ -207,15 +207,21 @@ def resolve_output_dir(url_or_path: str, base_dir: Optional[str] = None) -> RunP
     )
 
 
-def resolve_thread_run_dir(title_a: str, title_b: str, base_dir: Optional[str] = None) -> str:
+def resolve_thread_run_dir(
+    title_a: str, title_b: str, base_dir: Optional[str] = None, now: Optional[datetime] = None,
+) -> str:
     """A thread run's output lives outside any single episode's RunPaths
     tree -- it draws footage from two existing episode runs, so it gets its
-    own output/_Threads/<slug>/ folder. Slugged from both episode titles
-    (fixed by the caller up front, see generate_threads in pipeline.py) --
-    not from a thesis, since one run can now produce more than one
-    thesis (see thread_builder.select_thread_pairs)."""
+    own output/_Threads/<date>_<slug>/ folder. Slugged from both episode
+    titles (fixed by the caller up front, see generate_threads in
+    pipeline.py) using short_slug() -- a more aggressive slugifier than
+    sanitize_title() above, since two full episode titles concatenated
+    together (the old scheme) made these folders unreadable. Date-prefixed
+    so same-day thread runs sort together and folders stay short-lived and
+    scannable in a plain file browser."""
     base_dir = base_dir or LOCAL_OUTPUT_DIR
-    slug = f"{sanitize_title(title_a)}_x_{sanitize_title(title_b)}"
+    date_prefix = (now or datetime.now()).strftime("%Y-%m-%d")
+    slug = f"{date_prefix}_{short_slug(title_a)}_x_{short_slug(title_b)}"
     root = os.path.join(base_dir, "_Threads", slug)
     os.makedirs(root, exist_ok=True)
     return root

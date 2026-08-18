@@ -1,5 +1,6 @@
 import os
 import shutil
+from datetime import datetime
 
 from shorts_generator import run_output
 
@@ -224,10 +225,19 @@ def test_resolve_output_dir_gives_chapters_its_own_result_json_path(tmp_path, mo
     assert paths.chapters_result_json != paths.result_json
 
 
-def test_resolve_thread_run_dir_slugifies_both_titles(tmp_path):
-    result = run_output.resolve_thread_run_dir("Episode A Title", "Episode B Title", base_dir=str(tmp_path))
-    assert result == str(tmp_path / "_Threads" / "Episode_A_Title_x_Episode_B_Title")
+def test_resolve_thread_run_dir_uses_date_and_short_slugs(tmp_path):
+    fixed_now = datetime(2026, 8, 18, 14, 30, 0)
+    result = run_output.resolve_thread_run_dir(
+        "Episode A Title", "Episode B Title", base_dir=str(tmp_path), now=fixed_now,
+    )
+    assert result == str(tmp_path / "_Threads" / "2026-08-18_episode-a-title_x_episode-b-title")
     assert os.path.isdir(result)
+
+
+def test_resolve_thread_run_dir_defaults_now_to_current_time(tmp_path):
+    result = run_output.resolve_thread_run_dir("Episode A Title", "Episode B Title", base_dir=str(tmp_path))
+    today = datetime.now().strftime("%Y-%m-%d")
+    assert os.path.basename(result).startswith(today + "_")
 
 
 from pathlib import Path
