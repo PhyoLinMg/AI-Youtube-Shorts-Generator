@@ -397,6 +397,18 @@ def test_write_thread_descriptions_falls_back_to_shared_question(tmp_path):
     assert content == "clip 1 (clip_1.mp4)\nTitle: Does X cause Y?\nDescription: d\n"
 
 
+def test_write_thread_descriptions_uses_actual_clip_url_basename(tmp_path):
+    threads = [{
+        "clip_url": "/some/output/_Threads/2026-08-18_a_x_b/thesis_1_Is_AI_a_threat.mp4",
+        "title": "Is AI a threat? #Shorts", "description": "Watch both takes.",
+    }]
+    path = run_output.write_thread_descriptions(str(tmp_path), threads)
+    content = Path(path).read_text()
+    assert content == (
+        "clip 1 (thesis_1_Is_AI_a_threat.mp4)\nTitle: Is AI a threat? #Shorts\nDescription: Watch both takes.\n"
+    )
+
+
 def test_write_descriptions_includes_hook_grade_line(tmp_path):
     shorts = [{
         "clip_url": "Short-01.mp4",

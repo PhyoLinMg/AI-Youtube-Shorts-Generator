@@ -421,21 +421,25 @@ def write_chapter_descriptions(chapters_dir: str, chapters: List[Dict]) -> str:
 def write_thread_descriptions(out_dir: str, threads: List[Dict]) -> str:
     """Write a copy-paste-ready descriptions.txt next to a thread run's clip
     files. One block per thread that actually has a clip_url, numbered by
-    position in `threads` -- this position matches the "i" pipeline.py's
-    generate_threads used to name that thread's own clip_{i}.mp4 (see
-    generate_threads), so "clip 1" here is clip_1.mp4 on disk. Threads
-    carry title/description at the top level (see thread_builder.
+    position in `threads` (not renumbered when an earlier entry is skipped)
+    -- this position matches the "i" pipeline.py's generate_threads used to
+    name that thread's own final file. The filename shown is the clip_url's
+    actual basename rather than a reconstructed pattern, since thread final
+    filenames are now derived from each thesis's own title (see
+    generate_threads), not a fixed clip_{i}.mp4. Threads carry
+    title/description at the top level (see thread_builder.
     select_thread_pairs) instead of per-highlight yt_title/yt_hashtags.
     Labeled "Title:"/"Description:" so each block can be copy-pasted
     straight into YouTube's upload form for that clip."""
     path = os.path.join(out_dir, "descriptions.txt")
     blocks = []
     for i, t in enumerate(threads, 1):
-        if not t.get("clip_url"):
+        clip_url = t.get("clip_url")
+        if not clip_url:
             continue
         title = (t.get("title") or t.get("shared_question") or "Untitled").strip()
         description = (t.get("description") or "").strip()
-        blocks.append(f"clip {i} (clip_{i}.mp4)\nTitle: {title}\nDescription: {description}")
+        blocks.append(f"clip {i} ({os.path.basename(clip_url)})\nTitle: {title}\nDescription: {description}")
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n\n".join(blocks))
