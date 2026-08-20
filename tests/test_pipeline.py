@@ -1400,3 +1400,48 @@ def test_generate_threads_returns_empty_list_when_all_platforms_ground_nothing(t
     )
 
     assert result == []
+
+
+def test_warn_if_under_tiktok_minimum_logs_for_short_clip(monkeypatch, capsys):
+    monkeypatch.setattr(pipeline_module, "_probe_local_duration", lambda path: 45.0)
+
+    pipeline_module._warn_if_under_tiktok_minimum("/some/out/thesis_1_tiktok_Title.mp4")
+
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "thesis_1_tiktok_Title.mp4" in out
+    assert "45.0s" in out
+
+
+def test_warn_if_under_tiktok_minimum_silent_for_long_clip(monkeypatch, capsys):
+    monkeypatch.setattr(pipeline_module, "_probe_local_duration", lambda path: 75.0)
+
+    pipeline_module._warn_if_under_tiktok_minimum("/some/out/thesis_1_tiktok_Title.mp4")
+
+    out = capsys.readouterr().out
+    assert "WARNING" not in out
+
+
+def test_warn_if_under_tiktok_minimum_swallows_probe_failure(monkeypatch, capsys):
+    def _fail(path):
+        raise RuntimeError("ffprobe not found")
+
+    monkeypatch.setattr(pipeline_module, "_probe_local_duration", _fail)
+
+    pipeline_module._warn_if_under_tiktok_minimum("/some/out/thesis_1_tiktok_Title.mp4")  # must not raise
+
+    out = capsys.readouterr().out
+    assert "WARNING" not in out
+
+
+def test_generate_threads_only_probes_duration_for_tiktok_clips(tmp_path, monkeypatch):
+    _setup_both_platform_thread_run(tmp_path, monkeypatch)
+    probed_paths = []
+    monkeypatch.setattr(pipeline_module, "_probe_local_duration", lambda path: probed_paths.append(path) or 75.0)
+
+    pipeline_module.generate_threads(
+        "https://example.com/a", "https://example.com/b", num_clips=1, platform="both", base_dir=str(tmp_path),
+    )
+
+    assert len(probed_paths) == 1
+    assert "tiktok" in probed_paths[0]

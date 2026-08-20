@@ -24,7 +24,7 @@ from .local.caption_ingest import ingest_captions
 from .local.llm import call_openai_vision_llm
 from .local.narration import render_narration_card, synthesize_narration
 from .local.thread_assembler import assemble_thread
-from .local.thread_source import acquire_clip
+from .local.thread_source import _probe_local_duration, acquire_clip
 from .run_output import RunPaths, archive_stale_thread_run, capture_progress_log, resolve_output_dir, resolve_thread_run_dir, sanitize_title, write_chapter_descriptions, write_descriptions, write_source_url, write_thread_descriptions
 from .thread_builder import find_same_topic_pairs, ground_thread_clips
 from .transcriber import transcribe
@@ -470,6 +470,26 @@ def _ingest_and_abstract(url: str, base_dir: Optional[str], llm_fn) -> Dict:
     return {"run_dir": run_dir, "title": ingested["title"], "source_url": url, "abstract": abstract}
 
 
+def _warn_if_under_tiktok_minimum(clip_path: str) -> None:
+    """TikTok's Creator Rewards Program only pays out on videos 60s or
+    longer -- thread_builder.PLATFORM_BOUNDS["tiktok"] steers the LLM's
+    clip picks to make a sub-60s assembly unlikely, but narration audio
+    length isn't independently bounded, so this is a defense-in-depth
+    check on the actual assembled file, not a substitute for the picker's
+    own bounds. Non-fatal: logs only, never deletes the file or aborts the
+    run."""
+    try:
+        duration = _probe_local_duration(clip_path)
+    except Exception:
+        return
+    if duration < 60.0:
+        print(
+            f"[pipeline/local] WARNING: TikTok cut {os.path.basename(clip_path)} is "
+            f"{duration:.1f}s, under the 60s Creator Rewards minimum",
+            flush=True,
+        )
+
+
 def generate_threads(
     url_a: str,
     url_b: str,
@@ -620,6 +640,8 @@ def generate_threads(
                     final_path = os.path.join(out_dir, f"thesis_{i}_{p}_{sanitize_title(final_title)}.mp4")
                     print("[pipeline/local] assembling final thread (intro -> clip A -> bridge -> clip B)...", flush=True)
                     assemble_thread([intro_card, clip_a_path, bridge_card, clip_b_path], final_path)
+                    if p == "tiktok":
+                        _warn_if_under_tiktok_minimum(final_path)
 
                     results.append({
                         **thread,
