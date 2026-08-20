@@ -205,7 +205,7 @@ def test_main_dispatches_to_generate_threads_for_clip_type_thread(monkeypatch, c
     exit_code = main()
 
     assert exit_code == 0
-    assert calls == [("https://example.com/a", "https://example.com/b", {"num_clips": 3})]
+    assert calls == [("https://example.com/a", "https://example.com/b", {"num_clips": 3, "platform": "youtube"})]
     captured = capsys.readouterr()
     assert "Does X cause Y?" in captured.out
 
@@ -297,3 +297,59 @@ def test_main_no_thread_message_is_actionable(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert exit_code == 1
     assert "different pair" in err
+
+
+def test_platform_flag_defaults_to_youtube():
+    args = build_parser().parse_args(["--clip-type", "thread"])
+    assert args.platform == "youtube"
+
+
+def test_platform_flag_accepts_tiktok_and_both():
+    args = build_parser().parse_args(["--clip-type", "thread", "--platform", "tiktok"])
+    assert args.platform == "tiktok"
+    args = build_parser().parse_args(["--clip-type", "thread", "--platform", "both"])
+    assert args.platform == "both"
+
+
+def test_main_passes_platform_through_to_generate_threads(monkeypatch, capsys):
+    captured_kwargs = {}
+
+    def _fake_generate_threads(url_a, url_b, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _fake_thread_results()
+
+    monkeypatch.setattr(main_module, "generate_threads", _fake_generate_threads)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["main.py", "https://example.com/a", "--url-b", "https://example.com/b", "--clip-type", "thread", "--platform", "tiktok"],
+    )
+
+    main()
+
+    assert captured_kwargs["platform"] == "tiktok"
+
+
+def test_main_warns_when_platform_passed_with_clip_type_shorts(monkeypatch, capsys):
+    monkeypatch.setattr(
+        main_module, "generate_shorts",
+        lambda **kwargs: {"mode": "api", "output_dir": "d", "source_video_url": "u", "highlights": [], "shorts": []},
+    )
+    monkeypatch.setattr(sys, "argv", ["main.py", "https://youtube.example/x", "--platform", "tiktok"])
+
+    main()
+
+    err = capsys.readouterr().err
+    assert "--platform tiktok" in err
+
+
+def test_main_does_not_warn_when_platform_omitted_with_clip_type_shorts(monkeypatch, capsys):
+    monkeypatch.setattr(
+        main_module, "generate_shorts",
+        lambda **kwargs: {"mode": "api", "output_dir": "d", "source_video_url": "u", "highlights": [], "shorts": []},
+    )
+    monkeypatch.setattr(sys, "argv", ["main.py", "https://youtube.example/x"])
+
+    main()
+
+    err = capsys.readouterr().err
+    assert "--platform" not in err

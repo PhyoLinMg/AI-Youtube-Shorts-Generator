@@ -105,6 +105,15 @@ def build_parser() -> argparse.ArgumentParser:
              "no video download.",
     )
     parser.add_argument(
+        "--platform",
+        choices=["youtube", "tiktok", "both"],
+        default="youtube",
+        help="--clip-type thread only: youtube (default, 45-60s target) or "
+             "tiktok (65-90s target, code-enforced to clear TikTok's 60s "
+             "Creator Rewards Program minimum), or both (produce one file "
+             "of each).",
+    )
+    parser.add_argument(
         "--num-chapters",
         type=int,
         default=5,
@@ -184,16 +193,28 @@ def main() -> int:
             ignored_flags.append(f"--num-clips {args.num_clips}")
         if args.filename_style is not None:
             ignored_flags.append(f"--filename-style {args.filename_style}")
+        if args.platform != "youtube":
+            ignored_flags.append(f"--platform {args.platform}")
         if ignored_flags:
             print(
                 f"[main] --clip-type chapters ignores: {', '.join(ignored_flags)} "
                 "(no crop, no card overlays in this path)",
                 file=sys.stderr,
             )
+    elif args.clip_type == "shorts" and args.platform != "youtube":
+        # --platform is thread-only -- everywhere else, silently doing
+        # nothing with an explicitly-passed flag would be surprising, so
+        # warn the same way the thread/chapters blocks above warn about
+        # their own out-of-scope flags.
+        print(
+            f"[main] --clip-type shorts ignores: --platform {args.platform} "
+            "(platform only applies to --clip-type thread)",
+            file=sys.stderr,
+        )
 
     try:
         if args.clip_type == "thread":
-            result = generate_threads(url_a=args.url, url_b=args.url_b, num_clips=args.num_clips)
+            result = generate_threads(url_a=args.url, url_b=args.url_b, num_clips=args.num_clips, platform=args.platform)
         elif args.clip_type == "chapters":
             result = generate_chapters(
                 youtube_url=args.url,
