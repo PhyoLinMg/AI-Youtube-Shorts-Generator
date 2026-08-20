@@ -127,6 +127,100 @@ def test_pick_thread_clips_prompt_has_no_avoid_block_when_none_given():
     assert "already-used" not in seen_prompts[0]
 
 
+def test_pick_thread_clips_tiktok_platform_rejects_span_below_28_seconds():
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
+        "clip_a": {"start_time": 0.0, "end_time": 27.9},
+        "clip_b": {"start_time": 0.0, "end_time": 30.0},
+    })
+
+    assert thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn, platform="tiktok") is None
+
+
+def test_pick_thread_clips_tiktok_platform_accepts_span_at_28_seconds():
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
+        "clip_a": {"start_time": 0.0, "end_time": 28.0},
+        "clip_b": {"start_time": 0.0, "end_time": 30.0},
+    })
+
+    result = thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn, platform="tiktok")
+
+    assert result["clip_a"] == {"start_time": 0.0, "end_time": 28.0}
+
+
+def test_pick_thread_clips_tiktok_platform_rejects_span_above_40_seconds():
+    episode_a = _episode(100.0, [(0.0, 45.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
+        "clip_a": {"start_time": 0.0, "end_time": 40.1},
+        "clip_b": {"start_time": 0.0, "end_time": 30.0},
+    })
+
+    assert thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn, platform="tiktok") is None
+
+
+def test_pick_thread_clips_defaults_to_youtube_platform_bounds():
+    """A 30s clip_a span exceeds youtube's 8-25s bound (thread_builder.
+    PLATFORM_BOUNDS) but sits well inside tiktok's 28-40s bound -- it must
+    still be rejected when platform is omitted, proving "youtube" is the
+    implicit default rather than "tiktok" (a bug here would silently pass
+    this pick through instead of rejecting it)."""
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
+        "clip_a": {"start_time": 0.0, "end_time": 30.0},
+        "clip_b": {"start_time": 0.0, "end_time": 20.0},
+    })
+
+    assert thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn) is None
+
+
+def test_pick_thread_clips_prompt_uses_tiktok_length_instructions():
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    seen_prompts = []
+
+    def llm_fn(prompt):
+        seen_prompts.append(prompt)
+        return json.dumps({
+            "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
+            "clip_a": {"start_time": 0.0, "end_time": 30.0},
+            "clip_b": {"start_time": 0.0, "end_time": 30.0},
+        })
+
+    thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn, platform="tiktok")
+
+    assert "28-40 seconds" in seen_prompts[0]
+    assert "65-90 second" in seen_prompts[0]
+    assert "do not use extra length just because it's available" in seen_prompts[0]
+
+
+def test_pick_thread_clips_prompt_uses_youtube_length_instructions_by_default():
+    episode_a = _episode(100.0, [(0.0, 30.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    seen_prompts = []
+
+    def llm_fn(prompt):
+        seen_prompts.append(prompt)
+        return json.dumps({
+            "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
+            "clip_a": {"start_time": 0.0, "end_time": 20.0},
+            "clip_b": {"start_time": 0.0, "end_time": 20.0},
+        })
+
+    thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn)
+
+    assert "12-22 seconds" in seen_prompts[0]
+    assert "45-60 second" in seen_prompts[0]
+
+
 def test_find_same_topic_pairs_returns_up_to_num_pairs_questions():
     entry_a = _corpus_entry(0, "Ep A", "discusses remote work and also housing policy", "/tmp/a")
     entry_b = _corpus_entry(1, "Ep B", "discusses remote work and also housing policy", "/tmp/b")

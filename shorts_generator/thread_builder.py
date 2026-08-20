@@ -59,8 +59,8 @@ You will be given the full transcript of TWO episodes, each labeled with absolut
 Rules:
 - start_time must land on the exact line where the speaker begins answering the shared question -- never on preamble, a host's question, or unrelated chat before it.
 - end_time must land where that specific answer finishes -- never mid-sentence, never trailing into the next unrelated topic.
-- Duration per clip: 12-22 seconds. If the answer runs longer, pick the single most complete self-contained span within it -- do not use extra length just because it's available.
-- The whole video (thesis + clip A + bridge + clip B) must land in the 45-60 second range, so both narration lines and both clips need to be tight.
+- Duration per clip: {clip_range}. If the answer runs longer, pick the single most complete self-contained span within it -- do not use extra length just because it's available.
+- The whole video (thesis + clip A + bridge + clip B) must land in the {total_range} range, so both narration lines and both clips need to be tight.
 - Write a "thesis" -- ONE punchy sentence (max ~12 words) a narrator would say BEFORE either clip plays. This is the scroll-stopping HOOK -- it must grab the viewer in the first 1-3 seconds. Name the shared question and hint at the tension or disagreement between the two answers, but do NOT reveal what either speaker actually said, which side they land on, or any number/percentage/statistic from either transcript. Stay mysterious -- the viewer has to watch both clips to find out. No throat-clearing, no setup, no filler words.
 - Write a "bridge" -- ONE punchy sentence (max ~12 words) a narrator would say BETWEEN the two clips, pivoting from what episode A's speaker just said to what episode B's speaker is about to say -- without giving away episode B's actual answer or any number/percentage/statistic from either transcript. Same energy as the thesis: fast, sharp, zero filler, still mysterious.
 - Write a "title" -- max 100 characters TOTAL, including 1-2 trailing hashtags (e.g. "#Shorts #ai"). Aggressive clickbait style (curiosity gap, "vs", stakes) that hooks a scroller without revealing the outcome or either speaker's actual position. Accurate to the shared question, never spoils the answer. Do NOT include any number, percentage, or statistic pulled from either transcript -- a number IS the spoiler.
@@ -76,8 +76,18 @@ Episode B transcript:
 Respond ONLY with valid JSON (no markdown, no explanation):
 {{"grounded": bool, "thesis": "string", "bridge": "string", "title": "string", "description": "string", "clip_a": {{"start_time": float, "end_time": float}}, "clip_b": {{"start_time": float, "end_time": float}}}}"""
 
-MIN_CLIP_SECONDS = 8.0
-MAX_CLIP_SECONDS = 25.0  # keeps thesis+clip_a+bridge+clip_b inside the 45-60s target
+# Per-platform clip-span bounds. TikTok's Creator Rewards Program only pays
+# out on videos 60s+ (duets/stitches/sub-60s videos earn nothing regardless
+# of views) -- min_clip=28.0 is chosen so the worst-case assembly (two
+# clips at the floor + a conservative ~8s narration floor) still clears 60s
+# with margin: 2*28 + 8 = 64s. max_clip=40.0 keeps the ceiling inside the
+# 2026 "1-3 minute but don't pad past what completion rate can support"
+# sweet spot (worst-case ceiling 2*40+14=94s). See
+# docs/superpowers/specs/2026-08-20-thread-dual-platform-design.md Section 1.
+PLATFORM_BOUNDS = {
+    "youtube": {"min_clip": 8.0, "max_clip": 25.0, "clip_range": "12-22 seconds", "total_range": "45-60 second"},
+    "tiktok": {"min_clip": 28.0, "max_clip": 40.0, "clip_range": "28-40 seconds", "total_range": "65-90 second"},
+}
 
 
 def _coerce_float_or_none(value: object) -> Optional[float]:
@@ -129,7 +139,7 @@ def _sanitize_topic_picks_multi(raw: object, num_pairs: int) -> List[str]:
     return questions
 
 
-def _sanitize_clip_span(raw: object, duration: float) -> Optional[Dict]:
+def _sanitize_clip_span(raw: object, duration: float, min_clip: float, max_clip: float) -> Optional[Dict]:
     if not isinstance(raw, dict):
         return None
     start = _coerce_float_or_none(raw.get("start_time"))
@@ -141,12 +151,12 @@ def _sanitize_clip_span(raw: object, duration: float) -> Optional[Dict]:
         if end <= start:
             return None
     span = end - start
-    if span < MIN_CLIP_SECONDS or span > MAX_CLIP_SECONDS:
+    if span < min_clip or span > max_clip:
         return None
     return {"start_time": start, "end_time": end}
 
 
-def _sanitize_clip_pick(raw: object, duration_a: float, duration_b: float) -> Optional[Dict]:
+def _sanitize_clip_pick(raw: object, duration_a: float, duration_b: float, min_clip: float, max_clip: float) -> Optional[Dict]:
     if not isinstance(raw, dict) or not raw.get("grounded"):
         return None
     raw_thesis = raw.get("thesis")
@@ -163,8 +173,8 @@ def _sanitize_clip_pick(raw: object, duration_a: float, duration_b: float) -> Op
     description = raw_description.strip()[:200]
     if not thesis or not bridge or not title or not description:
         return None
-    clip_a = _sanitize_clip_span(raw.get("clip_a"), duration_a)
-    clip_b = _sanitize_clip_span(raw.get("clip_b"), duration_b)
+    clip_a = _sanitize_clip_span(raw.get("clip_a"), duration_a, min_clip, max_clip)
+    clip_b = _sanitize_clip_span(raw.get("clip_b"), duration_b, min_clip, max_clip)
     if clip_a is None or clip_b is None:
         return None
     return {"thesis": thesis, "bridge": bridge, "title": title, "description": description, "clip_a": clip_a, "clip_b": clip_b}
@@ -209,6 +219,7 @@ def pick_thread_clips(
     episode_a: Dict, episode_b: Dict, shared_question: str, llm_fn: LLMFn,
     avoid_ranges_a: Optional[List[Tuple[float, float]]] = None,
     avoid_ranges_b: Optional[List[Tuple[float, float]]] = None,
+    platform: str = "youtube",
 ) -> Optional[Dict]:
     """Stage B. episode_a/episode_b must each have a "transcript" key (full
     {duration, segments} shape). Returns None if the model can't ground a
@@ -216,10 +227,16 @@ def pick_thread_clips(
     if given, are (start_time, end_time) spans already used by an earlier
     accepted pick in this same thread run (see select_thread_pairs) -- told
     to the model as a soft steer; the caller still enforces non-overlap
-    itself as a hard backstop, since the model can ignore this."""
+    itself as a hard backstop, since the model can ignore this. platform
+    selects the clip-span length bounds from PLATFORM_BOUNDS -- "youtube"
+    (default, 45-60s target) or "tiktok" (65-90s target, code-enforced to
+    clear TikTok's 60s Creator Rewards minimum)."""
+    bounds = PLATFORM_BOUNDS[platform]
     prompt = THREAD_PICK_SYSTEM_PROMPT.format(
         shared_question=shared_question,
         avoid_block=_format_avoid_block(avoid_ranges_a, avoid_ranges_b),
+        clip_range=bounds["clip_range"],
+        total_range=bounds["total_range"],
         transcript_a=build_transcript_text(episode_a["transcript"]),
         transcript_b=build_transcript_text(episode_b["transcript"]),
     )
@@ -231,6 +248,8 @@ def pick_thread_clips(
         parsed,
         duration_a=episode_a["transcript"].get("duration", 0.0),
         duration_b=episode_b["transcript"].get("duration", 0.0),
+        min_clip=bounds["min_clip"],
+        max_clip=bounds["max_clip"],
     )
 
 
