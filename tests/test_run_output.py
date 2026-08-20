@@ -369,43 +369,57 @@ def test_write_descriptions_falls_back_on_missing_fields(tmp_path):
 
 def test_write_thread_descriptions_formats_one_block_per_clip(tmp_path):
     threads = [
-        {"clip_url": "clip_1.mp4", "title": "Title One #Shorts", "description": "Watch clip one."},
-        {"clip_url": "clip_2.mp4", "title": "Title Two #Shorts", "description": "Watch clip two."},
+        {"clip_url": "clip_1.mp4", "title": "Title One #Shorts", "description": "Watch clip one.", "platform": "youtube", "platform_index": 1},
+        {"clip_url": "clip_2.mp4", "title": "Title Two #Shorts", "description": "Watch clip two.", "platform": "youtube", "platform_index": 2},
     ]
     path = run_output.write_thread_descriptions(str(tmp_path), threads)
     content = Path(path).read_text()
     assert content == (
-        "clip 1 (clip_1.mp4)\nTitle: Title One #Shorts\nDescription: Watch clip one.\n\n"
-        "clip 2 (clip_2.mp4)\nTitle: Title Two #Shorts\nDescription: Watch clip two.\n"
+        "clip 1 [youtube] (clip_1.mp4)\nTitle: Title One #Shorts\nDescription: Watch clip one.\n\n"
+        "clip 2 [youtube] (clip_2.mp4)\nTitle: Title Two #Shorts\nDescription: Watch clip two.\n"
     )
 
 
 def test_write_thread_descriptions_skips_ungrounded_threads_without_renumbering(tmp_path):
     threads = [
         {"clip_url": None, "shared_question": "no clip made"},
-        {"clip_url": "clip_2.mp4", "title": "Title Two #Shorts", "description": "Watch clip two."},
+        {"clip_url": "clip_2.mp4", "title": "Title Two #Shorts", "description": "Watch clip two.", "platform": "youtube", "platform_index": 2},
     ]
     path = run_output.write_thread_descriptions(str(tmp_path), threads)
     content = Path(path).read_text()
-    assert content == "clip 2 (clip_2.mp4)\nTitle: Title Two #Shorts\nDescription: Watch clip two.\n"
+    assert content == "clip 2 [youtube] (clip_2.mp4)\nTitle: Title Two #Shorts\nDescription: Watch clip two.\n"
 
 
 def test_write_thread_descriptions_falls_back_to_shared_question(tmp_path):
-    threads = [{"clip_url": "clip_1.mp4", "shared_question": "Does X cause Y?", "description": "d"}]
+    threads = [{"clip_url": "clip_1.mp4", "shared_question": "Does X cause Y?", "description": "d", "platform": "youtube", "platform_index": 1}]
     path = run_output.write_thread_descriptions(str(tmp_path), threads)
     content = Path(path).read_text()
-    assert content == "clip 1 (clip_1.mp4)\nTitle: Does X cause Y?\nDescription: d\n"
+    assert content == "clip 1 [youtube] (clip_1.mp4)\nTitle: Does X cause Y?\nDescription: d\n"
 
 
 def test_write_thread_descriptions_uses_actual_clip_url_basename(tmp_path):
     threads = [{
-        "clip_url": "/some/output/_Threads/2026-08-18_a_x_b/thesis_1_Is_AI_a_threat.mp4",
+        "clip_url": "/some/output/_Threads/2026-08-18_a_x_b/thesis_1_tiktok_Is_AI_a_threat.mp4",
         "title": "Is AI a threat? #Shorts", "description": "Watch both takes.",
+        "platform": "tiktok", "platform_index": 1,
     }]
     path = run_output.write_thread_descriptions(str(tmp_path), threads)
     content = Path(path).read_text()
     assert content == (
-        "clip 1 (thesis_1_Is_AI_a_threat.mp4)\nTitle: Is AI a threat? #Shorts\nDescription: Watch both takes.\n"
+        "clip 1 [tiktok] (thesis_1_tiktok_Is_AI_a_threat.mp4)\nTitle: Is AI a threat? #Shorts\nDescription: Watch both takes.\n"
+    )
+
+
+def test_write_thread_descriptions_numbers_restart_per_platform(tmp_path):
+    threads = [
+        {"clip_url": "thesis_1_youtube_A.mp4", "title": "A", "description": "d", "platform": "youtube", "platform_index": 1},
+        {"clip_url": "thesis_1_tiktok_A.mp4", "title": "A", "description": "d", "platform": "tiktok", "platform_index": 1},
+    ]
+    path = run_output.write_thread_descriptions(str(tmp_path), threads)
+    content = Path(path).read_text()
+    assert content == (
+        "clip 1 [youtube] (thesis_1_youtube_A.mp4)\nTitle: A\nDescription: d\n\n"
+        "clip 1 [tiktok] (thesis_1_tiktok_A.mp4)\nTitle: A\nDescription: d\n"
     )
 
 

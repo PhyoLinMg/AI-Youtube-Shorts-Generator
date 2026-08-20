@@ -420,26 +420,34 @@ def write_chapter_descriptions(chapters_dir: str, chapters: List[Dict]) -> str:
 
 def write_thread_descriptions(out_dir: str, threads: List[Dict]) -> str:
     """Write a copy-paste-ready descriptions.txt next to a thread run's clip
-    files. One block per thread that actually has a clip_url, numbered by
-    position in `threads` (not renumbered when an earlier entry is skipped)
-    -- this position matches the "i" pipeline.py's generate_threads used to
-    name that thread's own final file. The filename shown is the clip_url's
-    actual basename rather than a reconstructed pattern, since thread final
-    filenames are now derived from each thesis's own title (see
-    generate_threads), not a fixed clip_{i}.mp4. Threads carry
-    title/description at the top level (see thread_builder.
-    select_thread_pairs) instead of per-highlight yt_title/yt_hashtags.
-    Labeled "Title:"/"Description:" so each block can be copy-pasted
-    straight into YouTube's upload form for that clip."""
+    files. One block per thread that actually has a clip_url. Numbered by
+    each entry's own "platform_index" (falling back to its position in
+    `threads` when that key is absent, e.g. for a caller that never went
+    through pipeline.generate_threads) rather than flat list position --
+    generate_threads numbers each platform's own results from 1, so a
+    flattened multi-platform list can contain two entries both carrying
+    "platform_index": 1 (one youtube, one tiktok); using flat position here
+    would drift from the "i" in each entry's own filename
+    (thesis_{i}_{platform}_*.mp4), the exact class of bug fixed once
+    already in commit ddda8cc. Each block is tagged with "[{platform}]" so
+    same-numbered blocks from different platforms stay unambiguous. The
+    filename shown is the clip_url's actual basename rather than a
+    reconstructed pattern. Threads carry title/description at the top
+    level (see thread_builder.ground_thread_clips) instead of
+    per-highlight yt_title/yt_hashtags. Labeled "Title:"/"Description:" so
+    each block can be copy-pasted straight into YouTube's or TikTok's
+    upload form for that clip."""
     path = os.path.join(out_dir, "descriptions.txt")
     blocks = []
-    for i, t in enumerate(threads, 1):
+    for pos, t in enumerate(threads, 1):
         clip_url = t.get("clip_url")
         if not clip_url:
             continue
+        index = t.get("platform_index") or pos
+        platform = t.get("platform") or "youtube"
         title = (t.get("title") or t.get("shared_question") or "Untitled").strip()
         description = (t.get("description") or "").strip()
-        blocks.append(f"clip {i} ({os.path.basename(clip_url)})\nTitle: {title}\nDescription: {description}")
+        blocks.append(f"clip {index} [{platform}] ({os.path.basename(clip_url)})\nTitle: {title}\nDescription: {description}")
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n\n".join(blocks))
