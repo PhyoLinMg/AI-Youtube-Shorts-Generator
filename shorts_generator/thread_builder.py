@@ -84,9 +84,13 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 # 2026 "1-3 minute but don't pad past what completion rate can support"
 # sweet spot (worst-case ceiling 2*40+14=94s). See
 # docs/superpowers/specs/2026-08-20-thread-dual-platform-design.md Section 1.
+# clip_range is deliberately narrower than [min_clip, max_clip] for both
+# platforms -- it steers the LLM toward the middle of the accepted band so
+# a slightly-off pick still clears the hard bound instead of getting
+# silently dropped by _sanitize_clip_span.
 PLATFORM_BOUNDS = {
     "youtube": {"min_clip": 8.0, "max_clip": 25.0, "clip_range": "12-22 seconds", "total_range": "45-60 second"},
-    "tiktok": {"min_clip": 28.0, "max_clip": 40.0, "clip_range": "28-40 seconds", "total_range": "65-90 second"},
+    "tiktok": {"min_clip": 28.0, "max_clip": 40.0, "clip_range": "30-38 seconds", "total_range": "65-90 second"},
 }
 
 

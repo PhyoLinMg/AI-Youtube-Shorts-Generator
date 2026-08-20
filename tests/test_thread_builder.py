@@ -165,6 +165,20 @@ def test_pick_thread_clips_tiktok_platform_rejects_span_above_40_seconds():
     assert thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn, platform="tiktok") is None
 
 
+def test_pick_thread_clips_tiktok_platform_accepts_span_at_40_seconds():
+    episode_a = _episode(100.0, [(0.0, 40.0, "hello")])
+    episode_b = _episode(100.0, [(0.0, 30.0, "world")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
+        "clip_a": {"start_time": 0.0, "end_time": 40.0},
+        "clip_b": {"start_time": 0.0, "end_time": 30.0},
+    })
+
+    result = thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn, platform="tiktok")
+
+    assert result["clip_a"] == {"start_time": 0.0, "end_time": 40.0}
+
+
 def test_pick_thread_clips_defaults_to_youtube_platform_bounds():
     """A 30s clip_a span exceeds youtube's 8-25s bound (thread_builder.
     PLATFORM_BOUNDS) but sits well inside tiktok's 28-40s bound -- it must
@@ -197,7 +211,7 @@ def test_pick_thread_clips_prompt_uses_tiktok_length_instructions():
 
     thread_builder.pick_thread_clips(episode_a, episode_b, "q?", llm_fn, platform="tiktok")
 
-    assert "28-40 seconds" in seen_prompts[0]
+    assert "30-38 seconds" in seen_prompts[0]
     assert "65-90 second" in seen_prompts[0]
     assert "do not use extra length just because it's available" in seen_prompts[0]
 
