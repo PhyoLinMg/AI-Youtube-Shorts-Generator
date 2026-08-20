@@ -54,6 +54,13 @@ def test_index_returns_the_dashboard_page(client):
     assert b'id="url"' in resp.data
 
 
+def test_index_thread_platform_select_present(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert b'id="platform"' in resp.data
+    assert b'value="tiktok"' in resp.data
+
+
 class _SyncThread:
     """Runs the target synchronously in start(), for deterministic tests."""
 

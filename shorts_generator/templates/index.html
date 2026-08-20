@@ -609,10 +609,18 @@
             <input type="text" id="url_a" name="url_a" placeholder="https://www.youtube.com/watch?v=...">
             <label for="url_b">Episode B URL</label>
             <input type="text" id="url_b" name="url_b" placeholder="https://www.youtube.com/watch?v=...">
+            <label for="platform">Platform</label>
+            <select id="platform" name="platform">
+              <option value="youtube">YouTube (45-60s)</option>
+              <option value="tiktok">TikTok (65-90s, Creator Rewards eligible)</option>
+              <option value="both">Both</option>
+            </select>
             <p style="opacity:0.7; font-size:0.9em;">
               Captions only are fetched for both URLs (no video download) to find shared-question
               topics between them. Up to "Num clips" distinct threads are built, each cutting a
-              matched span from both episodes around a narrated bridge.
+              matched span from both episodes around a narrated bridge. TikTok's Creator Rewards
+              Program only pays out on videos 60s or longer, so the TikTok cut targets a longer
+              span than the YouTube one.
             </p>
           </div>
 
