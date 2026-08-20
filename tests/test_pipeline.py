@@ -1034,7 +1034,7 @@ def test_generate_threads_returns_empty_list_when_no_shared_questions(tmp_path, 
         "https://example.com/b": {"run_dir": str(episode_b_dir), "title": "Episode B", "duration": 200.0, "segment_count": 0},
     }))
     monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: "an abstract")
-    monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: [])
+    monkeypatch.setattr(pipeline_module, "find_same_topic_pairs", lambda entry_a, entry_b, num_clips, llm_fn: [])
 
     result = pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=2, base_dir=str(tmp_path))
 
@@ -1067,7 +1067,8 @@ def test_generate_threads_assembles_and_writes_results_for_each_pair(tmp_path, m
             "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 35.0, "end_time": 55.0},
         },
     ]
-    monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: fake_pairs)
+    monkeypatch.setattr(pipeline_module, "find_same_topic_pairs", lambda entry_a, entry_b, num_clips, llm_fn: ["Does X cause Y?", "Does A cause B?"])
+    monkeypatch.setattr(pipeline_module, "ground_thread_clips", lambda entry_a, entry_b, transcript_a, transcript_b, shared_questions, num_clips, llm_fn, platform="youtube": fake_pairs)
     monkeypatch.setattr(
         local_downloader_module, "download_youtube_local",
         lambda url, target_path, fmt="720": open(target_path, "wb").write(b"full source") or target_path,
@@ -1082,14 +1083,17 @@ def test_generate_threads_assembles_and_writes_results_for_each_pair(tmp_path, m
 
     assert len(result) == 2
     out_dir = result[0]["output_dir"]
-    assert result[0]["clip_url"] == os.path.join(out_dir, "thesis_1_Title_One_Shorts.mp4")
-    assert result[1]["clip_url"] == os.path.join(out_dir, "thesis_2_Title_Two_Shorts.mp4")
-    assert result[0]["episode_a"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_1", "clip_1_a.mp4")
-    assert result[0]["episode_b"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_1", "clip_1_b.mp4")
-    assert result[1]["episode_a"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_2", "clip_2_a.mp4")
+    assert result[0]["platform"] == "youtube"
+    assert result[0]["platform_index"] == 1
+    assert result[1]["platform_index"] == 2
+    assert result[0]["clip_url"] == os.path.join(out_dir, "thesis_1_youtube_Title_One_Shorts.mp4")
+    assert result[1]["clip_url"] == os.path.join(out_dir, "thesis_2_youtube_Title_Two_Shorts.mp4")
+    assert result[0]["episode_a"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_1_youtube", "clip_1_a.mp4")
+    assert result[0]["episode_b"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_1_youtube", "clip_1_b.mp4")
+    assert result[1]["episode_a"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_2_youtube", "clip_2_a.mp4")
     assert assemble_calls[0] == [
-        os.path.join(out_dir, "raw", "thesis_1", "intro_card_1.mp4"), os.path.join(out_dir, "raw", "thesis_1", "clip_1_a.mp4"),
-        os.path.join(out_dir, "raw", "thesis_1", "bridge_card_1.mp4"), os.path.join(out_dir, "raw", "thesis_1", "clip_1_b.mp4"),
+        os.path.join(out_dir, "raw", "thesis_1_youtube", "intro_card_1.mp4"), os.path.join(out_dir, "raw", "thesis_1_youtube", "clip_1_a.mp4"),
+        os.path.join(out_dir, "raw", "thesis_1_youtube", "bridge_card_1.mp4"), os.path.join(out_dir, "raw", "thesis_1_youtube", "clip_1_b.mp4"),
     ]
     assert os.path.isfile(os.path.join(out_dir, "thread_results.json"))
     with open(os.path.join(out_dir, "thread_results.json")) as f:
@@ -1116,7 +1120,8 @@ def test_generate_threads_calls_on_output_dir_before_the_slow_work(tmp_path, mon
         "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
         "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
     }]
-    monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: fake_pairs)
+    monkeypatch.setattr(pipeline_module, "find_same_topic_pairs", lambda entry_a, entry_b, num_clips, llm_fn: ["Does X cause Y?"])
+    monkeypatch.setattr(pipeline_module, "ground_thread_clips", lambda entry_a, entry_b, transcript_a, transcript_b, shared_questions, num_clips, llm_fn, platform="youtube": fake_pairs)
     monkeypatch.setattr(
         local_downloader_module, "download_youtube_local",
         lambda url, target_path, fmt="720": open(target_path, "wb").write(b"full source") or target_path,
@@ -1159,7 +1164,8 @@ def _setup_thread_run(tmp_path, monkeypatch, num_pairs=2):
         "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0 * i, "end_time": 10.0 * i + 5},
         "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 10.0 * i, "end_time": 10.0 * i + 5},
     } for i in range(1, num_pairs + 1)]
-    monkeypatch.setattr(pipeline_module, "select_thread_pairs", lambda entry_a, entry_b, transcript_a, transcript_b, num_clips, llm_fn: fake_pairs)
+    monkeypatch.setattr(pipeline_module, "find_same_topic_pairs", lambda entry_a, entry_b, num_clips, llm_fn: [f"Question {i}?" for i in range(1, num_pairs + 1)])
+    monkeypatch.setattr(pipeline_module, "ground_thread_clips", lambda entry_a, entry_b, transcript_a, transcript_b, shared_questions, num_clips, llm_fn, platform="youtube": fake_pairs)
     monkeypatch.setattr(pipeline_module, "acquire_clip", lambda run_dir, source_url, cached_duration, start_time, end_time, out_path: open(out_path, "wb").write(b"clip") or {"clip_path": out_path})
     monkeypatch.setattr(pipeline_module, "synthesize_narration", lambda text, out_path, **k: open(out_path, "wb").write(b"audio") or out_path)
     monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
@@ -1248,7 +1254,7 @@ def test_generate_threads_final_filename_falls_back_to_shared_question_when_titl
     result = pipeline_module.generate_threads("https://example.com/a", "https://example.com/b", num_clips=1, base_dir=str(tmp_path))
 
     out_dir = result[0]["output_dir"]
-    assert result[0]["clip_url"] == os.path.join(out_dir, "thesis_1_Question_1.mp4")
+    assert result[0]["clip_url"] == os.path.join(out_dir, "thesis_1_youtube_Question_1.mp4")
 
 
 def test_generate_threads_archives_prior_same_slug_run_before_second_call(tmp_path, monkeypatch):
@@ -1276,3 +1282,121 @@ def test_generate_threads_archives_prior_same_slug_run_before_second_call(tmp_pa
     assert os.path.isfile(os.path.join(stale_root, archived_dirs[0], "thread_results.json"))
     # The fresh run's own final file must not have been swept into the archive.
     assert os.path.isfile(second[0]["clip_url"])
+
+
+def _setup_both_platform_thread_run(tmp_path, monkeypatch, tiktok_pairs=None):
+    """Like _setup_thread_run but drives find_same_topic_pairs/ground_thread_clips
+    directly so a test can vary ground_thread_clips' per-platform return
+    value (e.g. simulate tiktok grounding nothing for a question youtube
+    still grounds)."""
+    episode_a_dir = tmp_path / "Episode_A"
+    episode_b_dir = tmp_path / "Episode_B"
+    episode_a_dir.mkdir()
+    episode_b_dir.mkdir()
+    (episode_a_dir / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+    (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
+
+    monkeypatch.setattr(pipeline_module, "ingest_captions", _fake_ingest_captions({
+        "https://example.com/a": {"run_dir": str(episode_a_dir), "title": "Episode A", "duration": 100.0, "segment_count": 0},
+        "https://example.com/b": {"run_dir": str(episode_b_dir), "title": "Episode B", "duration": 200.0, "segment_count": 0},
+    }))
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: "an abstract")
+    monkeypatch.setattr(pipeline_module, "find_same_topic_pairs", lambda entry_a, entry_b, num_clips, llm_fn: ["Does X cause Y?"])
+
+    def _youtube_pair():
+        return [{
+            "shared_question": "Does X cause Y?", "thesis": "t", "bridge": "b", "title": "Title youtube",
+            "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 30.0},
+            "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 25.0},
+        }]
+
+    def _fake_ground(entry_a, entry_b, transcript_a, transcript_b, shared_questions, num_clips, llm_fn, platform="youtube"):
+        if platform == "tiktok":
+            return tiktok_pairs if tiktok_pairs is not None else [{
+                "shared_question": "Does X cause Y?", "thesis": "t", "bridge": "b", "title": "Title tiktok",
+                "episode_a": {"run_dir": str(episode_a_dir), "title": "Episode A", "source_url": "https://example.com/a", "start_time": 10.0, "end_time": 45.0},
+                "episode_b": {"run_dir": str(episode_b_dir), "title": "Episode B", "source_url": "https://example.com/b", "start_time": 5.0, "end_time": 40.0},
+            }]
+        return _youtube_pair()
+
+    monkeypatch.setattr(pipeline_module, "ground_thread_clips", _fake_ground)
+    monkeypatch.setattr(
+        local_downloader_module, "download_youtube_local",
+        lambda url, target_path, fmt="720": open(target_path, "wb").write(b"full source") or target_path,
+    )
+    monkeypatch.setattr(pipeline_module, "acquire_clip", lambda run_dir, source_url, cached_duration, start_time, end_time, out_path: open(out_path, "wb").write(b"clip") or {"clip_path": out_path})
+    monkeypatch.setattr(pipeline_module, "synthesize_narration", lambda text, out_path, **k: open(out_path, "wb").write(b"audio") or out_path)
+    monkeypatch.setattr(pipeline_module, "render_narration_card", lambda audio_path, text, out_path: open(out_path, "wb").write(b"card") or out_path)
+    monkeypatch.setattr(pipeline_module, "assemble_thread", lambda segment_paths, out_path: open(out_path, "wb").write(b"final") or out_path)
+
+
+def test_generate_threads_both_platforms_produce_distinct_named_files(tmp_path, monkeypatch):
+    _setup_both_platform_thread_run(tmp_path, monkeypatch)
+
+    result = pipeline_module.generate_threads(
+        "https://example.com/a", "https://example.com/b", num_clips=1, platform="both", base_dir=str(tmp_path),
+    )
+
+    assert len(result) == 2
+    out_dir = result[0]["output_dir"]
+    assert {r["platform"] for r in result} == {"youtube", "tiktok"}
+    youtube_result = next(r for r in result if r["platform"] == "youtube")
+    tiktok_result = next(r for r in result if r["platform"] == "tiktok")
+    assert youtube_result["clip_url"] == os.path.join(out_dir, "thesis_1_youtube_Title_youtube.mp4")
+    assert tiktok_result["clip_url"] == os.path.join(out_dir, "thesis_1_tiktok_Title_tiktok.mp4")
+    assert youtube_result["platform_index"] == 1
+    assert tiktok_result["platform_index"] == 1
+    assert youtube_result["episode_a"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_1_youtube", "clip_1_a.mp4")
+    assert tiktok_result["episode_a"]["clip_url"] == os.path.join(out_dir, "raw", "thesis_1_tiktok", "clip_1_a.mp4")
+
+
+def test_generate_threads_both_platforms_call_find_same_topic_pairs_once(tmp_path, monkeypatch):
+    _setup_both_platform_thread_run(tmp_path, monkeypatch)
+    stage_a_calls = []
+    original = pipeline_module.find_same_topic_pairs
+
+    def _counting_find(entry_a, entry_b, num_clips, llm_fn):
+        stage_a_calls.append(1)
+        return ["Does X cause Y?"]
+
+    monkeypatch.setattr(pipeline_module, "find_same_topic_pairs", _counting_find)
+
+    pipeline_module.generate_threads(
+        "https://example.com/a", "https://example.com/b", num_clips=1, platform="both", base_dir=str(tmp_path),
+    )
+
+    assert len(stage_a_calls) == 1
+
+
+def test_generate_threads_returns_results_for_one_platform_when_other_grounds_nothing(tmp_path, monkeypatch):
+    _setup_both_platform_thread_run(tmp_path, monkeypatch, tiktok_pairs=[])
+
+    result = pipeline_module.generate_threads(
+        "https://example.com/a", "https://example.com/b", num_clips=1, platform="both", base_dir=str(tmp_path),
+    )
+
+    assert len(result) == 1
+    assert result[0]["platform"] == "youtube"
+
+
+def test_generate_threads_returns_empty_list_when_all_platforms_ground_nothing(tmp_path, monkeypatch):
+    episode_a_dir = tmp_path / "Episode_A"
+    episode_b_dir = tmp_path / "Episode_B"
+    episode_a_dir.mkdir()
+    episode_b_dir.mkdir()
+    (episode_a_dir / "full_source.json").write_text(json.dumps({"duration": 100.0, "segments": []}))
+    (episode_b_dir / "full_source.json").write_text(json.dumps({"duration": 200.0, "segments": []}))
+
+    monkeypatch.setattr(pipeline_module, "ingest_captions", _fake_ingest_captions({
+        "https://example.com/a": {"run_dir": str(episode_a_dir), "title": "Episode A", "duration": 100.0, "segment_count": 0},
+        "https://example.com/b": {"run_dir": str(episode_b_dir), "title": "Episode B", "duration": 200.0, "segment_count": 0},
+    }))
+    monkeypatch.setattr(pipeline_module, "get_abstract_cached", lambda run_dir, transcript, llm_fn=None: "an abstract")
+    monkeypatch.setattr(pipeline_module, "find_same_topic_pairs", lambda entry_a, entry_b, num_clips, llm_fn: ["Does X cause Y?"])
+    monkeypatch.setattr(pipeline_module, "ground_thread_clips", lambda entry_a, entry_b, transcript_a, transcript_b, shared_questions, num_clips, llm_fn, platform="youtube": [])
+
+    result = pipeline_module.generate_threads(
+        "https://example.com/a", "https://example.com/b", num_clips=1, platform="both", base_dir=str(tmp_path),
+    )
+
+    assert result == []

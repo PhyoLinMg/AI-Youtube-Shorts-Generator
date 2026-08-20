@@ -26,7 +26,7 @@ from .local.narration import render_narration_card, synthesize_narration
 from .local.thread_assembler import assemble_thread
 from .local.thread_source import acquire_clip
 from .run_output import RunPaths, archive_stale_thread_run, capture_progress_log, resolve_output_dir, resolve_thread_run_dir, sanitize_title, write_chapter_descriptions, write_descriptions, write_source_url, write_thread_descriptions
-from .thread_builder import select_thread_pairs
+from .thread_builder import find_same_topic_pairs, ground_thread_clips
 from .transcriber import transcribe
 from .visual_hook import call_muapi_vision_llm, score_visual_hooks
 
@@ -474,17 +474,32 @@ def generate_threads(
     url_a: str,
     url_b: str,
     num_clips: int = 1,
+    platform: str = "youtube",
     base_dir: Optional[str] = None,
     on_output_dir: Optional[Callable[[str], None]] = None,
 ) -> List[Dict]:
     """Build up to num_clips distinct-topic threads from exactly the two
-    given episodes (see thread_builder.select_thread_pairs). Local-mode
+    given episodes (see thread_builder.ground_thread_clips). Local-mode
     only, like generate_chapters -- there is no MuAPI equivalent of this
     feature. Both URLs are ingested caption-only (no video download; see
     local/caption_ingest.py) and idempotently reused if already in the
     corpus. Returns [] if no shared question is groundable between the two
-    episodes -- this is the expected, correct result when they don't
-    genuinely cover the same topic, not a failure to work around.
+    episodes, or if every requested platform grounds zero clip pairs for
+    every shared question -- this is the expected, correct result when
+    they don't genuinely cover the same topic (or, for tiktok, when no
+    span in the transcript is long enough), not a failure to work around.
+
+    platform selects the output cut(s): "youtube" (default, 45-60s
+    target), "tiktok" (65-90s target, code-enforced by
+    thread_builder.PLATFORM_BOUNDS to clear TikTok's 60s Creator Rewards
+    Program minimum), or "both" (produce one file of each). The
+    same-topic-question scan (thread_builder.find_same_topic_pairs) runs
+    exactly once regardless of platform -- it has no dependency on clip
+    length, so its result is reused across every requested platform's own
+    grounding pass (thread_builder.ground_thread_clips). Output files are
+    named thesis_{i}_{platform}_{title}.mp4, with raw intermediates under
+    raw/thesis_{i}_{platform}/, where i is 1-indexed within that
+    platform's own results (not the flattened combined list).
 
     Unlike generate_shorts/generate_chapters, the output dir is knowable up
     front from the two episode titles (see resolve_thread_run_dir) -- but
@@ -496,6 +511,8 @@ def generate_threads(
 
     from .local.downloader import download_youtube_local
     from .local.llm import call_local_llm
+
+    platforms = ["youtube", "tiktok"] if platform == "both" else [platform]
 
     # url_a and url_b are two unrelated episodes -- each ingest is its own
     # yt-dlp caption fetch plus, on a cache miss, its own LLM abstract call,
@@ -523,8 +540,16 @@ def generate_threads(
             transcript_b = json.load(f)
 
         print(f"[pipeline/local] scanning for up to {num_clips} shared-question thread(s)...", flush=True)
-        pairs = select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips, call_local_llm)
-        if not pairs:
+        shared_questions = find_same_topic_pairs(entry_a, entry_b, num_clips, call_local_llm)
+        if not shared_questions:
+            return []
+
+        pairs_by_platform = {}
+        for p in platforms:
+            pairs_by_platform[p] = ground_thread_clips(
+                entry_a, entry_b, transcript_a, transcript_b, shared_questions, num_clips, call_local_llm, platform=p,
+            )
+        if not any(pairs_by_platform.values()):
             return []
 
         # Download each episode's full video exactly once up front instead of
@@ -557,51 +582,55 @@ def generate_threads(
                     future.result()
 
             results = []
-            for i, thread in enumerate(pairs, 1):
-                episode_a, episode_b = thread["episode_a"], thread["episode_b"]
-                print(f"[pipeline/local] clip {i}/{len(pairs)}: {thread['shared_question']!r}", flush=True)
+            for p in platforms:
+                pairs = pairs_by_platform[p]
+                for i, thread in enumerate(pairs, 1):
+                    episode_a, episode_b = thread["episode_a"], thread["episode_b"]
+                    print(f"[pipeline/local] [{p}] clip {i}/{len(pairs)}: {thread['shared_question']!r}", flush=True)
 
-                thesis_dir = os.path.join(out_dir, "raw", f"thesis_{i}")
-                os.makedirs(thesis_dir, exist_ok=True)
+                    thesis_dir = os.path.join(out_dir, "raw", f"thesis_{i}_{p}")
+                    os.makedirs(thesis_dir, exist_ok=True)
 
-                clip_a_path = os.path.join(thesis_dir, f"clip_{i}_a.mp4")
-                clip_b_path = os.path.join(thesis_dir, f"clip_{i}_b.mp4")
-                print(f"[pipeline/local] acquiring clip A from {episode_a['title']!r}...", flush=True)
-                acquire_clip(
-                    episode_a["run_dir"], episode_a["source_url"], cached_duration=transcript_a.get("duration") or 0.0,
-                    start_time=episode_a["start_time"], end_time=episode_a["end_time"], out_path=clip_a_path,
-                )
-                print(f"[pipeline/local] acquiring clip B from {episode_b['title']!r}...", flush=True)
-                acquire_clip(
-                    episode_b["run_dir"], episode_b["source_url"], cached_duration=transcript_b.get("duration") or 0.0,
-                    start_time=episode_b["start_time"], end_time=episode_b["end_time"], out_path=clip_b_path,
-                )
+                    clip_a_path = os.path.join(thesis_dir, f"clip_{i}_a.mp4")
+                    clip_b_path = os.path.join(thesis_dir, f"clip_{i}_b.mp4")
+                    print(f"[pipeline/local] acquiring clip A from {episode_a['title']!r}...", flush=True)
+                    acquire_clip(
+                        episode_a["run_dir"], episode_a["source_url"], cached_duration=transcript_a.get("duration") or 0.0,
+                        start_time=episode_a["start_time"], end_time=episode_a["end_time"], out_path=clip_a_path,
+                    )
+                    print(f"[pipeline/local] acquiring clip B from {episode_b['title']!r}...", flush=True)
+                    acquire_clip(
+                        episode_b["run_dir"], episode_b["source_url"], cached_duration=transcript_b.get("duration") or 0.0,
+                        start_time=episode_b["start_time"], end_time=episode_b["end_time"], out_path=clip_b_path,
+                    )
 
-                intro_audio = os.path.join(thesis_dir, f"thesis_{i}.mp3")
-                bridge_audio = os.path.join(thesis_dir, f"bridge_{i}.mp3")
-                print("[pipeline/local] synthesizing narration (thesis + bridge)...", flush=True)
-                synthesize_narration(thread["thesis"], intro_audio)
-                synthesize_narration(thread["bridge"], bridge_audio)
+                    intro_audio = os.path.join(thesis_dir, f"thesis_{i}.mp3")
+                    bridge_audio = os.path.join(thesis_dir, f"bridge_{i}.mp3")
+                    print("[pipeline/local] synthesizing narration (thesis + bridge)...", flush=True)
+                    synthesize_narration(thread["thesis"], intro_audio)
+                    synthesize_narration(thread["bridge"], bridge_audio)
 
-                intro_card = os.path.join(thesis_dir, f"intro_card_{i}.mp4")
-                bridge_card = os.path.join(thesis_dir, f"bridge_card_{i}.mp4")
-                print("[pipeline/local] rendering narration cards...", flush=True)
-                render_narration_card(intro_audio, thread["thesis"], intro_card)
-                render_narration_card(bridge_audio, thread["bridge"], bridge_card)
+                    intro_card = os.path.join(thesis_dir, f"intro_card_{i}.mp4")
+                    bridge_card = os.path.join(thesis_dir, f"bridge_card_{i}.mp4")
+                    print("[pipeline/local] rendering narration cards...", flush=True)
+                    render_narration_card(intro_audio, thread["thesis"], intro_card)
+                    render_narration_card(bridge_audio, thread["bridge"], bridge_card)
 
-                final_title = thread.get("title") or thread["shared_question"]
-                final_path = os.path.join(out_dir, f"thesis_{i}_{sanitize_title(final_title)}.mp4")
-                print("[pipeline/local] assembling final thread (intro -> clip A -> bridge -> clip B)...", flush=True)
-                assemble_thread([intro_card, clip_a_path, bridge_card, clip_b_path], final_path)
+                    final_title = thread.get("title") or thread["shared_question"]
+                    final_path = os.path.join(out_dir, f"thesis_{i}_{p}_{sanitize_title(final_title)}.mp4")
+                    print("[pipeline/local] assembling final thread (intro -> clip A -> bridge -> clip B)...", flush=True)
+                    assemble_thread([intro_card, clip_a_path, bridge_card, clip_b_path], final_path)
 
-                results.append({
-                    **thread,
-                    "output_dir": out_dir,
-                    "clip_url": final_path,
-                    "episode_a": {**episode_a, "clip_url": clip_a_path},
-                    "episode_b": {**episode_b, "clip_url": clip_b_path},
-                })
-                print(f"[pipeline/local] done: {final_path}", flush=True)
+                    results.append({
+                        **thread,
+                        "platform": p,
+                        "platform_index": i,
+                        "output_dir": out_dir,
+                        "clip_url": final_path,
+                        "episode_a": {**episode_a, "clip_url": clip_a_path},
+                        "episode_b": {**episode_b, "clip_url": clip_b_path},
+                    })
+                    print(f"[pipeline/local] done: {final_path}", flush=True)
         finally:
             # Clean up regardless of success/failure mid-loop -- an
             # abandoned multi-GB full_source.mp4 from a crashed run is worse
