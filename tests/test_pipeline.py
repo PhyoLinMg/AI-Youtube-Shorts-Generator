@@ -1432,6 +1432,7 @@ def test_warn_if_under_tiktok_minimum_swallows_probe_failure(monkeypatch, capsys
 
     out = capsys.readouterr().out
     assert "WARNING" not in out
+    assert "ffprobe not found" in out or "RuntimeError" in out
 
 
 def test_generate_threads_only_probes_duration_for_tiktok_clips(tmp_path, monkeypatch):

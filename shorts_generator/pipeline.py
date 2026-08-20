@@ -480,7 +480,12 @@ def _warn_if_under_tiktok_minimum(clip_path: str) -> None:
     run."""
     try:
         duration = _probe_local_duration(clip_path)
-    except Exception:
+    except Exception as e:
+        print(
+            f"[pipeline/local] could not probe duration of {os.path.basename(clip_path)} "
+            f"for TikTok-minimum check: {e}",
+            flush=True,
+        )
         return
     if duration < 60.0:
         print(
