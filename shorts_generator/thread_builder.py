@@ -262,29 +262,26 @@ def _overlaps_any(span: Tuple[float, float], ranges: List[Tuple[float, float]]) 
     return any(start < r_end and end > r_start for r_start, r_end in ranges)
 
 
-def select_thread_pairs(
+def ground_thread_clips(
     entry_a: Dict, entry_b: Dict, transcript_a: Dict, transcript_b: Dict,
-    num_clips: int, llm_fn: LLMFn,
+    shared_questions: List[str], num_clips: int, llm_fn: LLMFn, platform: str = "youtube",
 ) -> List[Dict]:
-    """Multi-pair picker for a FIXED pair of episodes (see
-    pipeline.generate_threads, which ingests entry_a/entry_b and their
-    transcripts up front). entry_a/entry_b need "run_dir", "title",
-    "source_url", "abstract"; transcript_a/transcript_b are the full
-    {duration, segments} shape.
+    """Stage B driver. Given a pre-computed shared_questions list (see
+    find_same_topic_pairs), grounds up to num_clips non-overlapping clip
+    pairs for the given platform. Split out from select_thread_pairs so a
+    caller building both a "youtube" and a "tiktok" cut of the same thread
+    run can call find_same_topic_pairs (the expensive same-topic LLM scan)
+    exactly once and reuse its shared_questions for both platform passes --
+    see pipeline.generate_threads.
 
     Returns up to num_clips grounded, non-overlapping thread dicts, each
     shaped like {"shared_question", "thesis", "bridge", "title",
     "description", "episode_a", "episode_b"} where episode_a/b carry
     run_dir/title/source_url plus the picked start_time/end_time. Returns
-    [] rather than raising whenever
-    fewer than num_clips (including zero) are groundable -- refuse rather
-    than force, same philosophy as the old whole-corpus build_thread."""
+    [] rather than raising whenever fewer than num_clips (including zero)
+    are groundable -- refuse rather than force, same philosophy as the old
+    whole-corpus build_thread."""
     if num_clips < 1:
-        return []
-
-    shared_questions = find_same_topic_pairs(entry_a, entry_b, num_clips, llm_fn)
-    if not shared_questions:
-        print("[thread_builder] no same-topic questions found between the two episodes -- refusing to build a thread", flush=True)
         return []
 
     results: List[Dict] = []
@@ -300,6 +297,7 @@ def select_thread_pairs(
                 {**entry_b, "transcript": transcript_b},
                 shared_question, llm_fn,
                 avoid_ranges_a=used_ranges_a, avoid_ranges_b=used_ranges_b,
+                platform=platform,
             )
         except Exception as e:
             print(f"[thread_builder] skipping {shared_question!r}: {e}", flush=True)
@@ -327,3 +325,29 @@ def select_thread_pairs(
         })
 
     return results
+
+
+def select_thread_pairs(
+    entry_a: Dict, entry_b: Dict, transcript_a: Dict, transcript_b: Dict,
+    num_clips: int, llm_fn: LLMFn,
+) -> List[Dict]:
+    """Multi-pair picker for a FIXED pair of episodes (see
+    pipeline.generate_threads, which ingests entry_a/entry_b and their
+    transcripts up front). entry_a/entry_b need "run_dir", "title",
+    "source_url", "abstract"; transcript_a/transcript_b are the full
+    {duration, segments} shape.
+
+    Single-platform ("youtube") convenience wrapper around
+    find_same_topic_pairs + ground_thread_clips -- see ground_thread_clips
+    for the return shape. pipeline.generate_threads calls the two stages
+    directly instead of this wrapper when it needs to share one
+    find_same_topic_pairs call across multiple platforms."""
+    if num_clips < 1:
+        return []
+
+    shared_questions = find_same_topic_pairs(entry_a, entry_b, num_clips, llm_fn)
+    if not shared_questions:
+        print("[thread_builder] no same-topic questions found between the two episodes -- refusing to build a thread", flush=True)
+        return []
+
+    return ground_thread_clips(entry_a, entry_b, transcript_a, transcript_b, shared_questions, num_clips, llm_fn)

@@ -517,3 +517,63 @@ def test_select_thread_pairs_tolerates_malformed_transcript_segment_shape():
     result = thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=1, llm_fn=llm_fn)
 
     assert result == []
+
+
+def test_ground_thread_clips_does_not_call_find_same_topic_pairs(monkeypatch):
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+
+    def _fail_if_called(entry_a, entry_b, num_pairs, llm_fn):
+        pytest.fail("ground_thread_clips must not call find_same_topic_pairs -- shared_questions is an argument")
+
+    monkeypatch.setattr(thread_builder, "find_same_topic_pairs", _fail_if_called)
+
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
+        "clip_a": {"start_time": 0.0, "end_time": 20.0}, "clip_b": {"start_time": 0.0, "end_time": 20.0},
+    })
+
+    result = thread_builder.ground_thread_clips(
+        entry_a, entry_b, transcript_a, transcript_b, ["Question one?"], num_clips=1, llm_fn=llm_fn,
+    )
+
+    assert len(result) == 1
+
+
+def test_ground_thread_clips_uses_tiktok_bounds_when_given_platform():
+    entry_a = _corpus_entry(0, "Ep A", "abstract a", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "abstract b", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 60.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 60.0, "hello from b")])
+    llm_fn = lambda prompt: json.dumps({
+        "grounded": True, "thesis": "t", "bridge": "b", "title": "Title #Shorts", "description": "d",
+        "clip_a": {"start_time": 0.0, "end_time": 20.0},  # valid for youtube, too short for tiktok
+        "clip_b": {"start_time": 0.0, "end_time": 20.0},
+    })
+
+    result = thread_builder.ground_thread_clips(
+        entry_a, entry_b, transcript_a, transcript_b, ["Question one?"], num_clips=1, llm_fn=llm_fn, platform="tiktok",
+    )
+
+    assert result == []
+
+
+def test_select_thread_pairs_calls_ground_thread_clips_with_default_platform(monkeypatch):
+    entry_a = _corpus_entry(0, "Ep A", "argues remote work increases productivity", "/tmp/a")
+    entry_b = _corpus_entry(1, "Ep B", "argues remote work decreases productivity", "/tmp/b")
+    transcript_a = _transcript(100.0, [(0.0, 30.0, "hello from a")])
+    transcript_b = _transcript(100.0, [(0.0, 30.0, "hello from b")])
+    seen_platforms = []
+
+    def _fake_ground(entry_a, entry_b, transcript_a, transcript_b, shared_questions, num_clips, llm_fn, platform="youtube"):
+        seen_platforms.append(platform)
+        return []
+
+    monkeypatch.setattr(thread_builder, "ground_thread_clips", _fake_ground)
+    llm_fn = lambda prompt: json.dumps({"shared_questions": ["Does remote work increase or decrease productivity?"]})
+
+    thread_builder.select_thread_pairs(entry_a, entry_b, transcript_a, transcript_b, num_clips=1, llm_fn=llm_fn)
+
+    assert seen_platforms == ["youtube"]
