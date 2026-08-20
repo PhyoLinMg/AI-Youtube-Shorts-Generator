@@ -90,13 +90,14 @@ def _run_job(
             job.status = "failed"
 
 
-def _run_thread_job(url_a: str, url_b: str, num_clips: int) -> None:
+def _run_thread_job(url_a: str, url_b: str, num_clips: int, platform: str = "youtube") -> None:
     """Ingests url_a/url_b caption-only (no video download) and builds up
     to num_clips distinct shared-question threads between them -- see
-    generate_threads in pipeline.py. Like _run_job, the output dir isn't
-    known until generate_threads has resolved it from the two episode
-    titles, so job.progress_log/shorts_dir are set via the on_output_dir
-    callback."""
+    generate_threads in pipeline.py. platform selects "youtube" (default),
+    "tiktok", or "both" -- see generate_threads. Like _run_job, the output
+    dir isn't known until generate_threads has resolved it from the two
+    episode titles, so job.progress_log/shorts_dir are set via the
+    on_output_dir callback."""
     def _on_output_dir(out_dir: str) -> None:
         with _job_lock:
             job.status = "running"
@@ -104,7 +105,7 @@ def _run_thread_job(url_a: str, url_b: str, num_clips: int) -> None:
             job.shorts_dir = out_dir
 
     try:
-        result = generate_threads(url_a, url_b, num_clips=num_clips, on_output_dir=_on_output_dir)
+        result = generate_threads(url_a, url_b, num_clips=num_clips, platform=platform, on_output_dir=_on_output_dir)
         with _job_lock:
             if not result:
                 job.error = (
@@ -215,6 +216,7 @@ def _serialize_thread_results(results: List[Dict], out_dir: Optional[str]) -> Di
             "bridge": r.get("bridge"),
             "title": r.get("title"),
             "description": r.get("description"),
+            "platform": r.get("platform"),
             "episode_a": r.get("episode_a"),
             "episode_b": r.get("episode_b"),
             "download_url": _clip_display_url(out_dir, clip_url),
@@ -260,6 +262,9 @@ def start_run():
             num_clips = int(request.form.get("num_clips", 2))
         except (TypeError, ValueError) as e:
             return jsonify({"error": f"invalid input: {e}"}), 400
+        platform = request.form.get("platform", "youtube")
+        if platform not in ("youtube", "tiktok", "both"):
+            return jsonify({"error": f"invalid platform: {platform!r}"}), 400
 
         with _job_lock:
             if job.status in ("starting", "running"):
@@ -272,7 +277,7 @@ def start_run():
             job.result = None
             job.error = None
 
-        threading.Thread(target=_run_thread_job, args=(url_a, url_b, num_clips), daemon=True).start()
+        threading.Thread(target=_run_thread_job, args=(url_a, url_b, num_clips, platform), daemon=True).start()
         return jsonify({"status": "starting"}), 202
 
     url = request.form.get("url", "").strip()

@@ -123,7 +123,7 @@ def test_run_thread_starts_a_job_and_reaches_done(client, monkeypatch, tmp_path)
         "clip_url": clip_path,
     }]
 
-    def _fake_generate_threads(url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None):
+    def _fake_generate_threads(url_a, url_b, num_clips=1, platform="youtube", base_dir=None, on_output_dir=None):
         if on_output_dir:
             on_output_dir(out_dir)
         return fake_results
@@ -140,7 +140,7 @@ def test_run_thread_starts_a_job_and_reaches_done(client, monkeypatch, tmp_path)
 
 
 def test_run_thread_fails_with_a_helpful_message_when_no_pair_found(client, monkeypatch):
-    monkeypatch.setattr(webapp, "generate_threads", lambda url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None: [])
+    monkeypatch.setattr(webapp, "generate_threads", lambda url_a, url_b, num_clips=1, platform="youtube", base_dir=None, on_output_dir=None: [])
     monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
 
     resp = client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b"})
@@ -158,13 +158,14 @@ def test_status_serializes_thread_results_and_omits_run_name(client, monkeypatch
     for p in (clip_path, clip_a_path, clip_b_path):
         open(p, "wb").write(b"data")
 
-    def _fake_generate_threads(url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None):
+    def _fake_generate_threads(url_a, url_b, num_clips=1, platform="youtube", base_dir=None, on_output_dir=None):
         if on_output_dir:
             on_output_dir(out_dir)
         return [{
             "shared_question": "Does X cause Y?",
             "thesis": "Two guests disagree.",
             "bridge": "Here's the other side.",
+            "platform": "youtube",
             "episode_a": {"title": "Episode A", "clip_url": clip_a_path},
             "episode_b": {"title": "Episode B", "clip_url": clip_b_path},
             "output_dir": out_dir,
@@ -186,6 +187,7 @@ def test_status_serializes_thread_results_and_omits_run_name(client, monkeypatch
     assert thread["download_url"] == "/download/clip_1.mp4"
     assert thread["episode_a_download_url"] == "/download/clip_1_a.mp4"
     assert thread["episode_b_download_url"] == "/download/clip_1_b.mp4"
+    assert thread["platform"] == "youtube"
 
 
 def test_status_omits_a_source_clip_download_url_whose_file_is_missing(client, monkeypatch, tmp_path):
@@ -201,7 +203,7 @@ def test_status_omits_a_source_clip_download_url_whose_file_is_missing(client, m
     for p in (clip_path, clip_b_path):
         open(p, "wb").write(b"data")
 
-    def _fake_generate_threads(url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None):
+    def _fake_generate_threads(url_a, url_b, num_clips=1, platform="youtube", base_dir=None, on_output_dir=None):
         if on_output_dir:
             on_output_dir(out_dir)
         return [{
@@ -241,7 +243,7 @@ def test_status_thread_source_clip_under_raw_subfolder_gets_relative_download_ur
     for p in (clip_path, clip_a_path, clip_b_path):
         open(p, "wb").write(b"data")
 
-    def _fake_generate_threads(url_a, url_b, num_clips=1, base_dir=None, on_output_dir=None):
+    def _fake_generate_threads(url_a, url_b, num_clips=1, platform="youtube", base_dir=None, on_output_dir=None):
         if on_output_dir:
             on_output_dir(out_dir)
         return [{
@@ -265,6 +267,89 @@ def test_status_thread_source_clip_under_raw_subfolder_gets_relative_download_ur
     assert thread["download_url"] == "/download/thesis_1_Title.mp4"
     assert thread["episode_a_download_url"] == "/download/raw/thesis_1/clip_1_a.mp4"
     assert thread["episode_b_download_url"] == "/download/raw/thesis_1/clip_1_b.mp4"
+
+
+def test_run_thread_passes_platform_through_to_generate_threads(client, monkeypatch):
+    captured = {}
+
+    def _fake_generate_threads(url_a, url_b, num_clips=1, platform="youtube", base_dir=None, on_output_dir=None):
+        captured["platform"] = platform
+        return []
+
+    monkeypatch.setattr(webapp, "generate_threads", _fake_generate_threads)
+    monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
+
+    client.post("/run", data={
+        "clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b", "platform": "tiktok",
+    })
+
+    assert captured["platform"] == "tiktok"
+
+
+def test_run_thread_defaults_platform_to_youtube(client, monkeypatch):
+    captured = {}
+
+    def _fake_generate_threads(url_a, url_b, num_clips=1, platform="youtube", base_dir=None, on_output_dir=None):
+        captured["platform"] = platform
+        return []
+
+    monkeypatch.setattr(webapp, "generate_threads", _fake_generate_threads)
+    monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
+
+    client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b"})
+
+    assert captured["platform"] == "youtube"
+
+
+def test_run_thread_rejects_invalid_platform(client):
+    resp = client.post("/run", data={
+        "clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b", "platform": "instagram",
+    })
+    assert resp.status_code == 400
+    assert "platform" in resp.get_json()["error"]
+
+
+def test_status_thread_source_clip_under_platform_suffixed_raw_subfolder_gets_relative_download_url(client, monkeypatch, tmp_path):
+    """episode_a/episode_b source clips now live under
+    out_dir/raw/thesis_N_{platform}/ (see pipeline.generate_threads'
+    platform-suffixed naming) -- the download URL must carry that relative
+    path. _relative_clip_path/_clip_display_url were already fixed once for
+    nested raw/thesis_N/ paths (95fa8b1); this pins the same fix under the
+    deeper platform-suffixed nesting so it doesn't silently regress."""
+    out_dir = str(tmp_path / "_Threads" / "2026-08-20_a_x_b")
+    raw_dir = os.path.join(out_dir, "raw", "thesis_1_tiktok")
+    os.makedirs(raw_dir, exist_ok=True)
+    clip_path = os.path.join(out_dir, "thesis_1_tiktok_Title.mp4")
+    clip_a_path = os.path.join(raw_dir, "clip_1_a.mp4")
+    clip_b_path = os.path.join(raw_dir, "clip_1_b.mp4")
+    for p in (clip_path, clip_a_path, clip_b_path):
+        open(p, "wb").write(b"data")
+
+    def _fake_generate_threads(url_a, url_b, num_clips=1, platform="youtube", base_dir=None, on_output_dir=None):
+        if on_output_dir:
+            on_output_dir(out_dir)
+        return [{
+            "shared_question": "Does X cause Y?",
+            "thesis": "Two guests disagree.",
+            "bridge": "Here's the other side.",
+            "platform": "tiktok",
+            "episode_a": {"title": "Episode A", "clip_url": clip_a_path},
+            "episode_b": {"title": "Episode B", "clip_url": clip_b_path},
+            "output_dir": out_dir,
+            "clip_url": clip_path,
+        }]
+
+    monkeypatch.setattr(webapp, "generate_threads", _fake_generate_threads)
+    monkeypatch.setattr(webapp.threading, "Thread", _SyncThread)
+
+    client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b", "platform": "tiktok"})
+    resp = client.get("/status")
+    data = resp.get_json()
+
+    thread = data["result"]["threads"][0]
+    assert thread["download_url"] == "/download/thesis_1_tiktok_Title.mp4"
+    assert thread["episode_a_download_url"] == "/download/raw/thesis_1_tiktok/clip_1_a.mp4"
+    assert thread["episode_b_download_url"] == "/download/raw/thesis_1_tiktok/clip_1_b.mp4"
 
 
 def test_run_rejects_malformed_input_without_wedging_job_state(client, monkeypatch, tmp_path):
