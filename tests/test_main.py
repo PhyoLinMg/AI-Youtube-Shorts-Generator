@@ -329,6 +329,38 @@ def test_main_passes_platform_through_to_generate_threads(monkeypatch, capsys):
     assert captured_kwargs["platform"] == "tiktok"
 
 
+def test_main_labels_thread_summary_by_platform_for_platform_both(monkeypatch, capsys):
+    fake_results = [
+        {
+            "output_dir": "d", "shared_question": "q?", "thesis": "t", "bridge": "b",
+            "episode_a": {"title": "A", "start_time": 0.0, "end_time": 1.0},
+            "episode_b": {"title": "B", "start_time": 0.0, "end_time": 1.0},
+            "clip_url": "d/clip_1.mp4",
+            "platform": "youtube", "platform_index": 1,
+        },
+        {
+            "output_dir": "d", "shared_question": "q?", "thesis": "t", "bridge": "b",
+            "episode_a": {"title": "A", "start_time": 0.0, "end_time": 1.0},
+            "episode_b": {"title": "B", "start_time": 0.0, "end_time": 1.0},
+            "clip_url": "d/clip_1.mp4",
+            "platform": "tiktok", "platform_index": 1,
+        },
+    ]
+    monkeypatch.setattr(main_module, "generate_threads", lambda url_a, url_b, **kwargs: fake_results)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["main.py", "https://example.com/a", "--url-b", "https://example.com/b", "--clip-type", "thread", "--platform", "both"],
+    )
+
+    exit_code = main()
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "#1 [youtube]" in captured.out
+    assert "#1 [tiktok]" in captured.out
+    assert "across platforms" in captured.out
+
+
 def test_main_warns_when_platform_passed_with_clip_type_shorts(monkeypatch, capsys):
     monkeypatch.setattr(
         main_module, "generate_shorts",

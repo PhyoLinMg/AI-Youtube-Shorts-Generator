@@ -256,9 +256,15 @@ def main() -> int:
 
     print("\n" + "=" * 72)
     if args.clip_type == "thread":
-        print(f"Threads built:   {len(result)} (requested {args.num_clips})")
-        for i, t in enumerate(result, 1):
-            print(f"\n#{i}  {t.get('shared_question')}")
+        platforms_built = sorted({t.get("platform") or "youtube" for t in result})
+        if len(platforms_built) > 1:
+            print(f"Threads built:   {len(result)} across platforms {', '.join(platforms_built)} (requested up to {args.num_clips} per platform)")
+        else:
+            print(f"Threads built:   {len(result)} (requested {args.num_clips})")
+        for pos, t in enumerate(result, 1):
+            idx = t.get("platform_index") or pos
+            plat = t.get("platform") or "youtube"
+            print(f"\n#{idx} [{plat}]  {t.get('shared_question')}")
             print(f"     title:   {t.get('title')}")
             print(f"     desc:    {t.get('description')}")
             print(f"     thesis:  {t.get('thesis')}")
