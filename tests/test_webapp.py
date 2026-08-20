@@ -153,7 +153,7 @@ def test_run_thread_fails_with_a_helpful_message_when_no_pair_found(client, monk
     resp = client.post("/run", data={"clip_type": "thread", "url_a": "https://example.com/a", "url_b": "https://example.com/b"})
     assert resp.status_code == 202
     assert webapp.job.status == "failed"
-    assert "no shared-question thread" in webapp.job.error.lower()
+    assert "no thread built" in webapp.job.error.lower()
 
 
 def test_status_serializes_thread_results_and_omits_run_name(client, monkeypatch, tmp_path):

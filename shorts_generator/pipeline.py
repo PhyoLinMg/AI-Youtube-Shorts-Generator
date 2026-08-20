@@ -526,6 +526,13 @@ def generate_threads(
     raw/thesis_{i}_{platform}/, where i is 1-indexed within that
     platform's own results (not the flattened combined list).
 
+    To get youtube and tiktok cuts that coexist on disk, pass platform=
+    "both" in a single call -- resolve_thread_run_dir/archive_stale_thread_run
+    key off the two episode titles only, not platform, so a second same-day
+    call for the same pair (even with a different platform) archives the
+    first call's entire output dir into raw/stale/ rather than merging with
+    it.
+
     Unlike generate_shorts/generate_chapters, the output dir is knowable up
     front from the two episode titles (see resolve_thread_run_dir) -- but
     on_output_dir, if given, still fires before any per-clip render work

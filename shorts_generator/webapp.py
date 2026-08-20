@@ -109,9 +109,11 @@ def _run_thread_job(url_a: str, url_b: str, num_clips: int, platform: str = "you
         with _job_lock:
             if not result:
                 job.error = (
-                    "No shared-question thread found between these two episodes -- "
-                    "try a different pair, or make sure both URLs genuinely cover the "
-                    "same topic."
+                    "No thread built between these two episodes -- either they don't "
+                    "genuinely cover the same topic, or a shared question was found but "
+                    f"no span satisfying platform={platform!r}'s length bounds could be "
+                    "grounded for it. Try a different pair, a different platform, or lower "
+                    "num_clips."
                 )
                 job.status = "failed"
             else:

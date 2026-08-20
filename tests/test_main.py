@@ -237,7 +237,7 @@ def test_main_reports_no_thread_available_when_generate_threads_returns_empty_li
 
     captured = capsys.readouterr()
     assert exit_code == 1
-    assert "No shared-question thread found" in captured.err
+    assert "No thread built" in captured.err
 
 
 def test_main_warns_on_shorts_only_flags_with_clip_type_thread(monkeypatch, capsys):

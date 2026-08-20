@@ -246,10 +246,12 @@ def main() -> int:
         return 1
 
     if args.clip_type == "thread" and not result:
-        print("\nNo shared-question thread found between these two episodes -- nothing to build.", file=sys.stderr)
+        print("\nNo thread built between these two episodes -- nothing to build.", file=sys.stderr)
         print(
-            "This can happen if the two episodes don't genuinely answer the same question -- "
-            "try a different pair, or lower --num-clips.",
+            "This can happen if the two episodes don't genuinely answer the same question, or "
+            "if a shared question was found but no platform's length bounds could be satisfied "
+            f"for it (--platform {args.platform!r} may simply be too strict for this pair) -- "
+            "try a different pair, a different --platform, or lower --num-clips.",
             file=sys.stderr,
         )
         return 1
